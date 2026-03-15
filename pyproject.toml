@@ -20,6 +20,9 @@ dependencies = [
 wafpass = "wafpass.cli:app"
 
 [project.optional-dependencies]
+pdf = [
+    "reportlab>=4.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
