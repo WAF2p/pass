@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wafpass"
+version = "0.1.0"
+description = "WAF++ PASS – Terraform controls checker for the WAF++ framework"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "python-hcl2>=4.3",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "typer>=0.12",
+]
+
+[project.scripts]
+wafpass = "wafpass.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["wafpass"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
