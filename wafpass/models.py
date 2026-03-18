@@ -56,6 +56,8 @@ class Control:
     category: str
     description: str
     checks: list[Check]
+    regulatory_mapping: list[dict] = field(default_factory=list)
+    # Each entry: {"framework": str, "controls": list[str]}
 
 
 @dataclass

@@ -40,6 +40,49 @@ try:
 except Exception:
     _LOGO_IMG = None  # graceful fallback if image not found
 
+# ── Regulatory logos directory ────────────────────────────────────────────────
+_REG_LOGOS_DIR = Path(__file__).parent.parent / "assets" / "regulatory"
+
+# Cache of loaded regulatory logo ImageReaders (None means image not found)
+_REG_LOGO_CACHE: dict[str, "ImageReader | None"] = {}
+
+
+def _reg_logo(framework: str) -> "ImageReader | None":
+    """Return an ImageReader for the given regulatory framework, or None."""
+    if framework in _REG_LOGO_CACHE:
+        return _REG_LOGO_CACHE[framework]
+    slug = framework.lower()
+    for ch in " /:().,":
+        slug = slug.replace(ch, "_")
+    # Remove duplicate underscores
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    slug = slug.strip("_")
+    img = None
+    for ext in ("png", "jpg", "jpeg", "svg"):
+        candidate = _REG_LOGOS_DIR / f"{slug}.{ext}"
+        if candidate.exists():
+            try:
+                img = ImageReader(str(candidate))
+            except Exception:
+                img = None
+            break
+    _REG_LOGO_CACHE[framework] = img
+    return img
+
+
+# Palette of badge background colors cycling for frameworks without logos
+_BADGE_COLORS = [
+    colors.HexColor("#2b7fff"),  # blue
+    colors.HexColor("#7c3aed"),  # violet
+    colors.HexColor("#0891b2"),  # cyan
+    colors.HexColor("#059669"),  # emerald
+    colors.HexColor("#d97706"),  # amber
+    colors.HexColor("#dc2626"),  # red
+    colors.HexColor("#0f172a"),  # navy
+    colors.HexColor("#be185d"),  # pink
+]
+
 # ── Brand palette ─────────────────────────────────────────────────────────────
 C_NAVY     = colors.HexColor("#0f172a")
 C_BLUE     = colors.HexColor("#2b7fff")
@@ -737,6 +780,274 @@ def _passed_section(report: Report, S: dict) -> list:
     return elems
 
 
+# ── Regulatory Alignment section ─────────────────────────────────────────────
+
+def _build_framework_map(report: Report) -> dict[str, dict]:
+    """Aggregate per-framework data from all control results.
+
+    Returns dict keyed by framework name:
+        {"items": [ControlResult, ...], "PASS": int, "FAIL": int, "SKIP": int}
+    """
+    frameworks: dict[str, dict] = {}
+    for cr in report.results:
+        for reg in cr.control.regulatory_mapping:
+            fname = reg.get("framework", "").strip()
+            if not fname:
+                continue
+            if fname not in frameworks:
+                frameworks[fname] = {"items": [], "PASS": 0, "FAIL": 0, "SKIP": 0}
+            frameworks[fname]["items"].append(cr)
+            frameworks[fname][cr.status] = frameworks[fname].get(cr.status, 0) + 1
+    return frameworks
+
+
+# Priority order for the 6 frameworks shown in the PDF cards.
+# Only frameworks whose name matches one of these (case-insensitive prefix) will be shown.
+_PRIORITY_FRAMEWORKS: list[str] = [
+    "GDPR",
+    "BSI C5:2020",
+    "ISO 27001:2022",
+    "EUCS (ENISA)",
+    "SOC 2",
+    "AWS Well-Architected Framework",
+]
+
+
+def _reg_framework_card(
+    framework: str,
+    data: dict,
+    card_w: float,
+    badge_color: colors.Color,
+) -> Table:
+    """Build a single regulatory framework card as a flat 3-column Table.
+
+    Layout (3 equal columns, all rows span all cols except the stats row):
+        Row 0 – header band: initials badge | framework name  (spans all 3)
+        Row 1 – stats:        ✓ PASS  |  ✗ FAIL  |  ─ SKIP
+        Row 2 – control IDs  (spans all 3)
+    """
+    col = card_w / 3  # each of the 3 equal columns
+
+    initials = "".join(w[0].upper() for w in framework.split() if w)[:3]
+    display_name = framework if len(framework) <= 30 else framework[:28] + "…"
+
+    # Deduplicate control IDs, keeping first occurrence order
+    seen_ids: set[str] = set()
+    unique_crs = []
+    for cr in data["items"]:
+        if cr.control.id not in seen_ids:
+            seen_ids.add(cr.control.id)
+            unique_crs.append(cr)
+
+    # Row 0 – header
+    header_para = Paragraph(
+        f'<font name="Helvetica-Bold" size="13" color="white">{initials}</font>'
+        f'<font name="Helvetica" size="8" color="white">  {display_name}</font>',
+        ParagraphStyle("ch", leading=16, alignment=TA_LEFT),
+    )
+
+    # Row 1 – stat cells (one per column, no span)
+    def _stat_para(icon: str, count: int, fg: colors.Color) -> Paragraph:
+        return Paragraph(
+            f'<font name="Helvetica-Bold" size="9" color="#{_hex(fg)}">{icon} {count}</font>',
+            ParagraphStyle("sp", leading=13, alignment=TA_CENTER),
+        )
+
+    pass_p = _stat_para("✓", data["PASS"], C_GREEN)
+    fail_p = _stat_para("✗", data["FAIL"], C_RED)
+    skip_p = _stat_para("─", data["SKIP"], C_GREY)
+
+    # Row 2 – control IDs
+    id_fragments = []
+    for cr in unique_crs:
+        st_fg = {"PASS": C_GREEN, "FAIL": C_RED, "SKIP": C_GREY}.get(cr.status, C_GREY)
+        icon = STATUS_ICON.get(cr.status, "?")
+        id_fragments.append(
+            f'<font name="Courier" size="7" color="#{_hex(C_DARK)}">{cr.control.id}</font>'
+            f'<font name="Helvetica" size="7" color="#{_hex(st_fg)}"> {icon}</font>'
+        )
+    ids_para = Paragraph(
+        "  ·  ".join(id_fragments) if id_fragments else "—",
+        ParagraphStyle("ci", leading=11, textColor=C_DARK),
+    )
+
+    # Logo image overrides initials in header if available
+    logo_img = _reg_logo(framework)
+    if logo_img is not None:
+        from reportlab.platypus import Image as RLImage
+        logo_size = 28.0
+        header_para = Paragraph(
+            f'<font name="Helvetica-Bold" size="9" color="white">  {display_name}</font>',
+            ParagraphStyle("ch2", leading=14, alignment=TA_LEFT),
+        )
+        # We can't mix Image + Paragraph in a spanned cell simply, so fall back to
+        # showing the initials alongside the name (logo dropped to avoid ReportLab
+        # nested-image-in-span issues — place logo via background or separate row).
+        header_para = Paragraph(
+            f'<font name="Helvetica-Bold" size="13" color="white">{initials}</font>'
+            f'<font name="Helvetica" size="8" color="white">  {display_name}</font>',
+            ParagraphStyle("ch3", leading=16, alignment=TA_LEFT),
+        )
+
+    rows = [
+        [header_para, "", ""],        # row 0 – header (will be spanned)
+        [pass_p, fail_p, skip_p],     # row 1 – stats
+        [ids_para, "", ""],           # row 2 – control IDs (will be spanned)
+    ]
+
+    ts = TableStyle([
+        # Spans
+        ("SPAN",          (0, 0), (2, 0)),
+        ("SPAN",          (0, 2), (2, 2)),
+
+        # Header band
+        ("BACKGROUND",    (0, 0), (2, 0),  badge_color),
+        ("TOPPADDING",    (0, 0), (2, 0),  10),
+        ("BOTTOMPADDING", (0, 0), (2, 0),  10),
+        ("LEFTPADDING",   (0, 0), (2, 0),  10),
+        ("RIGHTPADDING",  (0, 0), (2, 0),  8),
+        ("VALIGN",        (0, 0), (2, 0),  "MIDDLE"),
+
+        # Stats row
+        ("BACKGROUND",    (0, 1), (0, 1),  C_GREEN_LT),
+        ("BACKGROUND",    (1, 1), (1, 1),  C_RED_LT),
+        ("BACKGROUND",    (2, 1), (2, 1),  C_GREY_LT),
+        ("TOPPADDING",    (0, 1), (2, 1),  6),
+        ("BOTTOMPADDING", (0, 1), (2, 1),  6),
+        ("LEFTPADDING",   (0, 1), (2, 1),  4),
+        ("RIGHTPADDING",  (0, 1), (2, 1),  4),
+        ("VALIGN",        (0, 1), (2, 1),  "MIDDLE"),
+        ("LINEBELOW",     (0, 1), (2, 1),  0.4, C_BORDER),
+        ("LINEABOVE",     (0, 1), (2, 1),  0.4, C_BORDER),
+
+        # Controls row
+        ("BACKGROUND",    (0, 2), (2, 2),  C_WHITE),
+        ("TOPPADDING",    (0, 2), (2, 2),  7),
+        ("BOTTOMPADDING", (0, 2), (2, 2),  8),
+        ("LEFTPADDING",   (0, 2), (2, 2),  8),
+        ("RIGHTPADDING",  (0, 2), (2, 2),  8),
+        ("VALIGN",        (0, 2), (2, 2),  "TOP"),
+
+        # Outer border in badge color
+        ("BOX",           (0, 0), (-1, -1), 1.2, badge_color),
+    ])
+
+    return Table(rows, colWidths=[col, col, col], style=ts)
+
+
+def _regulatory_alignment(report: Report, S: dict) -> list:
+    """Build the Regulatory Alignment section flowables."""
+    all_frameworks = _build_framework_map(report)
+    if not all_frameworks:
+        return []
+
+    # Filter to priority frameworks only (max 6), in defined order
+    frameworks: dict[str, dict] = {}
+    for priority_name in _PRIORITY_FRAMEWORKS:
+        # Match by exact name or case-insensitive prefix
+        for fname, data in all_frameworks.items():
+            if fname.lower().startswith(priority_name.lower()):
+                if fname not in frameworks:
+                    frameworks[fname] = data
+                break
+        if len(frameworks) == 6:
+            break
+
+    if not frameworks:
+        return []
+
+    elems: list = [
+        *_section_header("Regulatory Alignment", S),
+        Paragraph(
+            "Overview of how WAF++ controls map to the key regulatory and industry frameworks. "
+            "Each card shows the compliance posture (PASS / FAIL / SKIP) for all controls "
+            "that reference the framework.",
+            S["muted"]),
+        Spacer(1, 5 * mm),
+    ]
+
+    # ── Summary table ─────────────────────────────────────────────────────────
+    summary_rows = [["Framework", "Mapped Controls", "✓ Pass", "✗ Fail", "─ Skip"]]
+    for fname, d in frameworks.items():
+        total = d["PASS"] + d["FAIL"] + d["SKIP"]
+        summary_rows.append([fname, str(total), str(d["PASS"]), str(d["FAIL"]), str(d["SKIP"])])
+
+    sum_ts = TableStyle([
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("LEADING",       (0, 0), (-1, -1), 11),
+        ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+    ])
+    for i, (fname, d) in enumerate(frameworks.items(), start=1):
+        if d["FAIL"] > 0:
+            sum_ts.add("TEXTCOLOR", (3, i), (3, i), C_RED)
+            sum_ts.add("FONTNAME",  (3, i), (3, i), "Helvetica-Bold")
+        if d["PASS"] > 0:
+            sum_ts.add("TEXTCOLOR", (2, i), (2, i), C_GREEN)
+            sum_ts.add("FONTNAME",  (2, i), (2, i), "Helvetica-Bold")
+
+    sum_col_w = [CONTENT_W * 0.42, CONTENT_W * 0.15, CONTENT_W * 0.15,
+                 CONTENT_W * 0.14, CONTENT_W * 0.14]
+    elems.append(Table(
+        [[Paragraph(str(v), S["tbl_header_left"] if j == 0 else S["tbl_header"])
+          for j, v in enumerate(row)]
+         if i == 0 else
+         [Paragraph(str(v), S["body_sm"]) for v in row]
+         for i, row in enumerate(summary_rows)],
+        colWidths=sum_col_w, style=sum_ts))
+
+    elems.append(Spacer(1, 8 * mm))
+    elems += _section_header("Framework Cards", S)
+    elems.append(Paragraph(
+        "Each card shows the framework initials, PASS / FAIL / SKIP counts, "
+        "and the WAF++ control IDs that reference it.  "
+        "Drop a logo PNG into <code>assets/regulatory/</code> to replace the initials badge.",
+        S["muted"]))
+    elems.append(Spacer(1, 4 * mm))
+
+    # ── 2-column card grid ────────────────────────────────────────────────────
+    # Each grid cell is card_outer_w wide.
+    # A gap of `gap` pts separates the two columns:
+    #   left cell:  RIGHTPADDING = gap/2  →  content = card_outer_w - gap/2
+    #   right cell: LEFTPADDING  = gap/2  →  content = card_outer_w - gap/2
+    # Total: 2 * card_outer_w = CONTENT_W  ✓
+    gap = int(4 * mm)
+    card_outer_w = CONTENT_W / 2
+    card_w = card_outer_w - gap / 2   # actual card content width
+
+    names = list(frameworks.keys())
+    badge_cycle = _BADGE_COLORS
+    card_rows = []
+    for i in range(0, len(names), 2):
+        left_name = names[i]
+        right_name = names[i + 1] if i + 1 < len(names) else None
+        left_card  = _reg_framework_card(left_name,  frameworks[left_name],  card_w, badge_cycle[i % len(badge_cycle)])
+        right_card = _reg_framework_card(right_name, frameworks[right_name], card_w, badge_cycle[(i + 1) % len(badge_cycle)]) \
+                     if right_name else Spacer(card_w, 1)
+        card_rows.append([left_card, right_card])
+
+    grid_ts = TableStyle([
+        ("LEFTPADDING",   (0, 0), (0, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (0, -1), gap // 2),
+        ("LEFTPADDING",   (1, 0), (1, -1), gap // 2),
+        ("RIGHTPADDING",  (1, 0), (1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), gap),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ])
+    elems.append(Table(card_rows, colWidths=[card_outer_w, card_outer_w], style=grid_ts))
+
+    return elems
+
+
 # ── Hex color helper ──────────────────────────────────────────────────────────
 
 def _hex(color: colors.Color) -> str:
@@ -799,6 +1110,12 @@ def generate_pdf(report: Report, output_path: Path) -> None:
     # ── Controls Overview ──────────────────────────────────────────────────────
     story += [PageBreak()]
     story += _controls_overview(report, S)
+
+    # ── Regulatory Alignment ───────────────────────────────────────────────────
+    reg_elems = _regulatory_alignment(report, S)
+    if reg_elems:
+        story += [PageBreak()]
+        story += reg_elems
 
     # ── Findings ──────────────────────────────────────────────────────────────
     story += [PageBreak()]
