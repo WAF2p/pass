@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -23,35 +24,76 @@ def _is_literal_string(val: object) -> bool:
     return bool(v) and "${" not in v and not v.startswith("var.") and not v.startswith("local.")
 
 
+_AZ_RE = re.compile(r"^([a-z]{2}-[a-z]+-\d+)[a-z]$")
+_REGION_IN_STRING_RE = re.compile(r"\b([a-z]{2}-(?:central|west|east|north|south|southeast|northeast|northwest|southwest)-\d+)\b")
+
+
+def _region_from_az(val: str) -> str | None:
+    """Return the AWS region from an AZ string, e.g. 'eu-central-1a' → 'eu-central-1'."""
+    m = _AZ_RE.match(val.strip())
+    return m.group(1) if m else None
+
+
+def _region_from_string(val: str) -> str | None:
+    """Extract an AWS region embedded in an arbitrary string (e.g. service endpoint)."""
+    m = _REGION_IN_STRING_RE.search(val)
+    return m.group(1) if m else None
+
+
 def _extract_regions(tf_state: TerraformState) -> list[tuple[str, str]]:
     """Extract (region_name, provider) tuples from parsed Terraform state."""
     seen: set[tuple[str, str]] = set()
     result: list[tuple[str, str]] = []
 
-    def add(val: object, provider: str) -> None:
+    def add(region: str, provider: str) -> None:
+        key = (region.lower(), provider)
+        if key not in seen:
+            seen.add(key)
+            result.append((region, provider))
+
+    def try_add_literal(val: object, provider: str) -> None:
+        """Add val directly if it is a literal region string."""
         if _is_literal_string(val):
-            key = (str(val).strip().lower(), provider)
-            if key not in seen:
-                seen.add(key)
-                result.append((str(val).strip(), provider))
+            add(str(val).strip(), provider)
+
+    def try_add_aws_val(val: object) -> None:
+        """Try to extract an AWS region from a literal attribute value."""
+        if not _is_literal_string(val):
+            return
+        s = str(val).strip()
+        # Direct region string (e.g. "eu-central-1")
+        if re.match(r"^[a-z]{2}-[a-z]+-\d+$", s):
+            add(s, "aws")
+            return
+        # AZ string (e.g. "eu-central-1a")
+        region = _region_from_az(s)
+        if region:
+            add(region, "aws")
+            return
+        # Embedded in a service name / ARN (e.g. "com.amazonaws.eu-central-1.s3")
+        region = _region_from_string(s)
+        if region:
+            add(region, "aws")
 
     for blk in tf_state.providers:
         pname = blk.type.lower()
         if pname == "aws":
-            add(blk.attributes.get("region"), "aws")
+            try_add_literal(blk.attributes.get("region"), "aws")
         elif pname in ("azurerm", "azuread", "azurestack"):
-            add(blk.attributes.get("location") or blk.attributes.get("region"), "azure")
+            try_add_literal(blk.attributes.get("location") or blk.attributes.get("region"), "azure")
         elif pname in ("google", "google-beta"):
-            add(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+            try_add_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
 
     for blk in tf_state.resources:
         rtype = blk.type.lower()
         if rtype.startswith("aws_"):
-            add(blk.attributes.get("region"), "aws")
+            for attr in ("region", "availability_zone", "service_name"):
+                try_add_aws_val(blk.attributes.get(attr))
+            # subnet_ids list items may be expressions; skip
         elif rtype.startswith("azurerm_"):
-            add(blk.attributes.get("location"), "azure")
+            try_add_literal(blk.attributes.get("location"), "azure")
         elif rtype.startswith("google_"):
-            add(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+            try_add_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
 
     return result
 

@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import io
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    from PIL import Image as _PILImage, ImageDraw as _PILDraw, ImageFilter as _PILFilter
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -125,67 +132,140 @@ STATUS_ICON = {"PASS": "✓", "FAIL": "✗", "SKIP": "─"}
 _MAP_LAT_MIN, _MAP_LAT_MAX = -80.0, 80.0
 _MAP_LON_MIN, _MAP_LON_MAX = -180.0, 180.0
 
-_MAP_OCEAN   = colors.HexColor("#c8dff0")
-_MAP_LAND    = colors.HexColor("#e8e4d4")
-_MAP_BORDER  = colors.HexColor("#b0b89a")
-_MAP_GRID    = colors.HexColor("#b0c8dc")
-_MAP_OUTLINE = colors.HexColor("#7a9ab8")
+# Fallback ReportLab colors (used only when PIL is unavailable)
+_MAP_OCEAN   = colors.HexColor("#0d1b2e")
+_MAP_LAND    = colors.HexColor("#1e3a5f")
+_MAP_BORDER  = colors.HexColor("#2d5a8e")
+_MAP_GRID    = colors.HexColor("#121e30")
+_MAP_OUTLINE = colors.HexColor("#2d5a8e")
 
 _PROVIDER_DOT_COLORS: dict[str, "colors.Color"] = {
-    "aws":   colors.HexColor("#f97316"),  # orange
-    "azure": colors.HexColor("#2b7fff"),  # blue
-    "gcp":   colors.HexColor("#22c55e"),  # green
+    "aws":   colors.HexColor("#f97316"),
+    "azure": colors.HexColor("#2b7fff"),
+    "gcp":   colors.HexColor("#22c55e"),
 }
 
-# Simplified continent polygons as (lon, lat) lists
+# ── PIL color palette (modern dark theme) ─────────────────────────────────────
+_PIL_C_OCEAN  = (10,  22,  46)   # deep navy
+_PIL_C_LAND   = (38,  62,  95)   # slate blue
+_PIL_C_BORDER = (58,  92, 132)   # coastline highlight
+_PIL_C_GRID   = (16,  30,  55)   # barely-visible grid
+_PIL_C_EQ     = (26,  48,  78)   # equator (slightly brighter)
+_PIL_C_FRAME  = (55,  88, 126)   # map frame border
+
+_PIL_PROV_RGB: dict[str, tuple[int, int, int]] = {
+    "aws":   (249, 115,  22),
+    "azure": ( 43, 127, 255),
+    "gcp":   ( 34, 197,  94),
+}
+
+# Continent polygons as (lon, lat) lists — significantly more detailed than
+# the old version, with separate landmasses for cleaner polygon fills.
 _CONTINENT_POLYS: list[list[tuple[float, float]]] = [
-    # North America
-    [(-168,71),(-155,60),(-140,60),(-130,54),(-125,49),(-124,37),
-     (-118,33),(-110,23),(-90,16),(-85,10),(-77,8),
-     (-75,10),(-80,22),(-87,23),(-82,30),(-80,35),
-     (-75,45),(-70,47),(-63,47),(-60,47),(-55,50),(-55,60),
-     (-65,63),(-80,67),(-95,75),(-115,76),(-135,70),(-145,68),(-160,66),(-168,71)],
-    # Greenland
+
+    # ── North America (with Florida peninsula + Gulf Coast) ────────────────────
+    [(-168,71),(-160,66),(-152,60),(-145,60),(-137,59),(-130,54),
+     (-126,50),(-124,48),(-124,46),(-124,42),(-124,37),(-120,34),
+     (-117,32),(-115,31),(-110,29),(-106,23),(-100,20),(-95,16),
+     (-90,16),(-87,14),(-83,10),(-77, 8),(-76,10),(-83,10),
+     (-85,24),(-87,30),(-85,30),(-82,30),(-81,25),(-80,24),
+     (-80,27),(-81,32),(-79,33),(-76,35),(-75,37),(-73,41),
+     (-70,42),(-69,44),(-67,45),(-65,44),(-60,47),(-55,47),
+     (-53,47),(-53,50),(-55,52),(-60,55),(-64,58),(-68,63),
+     (-72,66),(-75,72),(-95,74),(-115,76),(-130,70),(-143,68),
+     (-152,68),(-160,66),(-168,71)],
+
+    # ── Greenland ─────────────────────────────────────────────────────────────
     [(-44,60),(-40,65),(-36,70),(-22,76),(-18,83),(-30,84),
      (-45,83),(-56,76),(-62,73),(-56,68),(-50,64),(-44,60)],
-    # South America
-    [(-80,12),(-77,8),(-75,0),(-78,-5),(-80,-15),(-76,-20),
-     (-70,-25),(-67,-35),(-65,-45),(-66,-55),(-68,-55),(-70,-50),
-     (-72,-42),(-65,-30),(-60,-23),(-50,-28),(-45,-23),(-40,-15),
-     (-38,-5),(-40,0),(-50,5),(-60,8),(-67,12),(-72,12),(-75,10),(-80,12)],
-    # Europe main body (Iberia, France, Mediterranean, Balkans)
-    [(-10,36),(0,36),(15,37),(28,37),(36,38),(36,42),(30,46),
-     (20,44),(18,40),(14,38),(10,38),(5,43),(-2,44),(-8,44),(-9,38),(-10,36)],
-    # Northern Europe + Scandinavia
-    [(-10,50),(0,50),(5,54),(10,57),(15,57),(18,60),(25,65),
-     (28,70),(30,72),(28,72),(25,70),(20,69),(15,68),(10,63),
-     (5,58),(0,54),(-5,50),(-10,50)],
-    # Great Britain
-    [(-5,50),(-3,50),(-2,51),(1,51),(0,52),(-1,54),(-2,57),
+
+    # ── Iceland ───────────────────────────────────────────────────────────────
+    [(-25,64),(-20,63),(-14,64),(-13,66),(-18,67),(-24,66),(-25,64)],
+
+    # ── South America ─────────────────────────────────────────────────────────
+    [(-80,12),(-77, 8),(-75, 2),(-76,-2),(-78,-5),(-80,-14),
+     (-76,-20),(-72,-25),(-68,-35),(-65,-45),(-66,-55),(-68,-55),
+     (-70,-50),(-72,-42),(-65,-30),(-60,-23),(-52,-28),(-46,-23),
+     (-40,-15),(-38,-5),(-40, 0),(-50, 5),(-60, 8),(-67,12),
+     (-72,12),(-75,10),(-80,12)],
+
+    # ── Iberian Peninsula ─────────────────────────────────────────────────────
+    [(-9,36),(-9,38),(-9,44),(-4,44),(-1,44),(0,43),(3,43),(3,37),(0,36),(-5,36),(-9,36)],
+
+    # ── Main Europe (France, Low Countries, Germany, Balkans) ─────────────────
+    [(3,43),(0,43),(-1,44),(-4,44),(-1,46),(2,47),(3,51),(5,52),
+     (7,54),(10,55),(14,54),(16,54),(18,56),(20,54),(22,54),
+     (24,56),(26,56),(28,54),(28,52),(24,50),(22,50),(22,48),
+     (24,48),(26,48),(28,44),(30,46),(34,42),(36,42),(36,40),
+     (30,44),(26,42),(24,44),(22,44),(20,44),(18,46),(16,48),
+     (14,52),(12,51),(10,51),(8,48),(6,46),(5,43),(3,43)],
+
+    # ── Italian Peninsula ─────────────────────────────────────────────────────
+    [(8,44),(10,44),(12,44),(14,44),(16,40),(16,37),(14,37),
+     (12,37),(10,38),(8,40),(7,43),(8,44)],
+
+    # ── Scandinavian Peninsula ────────────────────────────────────────────────
+    [(10,55),(10,57),(8,58),(7,62),(10,63),(14,65),(16,68),
+     (18,69),(22,70),(26,72),(28,72),(26,70),(30,65),(28,60),
+     (24,58),(22,56),(20,54),(18,56),(16,56),(14,56),(12,56),(10,55)],
+
+    # ── Great Britain ─────────────────────────────────────────────────────────
+    [(-5,50),(-3,50),(-1,51),(1,51),(0,52),(-1,54),(-2,57),
      (-5,58),(-6,56),(-5,54),(-4,51),(-5,50)],
-    # Ireland
+
+    # ── Ireland ───────────────────────────────────────────────────────────────
     [(-10,52),(-7,52),(-6,53),(-7,55),(-8,55),(-10,54),(-10,52)],
-    # Africa
-    [(-17,15),(-15,10),(-10,5),(-2,5),(10,5),(10,2),(12,-4),
-     (12,-10),(14,-20),(18,-28),(20,-35),(26,-35),(32,-30),(36,-22),
-     (40,-10),(42,0),(42,10),(40,15),(45,12),(50,12),(44,20),
-     (38,22),(36,28),(33,31),(25,32),(10,37),(0,37),(-10,35),(-17,28),(-17,15)],
-    # Asia main body (Turkey to eastern Russia/China coast)
-    [(26,40),(36,42),(40,38),(50,30),(60,25),(70,25),(80,28),
-     (90,28),(100,20),(104,10),(110,5),(115,0),(120,5),(125,10),
-     (130,35),(135,40),(140,45),(145,50),(140,56),(135,60),
-     (130,65),(120,68),(100,73),(80,73),(60,70),(50,65),(40,65),
-     (30,70),(28,65),(25,60),(35,55),(40,50),(36,44),(30,44),(26,40)],
-    # Japan (Honshu simplified)
-    [(130,32),(132,34),(136,35),(138,36),(140,38),(141,41),
-     (140,44),(138,43),(135,42),(134,38),(133,35),(131,33),(130,32)],
-    # Australia
-    [(114,-22),(118,-16),(122,-14),(128,-14),(132,-12),(136,-12),
-     (138,-14),(140,-18),(145,-15),(148,-20),(150,-24),(152,-28),
-     (153,-30),(151,-33),(148,-38),(145,-40),(136,-35),(130,-33),
-     (120,-34),(115,-34),(114,-30),(114,-22)],
-    # New Zealand (South Island)
-    [(166,-46),(168,-46),(171,-42),(173,-38),(172,-37),(170,-38),(168,-44),(166,-46)],
+
+    # ── Africa ────────────────────────────────────────────────────────────────
+    [(-17,15),(-15,10),(-10, 5),(-2, 5),(4, 4),(8, 4),(10, 2),
+     (12,-4),(12,-10),(14,-20),(18,-28),(20,-35),(26,-35),
+     (32,-30),(36,-22),(40,-10),(42, 0),(42,10),(40,16),
+     (44,12),(50,12),(44,20),(38,22),(36,28),(33,31),
+     (25,32),(10,37),(0,37),(-10,36),(-17,28),(-17,15)],
+
+    # ── Arabian Peninsula ─────────────────────────────────────────────────────
+    [(37,30),(37,22),(40,14),(44,12),(48,14),(52,16),
+     (56,22),(58,22),(58,24),(55,24),(52,24),(48,24),
+     (44,24),(40,24),(38,26),(37,30)],
+
+    # ── Indian Subcontinent ───────────────────────────────────────────────────
+    [(65,25),(68,24),(72,22),(74,20),(77, 8),(80,10),
+     (80,16),(77,20),(80,24),(84,27),(87,28),(90,22),
+     (92,22),(95,18),(92,18),(90,22),(87,28),(84,27),
+     (80,28),(76,32),(74,32),(72,22),(68,24)],
+
+    # ── Asia main (Turkey → Russia Pacific coast) ──────────────────────────────
+    [(26,40),(36,42),(40,38),(48,30),(60,26),(65,25),
+     (72,22),(74,20),(77, 8),(80,10),(80,16),(77,20),
+     (80,24),(84,27),(87,28),(90,22),(92,22),(95,18),
+     (98,10),(100,5),(104,2),(110,2),(104,0),(100,2),
+     (103,4),(105,10),(108,16),(110,20),(115,20),
+     (118,24),(122,30),(122,35),(125,36),(130,35),
+     (133,35),(135,40),(138,44),(140,46),(145,50),
+     (140,56),(135,60),(130,65),(120,68),
+     (100,73),(80,73),(60,70),(50,65),(40,65),
+     (30,70),(28,65),(25,60),(35,55),(40,50),
+     (36,44),(30,44),(26,40)],
+
+    # ── Indochina Peninsula ───────────────────────────────────────────────────
+    [(100,18),(102,16),(104,14),(104, 6),(102, 4),(100, 4),
+     (100,10),(102,14),(100,18)],
+
+    # ── Japan (Honshu) ────────────────────────────────────────────────────────
+    [(130,32),(132,34),(136,35),(138,36),(140,38),
+     (141,41),(140,44),(138,43),(135,42),(134,38),
+     (133,35),(131,33),(130,32)],
+
+    # ── Australia ─────────────────────────────────────────────────────────────
+    [(114,-22),(118,-16),(122,-14),(128,-14),(132,-12),
+     (136,-12),(138,-14),(140,-18),(145,-15),(148,-20),
+     (150,-24),(152,-28),(153,-30),(151,-33),(148,-38),
+     (145,-40),(136,-35),(130,-33),(120,-34),(115,-34),
+     (114,-30),(114,-22)],
+
+    # ── New Zealand (South Island) ────────────────────────────────────────────
+    [(166,-46),(168,-46),(171,-42),(173,-38),(172,-37),
+     (170,-38),(168,-44),(166,-46)],
 ]
 
 # Region → (lat, lon) — canonical Terraform region identifiers (lowercase)
@@ -307,22 +387,200 @@ _REGION_LABELS: dict[str, str] = {
 }
 
 
+# ── Tile basemap constants ────────────────────────────────────────────────────
+
+_MAP_TILE_ZOOM = 2        # zoom 2 → 4×4 = 16 tiles → 1024×1024 px world image
+_TILE_SIZE_PX  = 256
+_TILE_LAT_MAX  =  65.0    # clip polar extremes; every cloud region is within ±65°
+_TILE_LAT_MIN  = -65.0
+
+
+def _mercator_y_frac(lat: float) -> float:
+    """Web Mercator y-fraction [0=top, 1=bottom] for *lat* in degrees."""
+    import math
+    lat_r = math.radians(max(-85.0, min(85.0, lat)))
+    return (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi) / 2.0
+
+
+def _fetch_tile_basemap(zoom: int = _MAP_TILE_ZOOM) -> "_PILImage.Image | None":
+    """Download CARTO dark-matter tiles and return a stitched PIL Image.
+
+    Tile source: CARTO dark_all (© CARTO, © OpenStreetMap contributors, ODbL).
+    Returns None when PIL/requests are unavailable or every tile request fails.
+    """
+    if not _PIL_AVAILABLE:
+        return None
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    n       = 2 ** zoom
+    full_px = n * _TILE_SIZE_PX
+    canvas  = _PILImage.new("RGB", (full_px, full_px), _PIL_C_OCEAN)
+    session = requests.Session()
+    session.headers["User-Agent"] = (
+        "waf-pass/1.0 (+https://github.com/WAF2p/waf--) PDF report generator"
+    )
+    any_ok = False
+    for ty in range(n):
+        for tx in range(n):
+            url = f"https://a.basemaps.cartocdn.com/dark_all/{zoom}/{tx}/{ty}.png"
+            try:
+                resp = session.get(url, timeout=4)
+                if resp.status_code == 200:
+                    tile = _PILImage.open(io.BytesIO(resp.content)).convert("RGB")
+                    canvas.paste(tile, (tx * _TILE_SIZE_PX, ty * _TILE_SIZE_PX))
+                    any_ok = True
+            except Exception:
+                pass
+    return canvas if any_ok else None
+
+
+def _render_world_map_pil(
+    width_pt: float,
+    height_pt: float,
+    regions: list[tuple[str, str]],
+) -> "io.BytesIO | None":
+    """Render a modern world map as a BytesIO PNG.
+
+    Primary path:  CARTO dark-matter OSM tile basemap (fetched at runtime).
+    Fallback path: hand-drawn polygon map using the same glow/dot rendering.
+    Returns None if PIL is unavailable.
+    """
+    if not _PIL_AVAILABLE:
+        return None
+
+    SUPER        = 2
+    DPI          = 200
+    PTS_PER_INCH = 72.0
+    out_w = max(200, int(width_pt  / PTS_PER_INCH * DPI))
+    out_h = max(100, int(height_pt / PTS_PER_INCH * DPI))
+
+    # ── Try tile basemap ───────────────────────────────────────────────────────
+    tile_img = _fetch_tile_basemap(_MAP_TILE_ZOOM)
+
+    if tile_img is not None:
+        # Crop to the display latitude window, then upsample for glow rendering
+        full_px    = tile_img.width                    # 1024
+        y_top_frac = _mercator_y_frac(_TILE_LAT_MAX)
+        y_bot_frac = _mercator_y_frac(_TILE_LAT_MIN)
+        y_top_px   = int(y_top_frac * full_px)
+        y_bot_px   = int(y_bot_frac * full_px)
+        cropped    = tile_img.crop((0, y_top_px, full_px, y_bot_px))
+        base       = cropped.resize((out_w * SUPER, out_h * SUPER), _PILImage.LANCZOS)
+
+        def lonlat_px(lon: float, lat: float) -> tuple[int, int]:
+            """Mercator lon/lat → pixel in the supersampled canvas."""
+            x     = int((lon + 180.0) / 360.0 * out_w * SUPER)
+            y_f   = _mercator_y_frac(lat)
+            y     = int((y_f - y_top_frac) / (y_bot_frac - y_top_frac) * out_h * SUPER)
+            return x, y
+
+    else:
+        # ── Polygon fallback ──────────────────────────────────────────────────
+        w_px = out_w * SUPER
+        h_px = out_h * SUPER
+        base = _PILImage.new("RGB", (w_px, h_px), _PIL_C_OCEAN)
+        drw  = _PILDraw.Draw(base)
+
+        def lonlat_px(lon: float, lat: float) -> tuple[int, int]:
+            x = int((lon - _MAP_LON_MIN) / (_MAP_LON_MAX - _MAP_LON_MIN) * w_px)
+            y = int((1.0 - (lat - _MAP_LAT_MIN) / (_MAP_LAT_MAX - _MAP_LAT_MIN)) * h_px)
+            return x, y
+
+        gw = max(1, SUPER // 2)
+        for glon in range(-150, 181, 30):
+            pts = [lonlat_px(glon, lat) for lat in range(-80, 81, 10)]
+            for i in range(len(pts) - 1):
+                drw.line([pts[i], pts[i + 1]], fill=_PIL_C_GRID, width=gw)
+        for glat in range(-60, 61, 30):
+            drw.line([lonlat_px(-180, glat), lonlat_px(180, glat)],
+                     fill=_PIL_C_GRID, width=gw)
+        drw.line([lonlat_px(-180, 0), lonlat_px(180, 0)], fill=_PIL_C_EQ, width=SUPER)
+        for poly in _CONTINENT_POLYS:
+            if len(poly) < 3:
+                continue
+            drw.polygon([lonlat_px(lon, lat) for lon, lat in poly],
+                        fill=_PIL_C_LAND, outline=_PIL_C_BORDER)
+
+    # ── Markers (same for both paths) ─────────────────────────────────────────
+    w_super = out_w * SUPER
+    h_super = out_h * SUPER
+    markers: list[tuple[int, int, tuple[int, int, int]]] = []
+    seen: set[tuple[str, str]] = set()
+    for rname, prov in regions:
+        key = (rname.strip().lower(), prov.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        coords = _REGION_COORDS.get(rname.strip().lower())
+        if not coords:
+            continue
+        lat, lon = coords
+        xp, yp = lonlat_px(lon, lat)
+        if not (0 <= xp < w_super and 0 <= yp < h_super):
+            continue
+        markers.append((xp, yp, _PIL_PROV_RGB.get(prov.lower(), (100, 116, 139))))
+
+    # ── Glow layer ─────────────────────────────────────────────────────────────
+    glow = _PILImage.new("RGBA", (w_super, h_super), (0, 0, 0, 0))
+    gdrw = _PILDraw.Draw(glow)
+    for xp, yp, c in markers:
+        r_g = int(22 * SUPER)
+        gdrw.ellipse([xp - r_g, yp - r_g, xp + r_g, yp + r_g], fill=(*c, 85))
+    glow      = glow.filter(_PILFilter.GaussianBlur(radius=int(10 * SUPER)))
+    base_rgba = _PILImage.alpha_composite(base.convert("RGBA"), glow)
+
+    # ── Sharp dots ─────────────────────────────────────────────────────────────
+    ddraw  = _PILDraw.Draw(base_rgba)
+    r_halo = int(7 * SUPER)
+    r_dot  = int(5 * SUPER)
+    r_core = int(2 * SUPER)
+    for xp, yp, c in markers:
+        ddraw.ellipse([xp - r_halo, yp - r_halo, xp + r_halo, yp + r_halo],
+                      fill=(255, 255, 255, 200))
+        ddraw.ellipse([xp - r_dot,  yp - r_dot,  xp + r_dot,  yp + r_dot],
+                      fill=(*c, 255))
+        ddraw.ellipse([xp - r_core, yp - r_core, xp + r_core, yp + r_core],
+                      fill=(255, 255, 255, 235))
+
+    # ── Frame + downscale ──────────────────────────────────────────────────────
+    result = base_rgba.convert("RGB")
+    _PILDraw.Draw(result).rectangle(
+        [0, 0, w_super - 1, h_super - 1], outline=_PIL_C_FRAME, width=max(1, SUPER)
+    )
+    final = result.resize((out_w, out_h), _PILImage.LANCZOS)
+
+    buf = io.BytesIO()
+    final.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 class _WorldMapFlowable(Flowable):
-    """A custom Flowable that draws an equirectangular world map with region markers."""
+    """A custom Flowable that renders a modern world map with region markers."""
 
     def __init__(
         self,
         width: float,
         height: float,
-        regions: list[tuple[str, str]],  # (region_name, provider)
+        regions: list[tuple[str, str]],
     ) -> None:
         Flowable.__init__(self)
-        self.width = width
-        self.height = height
+        self.width   = width
+        self.height  = height
         self.regions = regions
+        self._img_reader: "ImageReader | None" = self._prerender()
 
+    def _prerender(self) -> "ImageReader | None":
+        buf = _render_world_map_pil(self.width, self.height, self.regions)
+        if buf is None:
+            return None
+        return ImageReader(buf)
+
+    # ── ReportLab projection helper (y=0 at bottom) ────────────────────────
     def _proj(self, lon: float, lat: float) -> tuple[float, float]:
-        """Map (lon, lat) → canvas (x, y) in the flowable coordinate space."""
         x = (lon - _MAP_LON_MIN) / (_MAP_LON_MAX - _MAP_LON_MIN) * self.width
         y = (lat - _MAP_LAT_MIN) / (_MAP_LAT_MAX - _MAP_LAT_MIN) * self.height
         return x, y
@@ -331,73 +589,66 @@ class _WorldMapFlowable(Flowable):
         c = self.canv
         c.saveState()
 
-        # Ocean background
-        c.setFillColor(_MAP_OCEAN)
-        c.rect(0, 0, self.width, self.height, fill=1, stroke=0)
+        if self._img_reader is not None:
+            # PIL-rendered image path (high quality)
+            c.drawImage(
+                self._img_reader, 0, 0, self.width, self.height,
+                preserveAspectRatio=False, mask="auto",
+            )
+        else:
+            # ── ReportLab fallback (PIL unavailable) ───────────────────────
+            c.setFillColor(_MAP_OCEAN)
+            c.rect(0, 0, self.width, self.height, fill=1, stroke=0)
 
-        # Latitude / longitude grid lines
-        c.setStrokeColor(_MAP_GRID)
-        c.setLineWidth(0.3)
-        for lon in range(-150, 151, 30):
-            x, _ = self._proj(lon, 0)
-            c.line(x, 0, x, self.height)
-        for lat in range(-60, 61, 30):
-            _, y = self._proj(0, lat)
-            c.line(0, y, self.width, y)
+            c.setStrokeColor(_MAP_GRID)
+            c.setLineWidth(0.3)
+            for lon in range(-150, 151, 30):
+                x, _ = self._proj(lon, 0)
+                c.line(x, 0, x, self.height)
+            for lat in range(-60, 61, 30):
+                _, y = self._proj(0, lat)
+                c.line(0, y, self.width, y)
 
-        # Equator — slightly more visible
-        c.setStrokeColor(colors.HexColor("#8fb8d4"))
-        c.setLineWidth(0.6)
-        _, y_eq = self._proj(0, 0)
-        c.line(0, y_eq, self.width, y_eq)
+            c.setFillColor(_MAP_LAND)
+            c.setStrokeColor(_MAP_BORDER)
+            c.setLineWidth(0.5)
+            for poly in _CONTINENT_POLYS:
+                if len(poly) < 3:
+                    continue
+                path = c.beginPath()
+                x0, y0 = self._proj(*poly[0])
+                path.moveTo(x0, y0)
+                for lon, lat in poly[1:]:
+                    path.lineTo(*self._proj(lon, lat))
+                path.close()
+                c.drawPath(path, fill=1, stroke=1)
 
-        # Continent polygons
-        c.setFillColor(_MAP_LAND)
-        c.setStrokeColor(_MAP_BORDER)
-        c.setLineWidth(0.5)
-        for poly in _CONTINENT_POLYS:
-            if len(poly) < 3:
-                continue
-            path = c.beginPath()
-            x0, y0 = self._proj(*poly[0])
-            path.moveTo(x0, y0)
-            for lon, lat in poly[1:]:
+            c.setStrokeColor(_MAP_OUTLINE)
+            c.setLineWidth(1.0)
+            c.rect(0, 0, self.width, self.height, fill=0, stroke=1)
+
+            dot_r = min(3.5, self.height * 0.045)
+            seen_pts: set[tuple[str, str]] = set()
+            for region_name, provider in self.regions:
+                key = (region_name.strip().lower(), provider.lower())
+                if key in seen_pts:
+                    continue
+                seen_pts.add(key)
+                coords = _REGION_COORDS.get(region_name.strip().lower())
+                if not coords:
+                    continue
+                lat, lon = coords
+                if lat < _MAP_LAT_MIN or lat > _MAP_LAT_MAX:
+                    continue
                 x, y = self._proj(lon, lat)
-                path.lineTo(x, y)
-            path.close()
-            c.drawPath(path, fill=1, stroke=1)
-
-        # Map outer border
-        c.setStrokeColor(_MAP_OUTLINE)
-        c.setLineWidth(1.0)
-        c.rect(0, 0, self.width, self.height, fill=0, stroke=1)
-
-        # Region markers
-        dot_r = min(3.5, self.height * 0.045)
-        # Deduplicate before drawing
-        seen_pts: set[tuple[str, str]] = set()
-        for region_name, provider in self.regions:
-            key = (region_name.strip().lower(), provider.lower())
-            if key in seen_pts:
-                continue
-            seen_pts.add(key)
-            coords = _REGION_COORDS.get(region_name.strip().lower())
-            if not coords:
-                continue
-            lat, lon = coords
-            if lat < _MAP_LAT_MIN or lat > _MAP_LAT_MAX:
-                continue
-            x, y = self._proj(lon, lat)
-            prov_color = _PROVIDER_DOT_COLORS.get(provider.lower(), C_GREY)
-            # White halo for legibility over land polygons
-            c.setFillColor(C_WHITE)
-            c.setLineWidth(0)
-            c.circle(x, y, dot_r + 1.8, fill=1, stroke=0)
-            # Colored core dot
-            c.setFillColor(prov_color)
-            c.setStrokeColor(C_WHITE)
-            c.setLineWidth(0.8)
-            c.circle(x, y, dot_r, fill=1, stroke=1)
+                prov_color = _PROVIDER_DOT_COLORS.get(provider.lower(), C_GREY)
+                c.setFillColor(C_WHITE)
+                c.setLineWidth(0)
+                c.circle(x, y, dot_r + 1.8, fill=1, stroke=0)
+                c.setFillColor(prov_color)
+                c.setStrokeColor(C_WHITE)
+                c.setLineWidth(0.8)
+                c.circle(x, y, dot_r, fill=1, stroke=1)
 
         c.restoreState()
 
@@ -1352,7 +1603,12 @@ def _data_geography_section(report: Report, S: dict) -> list:
     # World map drawing
     map_h = CONTENT_W * 0.48
     elems.append(_WorldMapFlowable(CONTENT_W, map_h, regions))
-    elems.append(Spacer(1, 3 * mm))
+    elems.append(Paragraph(
+        "Map tiles © <a href='https://carto.com/attributions'>CARTO</a> · "
+        "© <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors, ODbL",
+        S["muted"],
+    ))
+    elems.append(Spacer(1, 2 * mm))
 
     # Legend (provider colour key)
     legend_items = [
