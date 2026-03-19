@@ -15,6 +15,7 @@ from wafpass.loader import load_controls
 from wafpass.models import Report
 from wafpass.parser import TerraformState, parse_terraform
 from wafpass.reporter import print_report, print_summary_only
+from wafpass.waivers import DEFAULT_SKIP_FILE, apply_waivers, load_waivers
 
 
 def _is_literal_string(val: object) -> bool:
@@ -181,6 +182,14 @@ def check(
         "--summary",
         help="Print only the summary table, not per-control details.",
     ),
+    skip_file: Path = typer.Option(
+        None,
+        "--skip-file",
+        help=(
+            f"Path to a YAML waiver file listing controls to intentionally skip "
+            f"(default: auto-discovered '{DEFAULT_SKIP_FILE}' in the current directory)."
+        ),
+    ),
 ) -> None:
     """Check Terraform files against WAF++ YAML controls."""
 
@@ -249,6 +258,30 @@ def check(
     # ── Apply severity filter ─────────────────────────────────────────────────
     if severity:
         results = filter_by_severity(results, severity)
+
+    # ── Apply waivers ─────────────────────────────────────────────────────────
+    resolved_skip_file = skip_file or (
+        Path(DEFAULT_SKIP_FILE) if Path(DEFAULT_SKIP_FILE).exists() else None
+    )
+    if resolved_skip_file:
+        try:
+            waivers = load_waivers(resolved_skip_file)
+        except ValueError as exc:
+            typer.echo(f"ERROR in waiver file: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        if waivers:
+            expired = apply_waivers(results, waivers)
+            waived_ids = [w.id for w in waivers]
+            typer.echo(
+                f"Waivers applied: {len(waived_ids)} control(s) marked as WAIVED "
+                f"({', '.join(waived_ids)})"
+            )
+            for w in expired:
+                typer.echo(
+                    f"WARNING: Waiver for {w.id} expired on {w.expires} — "
+                    "please review and renew or remove it.",
+                    err=True,
+                )
 
     # ── Build report ──────────────────────────────────────────────────────────
     str_paths = [str(p) for p in paths]

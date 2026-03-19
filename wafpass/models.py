@@ -80,10 +80,14 @@ class ControlResult:
 
     control: Control
     results: list[CheckResult] = field(default_factory=list)
+    waived_reason: str | None = None
+    # Set by the waiver system; non-None means the control is intentionally waived.
 
     @property
     def status(self) -> str:
-        """PASS if all results pass, FAIL if any fail, SKIP otherwise."""
+        """WAIVED if explicitly waived; otherwise PASS/FAIL/SKIP from check results."""
+        if self.waived_reason is not None:
+            return "WAIVED"
         if not self.results:
             return "SKIP"
         statuses = {r.status for r in self.results}
@@ -118,6 +122,10 @@ class Report:
     @property
     def total_skip(self) -> int:
         return sum(1 for r in self.results if r.status == "SKIP")
+
+    @property
+    def total_waived(self) -> int:
+        return sum(1 for r in self.results if r.status == "WAIVED")
 
     @property
     def check_pass(self) -> int:

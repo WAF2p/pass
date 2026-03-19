@@ -91,6 +91,81 @@ infra/
 wafpass check infra/aws infra/azure infra/gcp --fail-on fail
 ```
 
+## Intentional waivers (skipping controls on purpose)
+
+Some controls may not apply to your setup, or you may have accepted the risk through an alternative compensating control. PASS lets you explicitly waive controls with a written justification so that:
+
+- The control is shown as **WAIVED** (○) instead of FAIL or SKIP.
+- The waiver reason is recorded in both the console output and the PDF report.
+- Waived controls **never** cause a non-zero exit code, so CI pipelines are not blocked.
+- Expired waivers trigger a warning, prompting the team to revisit the accepted risk.
+
+### Waiver file format
+
+Create a `.wafpass-skip.yml` file (auto-discovered in the current directory, or specify a path with `--skip-file`):
+
+```yaml
+# .wafpass-skip.yml
+waivers:
+  - id: WAF-SEC-020
+    reason: "Handled by quarterly external IAM review — tracked in SEC-1234"
+    expires: "2026-09-30"   # optional ISO-8601 date; triggers a warning when past
+
+  - id: WAF-COST-010
+    reason: "Cost tagging enforced at the Terraform module level, not individual resources"
+
+  - id: WAF-SOV-030
+    reason: "Sovereign data residency confirmed via contractual DPA with cloud provider"
+    expires: "2027-01-01"
+```
+
+Each entry requires:
+- `id` — the WAF++ control ID (e.g. `WAF-SEC-020`)
+- `reason` — a mandatory plain-text justification
+
+And optionally:
+- `expires` — ISO-8601 date (`YYYY-MM-DD`); once past, a warning is printed but the waiver is still applied
+
+### Using waivers
+
+```bash
+# Auto-discovery: place .wafpass-skip.yml in the current directory
+wafpass check ./infra/
+
+# Explicit path
+wafpass check ./infra/ --skip-file ./compliance/accepted-risks.yml
+
+# Works with multi-cloud paths too
+wafpass check ./aws ./azure --skip-file ./accepted-risks.yml
+```
+
+Console output shows the waiver reason inline:
+
+```
+ WAF-SEC-020  Least Privilege & RBAC  [CRITICAL]  ○
+  ○ WAIVED  Handled by quarterly external IAM review — tracked in SEC-1234
+```
+
+The summary line includes the WAIVED count:
+
+```
+  Summary   Controls: 70   ✓ PASS: 5   ✗ FAIL: 2   ─ SKIP: 61   ○ WAIVED: 2
+```
+
+The PDF report includes a **Waived Controls** table (purple header) listing every waived control and its recorded justification.
+
+### Waivers and CI/CD
+
+Waivers are safe to use in pipelines. A `WAIVED` control never increments `total_fail` or `total_skip`, so it cannot trigger a non-zero exit code regardless of the `--fail-on` mode. This means you can block a pipeline on real failures while allowing acknowledged exceptions to pass through.
+
+If a waiver has expired, the tool prints a warning to stderr but continues normally — a deliberate choice so pipelines do not break unexpectedly. The intent is to prompt a human review, not an automated failure.
+
+```yaml
+# GitHub Actions: block on failures, allow waivers
+- name: Run WAF++ PASS
+  run: wafpass check ./infra/ --skip-file compliance/accepted-risks.yml --fail-on fail
+```
+
 ## Exit codes
 
 | Code | Meaning |

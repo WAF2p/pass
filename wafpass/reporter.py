@@ -21,10 +21,11 @@ SEVERITY_COLORS: dict[str, str] = {
 }
 
 STATUS_ICONS = {
-    "PASS": ("✓", "green"),
-    "FAIL": ("✗", "red"),
-    "SKIP": ("─", "yellow"),
-    "ERROR": ("!", "bold red"),
+    "PASS":   ("✓", "green"),
+    "FAIL":   ("✗", "red"),
+    "SKIP":   ("─", "yellow"),
+    "WAIVED": ("○", "blue"),
+    "ERROR":  ("!", "bold red"),
 }
 
 
@@ -87,6 +88,12 @@ def _print_control_section(cr: ControlResult, verbose: bool) -> None:
 
     console.print(Rule(title_text, style="dim"))
 
+    if cr.waived_reason is not None:
+        console.print(
+            f"  [blue]○ WAIVED[/blue]  [dim]{cr.waived_reason}[/dim]\n"
+        )
+        return
+
     if not cr.results:
         console.print("  [yellow]─ SKIP[/yellow]  No matching resources found.\n")
         return
@@ -144,11 +151,13 @@ def _print_summary(report: Report) -> None:
     table.add_column(style="bold white", no_wrap=True)
     table.add_column(style="white", no_wrap=True)
 
+    waived_part = f"   [blue]○ WAIVED: {report.total_waived}[/blue]" if report.total_waived else ""
     controls_summary = (
         f"Controls: {report.controls_run}   "
         f"[green]✓ PASS: {report.total_pass}[/green]   "
         f"[red]✗ FAIL: {report.total_fail}[/red]   "
         f"[yellow]─ SKIP: {report.total_skip}[/yellow]"
+        f"{waived_part}"
     )
     checks_summary = (
         f"Checks:   {report.check_pass + report.check_fail + report.check_skip}   "
@@ -163,6 +172,11 @@ def _print_summary(report: Report) -> None:
 
     if report.total_fail > 0:
         console.print("  [bold red]EXIT CODE: 1[/bold red]  [dim](failures detected)[/dim]")
+    elif report.total_waived > 0:
+        console.print(
+            "  [bold green]EXIT CODE: 0[/bold green]  "
+            f"[dim](all checks passed or waived — {report.total_waived} waived)[/dim]"
+        )
     else:
         console.print("  [bold green]EXIT CODE: 0[/bold green]  [dim](all checks passed)[/dim]")
 

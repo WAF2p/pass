@@ -109,6 +109,8 @@ C_GREY_LT  = colors.HexColor("#f1f5f9")
 C_BORDER   = colors.HexColor("#e2e8f0")
 C_WHITE    = colors.white
 C_DARK     = colors.HexColor("#1e293b")
+C_PURPLE   = colors.HexColor("#7c3aed")
+C_PURPLE_LT= colors.HexColor("#ede9fe")
 
 PAGE_W, PAGE_H = A4
 MARGIN     = 2.0 * cm
@@ -121,11 +123,12 @@ SEVERITY_COLORS: dict[str, tuple] = {
     "low":      (C_BLUE,   C_BLUE_LT),
 }
 STATUS_COLORS: dict[str, tuple] = {
-    "PASS": (C_GREEN,  C_GREEN_LT),
-    "FAIL": (C_RED,    C_RED_LT),
-    "SKIP": (C_GREY,   C_GREY_LT),
+    "PASS":   (C_GREEN,  C_GREEN_LT),
+    "FAIL":   (C_RED,    C_RED_LT),
+    "SKIP":   (C_GREY,   C_GREY_LT),
+    "WAIVED": (C_PURPLE, C_PURPLE_LT),
 }
-STATUS_ICON = {"PASS": "✓", "FAIL": "✗", "SKIP": "─"}
+STATUS_ICON = {"PASS": "✓", "FAIL": "✗", "SKIP": "─", "WAIVED": "○"}
 
 # ── Risk & Financial impact constants ─────────────────────────────────────────
 
@@ -1005,7 +1008,7 @@ def _hr(color=C_BORDER, thickness=0.5) -> HRFlowable:
 
 def _status_pill(status: str, S: dict) -> Paragraph:
     icon = STATUS_ICON.get(status, "?")
-    style_key = {"PASS": "pill_pass", "FAIL": "pill_fail", "SKIP": "pill_skip"}.get(status, "body_sm")
+    style_key = {"PASS": "pill_pass", "FAIL": "pill_fail", "SKIP": "pill_skip", "WAIVED": "pill_skip"}.get(status, "body_sm")
     return Paragraph(f"{icon} {status}", S[style_key])
 
 
@@ -1074,11 +1077,12 @@ def _cover_content(report: Report, S: dict, generated_at: str) -> list:
     elems.append(meta_table)
     elems.append(Spacer(1, 1.5 * cm))
 
-    # Quick-stat boxes: PASS / FAIL / SKIP
+    # Quick-stat boxes: PASS / FAIL / SKIP / WAIVED
     stats = [
-        (f"{report.total_pass}", "PASS", C_GREEN,  C_GREEN_LT),
-        (f"{report.total_fail}", "FAIL", C_RED,    C_RED_LT),
-        (f"{report.total_skip}", "SKIP", C_GREY,   C_GREY_LT),
+        (f"{report.total_pass}",   "PASS",   C_GREEN,  C_GREEN_LT),
+        (f"{report.total_fail}",   "FAIL",   C_RED,    C_RED_LT),
+        (f"{report.total_skip}",   "SKIP",   C_GREY,   C_GREY_LT),
+        (f"{report.total_waived}", "WAIVED", C_PURPLE, C_PURPLE_LT),
     ]
     stat_cells = []
     for val, label, fg, bg in stats:
@@ -1100,10 +1104,10 @@ def _cover_content(report: Report, S: dict, generated_at: str) -> list:
         )
         stat_cells.append(cell)
 
-    box_w = (CONTENT_W - 2 * 0.5 * cm) / 3
+    box_w = (CONTENT_W - 3 * 0.5 * cm) / 4
     stat_row = Table(
         [stat_cells],
-        colWidths=[box_w, box_w, box_w],
+        colWidths=[box_w, box_w, box_w, box_w],
         style=TableStyle([
             ("LEFTPADDING",   (0, 0), (-1, -1), 4),
             ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
@@ -1135,11 +1139,14 @@ def _executive_summary(report: Report, S: dict) -> list:
         ["─ Skipped",
          str(report.total_skip),
          str(report.check_skip)],
+        ["○ Waived",
+         str(report.total_waived),
+         "—"],
         ["Total",
          str(report.controls_run),
          str(total_checks)],
     ]
-    row_colors = [C_GREY_LT, C_GREEN_LT, C_RED_LT, C_YELLOW_LT, C_BLUE_LT]
+    row_colors = [C_GREY_LT, C_GREEN_LT, C_RED_LT, C_YELLOW_LT, C_PURPLE_LT, C_BLUE_LT]
     col_w = [CONTENT_W * 0.45, CONTENT_W * 0.275, CONTENT_W * 0.275]
 
     ts = TableStyle([
@@ -1170,14 +1177,20 @@ def _executive_summary(report: Report, S: dict) -> list:
     for cr in report.results:
         p = cr.control.pillar.capitalize()
         if p not in pillars:
-            pillars[p] = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+            pillars[p] = {"PASS": 0, "FAIL": 0, "SKIP": 0, "WAIVED": 0}
         pillars[p][cr.status] = pillars[p].get(cr.status, 0) + 1
 
     if pillars:
         elems += _section_header("Pillar Breakdown", S)
-        pill_rows = [["Pillar", "✓ Pass", "✗ Fail", "─ Skip"]]
+        pill_rows = [["Pillar", "✓ Pass", "✗ Fail", "─ Skip", "○ Waived"]]
         for pname, cnts in sorted(pillars.items()):
-            pill_rows.append([pname, str(cnts["PASS"]), str(cnts["FAIL"]), str(cnts["SKIP"])])
+            pill_rows.append([
+                pname,
+                str(cnts.get("PASS", 0)),
+                str(cnts.get("FAIL", 0)),
+                str(cnts.get("SKIP", 0)),
+                str(cnts.get("WAIVED", 0)),
+            ])
 
         pts = TableStyle([
             ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
@@ -1192,7 +1205,7 @@ def _executive_summary(report: Report, S: dict) -> list:
             ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
             ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
         ])
-        col_w2 = [CONTENT_W * 0.4, CONTENT_W * 0.2, CONTENT_W * 0.2, CONTENT_W * 0.2]
+        col_w2 = [CONTENT_W * 0.32, CONTENT_W * 0.17, CONTENT_W * 0.17, CONTENT_W * 0.17, CONTENT_W * 0.17]
         elems.append(Table([[Paragraph(str(v), S["body_sm"]) for v in row]
                              for row in pill_rows],
                             colWidths=col_w2, style=pts))
@@ -1402,8 +1415,9 @@ def _findings_section(report: Report, S: dict) -> list:
 # ── Passed controls appendix ──────────────────────────────────────────────────
 
 def _passed_section(report: Report, S: dict) -> list:
-    passed = [cr for cr in report.results if cr.status == "PASS"]
+    passed  = [cr for cr in report.results if cr.status == "PASS"]
     skipped = [cr for cr in report.results if cr.status == "SKIP"]
+    waived  = [cr for cr in report.results if cr.status == "WAIVED"]
     elems = [*_section_header("Passed Controls", S)]
 
     if passed:
@@ -1480,6 +1494,45 @@ def _passed_section(report: Report, S: dict) -> list:
             ],
             colWidths=col_w2, style=ts2))
 
+    if waived:
+        elems += [Spacer(1, 5 * mm), *_section_header("Waived Controls", S),
+                  Paragraph(
+                      "The following controls have been intentionally waived by the team. "
+                      "Each waiver includes the justification recorded at the time of acceptance. "
+                      "Waived controls do not contribute to the risk score or exit code.",
+                      S["muted"]),
+                  Spacer(1, 3 * mm)]
+        waive_rows = [["Control ID", "Title", "Waiver Reason"]]
+        for cr in waived:
+            waive_rows.append([
+                cr.control.id,
+                cr.control.title[:45] + ("…" if len(cr.control.title) > 45 else ""),
+                (cr.waived_reason or "")[:80],
+            ])
+        ts3 = TableStyle([
+            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_PURPLE),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_PURPLE_LT]),
+        ])
+        col_w3 = [2.8 * cm, CONTENT_W * 0.4, CONTENT_W - 2.8 * cm - CONTENT_W * 0.4]
+        elems.append(Table(
+            [
+                [Paragraph(str(v), S["tbl_header_left"] if j == 0 else S["tbl_header"])
+                 for j, v in enumerate(row)]
+                if i == 0 else
+                [Paragraph(str(v), S["body_sm"]) for v in row]
+                for i, row in enumerate(waive_rows)
+            ],
+            colWidths=col_w3, style=ts3))
+
     return elems
 
 
@@ -1498,7 +1551,7 @@ def _build_framework_map(report: Report) -> dict[str, dict]:
             if not fname:
                 continue
             if fname not in frameworks:
-                frameworks[fname] = {"items": [], "PASS": 0, "FAIL": 0, "SKIP": 0}
+                frameworks[fname] = {"items": [], "PASS": 0, "FAIL": 0, "SKIP": 0, "WAIVED": 0}
             frameworks[fname]["items"].append(cr)
             frameworks[fname][cr.status] = frameworks[fname].get(cr.status, 0) + 1
     return frameworks
@@ -1670,10 +1723,10 @@ def _regulatory_alignment(report: Report, S: dict) -> list:
     ]
 
     # ── Summary table ─────────────────────────────────────────────────────────
-    summary_rows = [["Framework", "Mapped Controls", "✓ Pass", "✗ Fail", "─ Skip"]]
+    summary_rows = [["Framework", "Mapped Controls", "✓ Pass", "✗ Fail", "─ Skip", "○ Waived"]]
     for fname, d in frameworks.items():
-        total = d["PASS"] + d["FAIL"] + d["SKIP"]
-        summary_rows.append([fname, str(total), str(d["PASS"]), str(d["FAIL"]), str(d["SKIP"])])
+        total = d["PASS"] + d["FAIL"] + d["SKIP"] + d.get("WAIVED", 0)
+        summary_rows.append([fname, str(total), str(d["PASS"]), str(d["FAIL"]), str(d["SKIP"]), str(d.get("WAIVED", 0))])
 
     sum_ts = TableStyle([
         ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
@@ -1696,9 +1749,12 @@ def _regulatory_alignment(report: Report, S: dict) -> list:
         if d["PASS"] > 0:
             sum_ts.add("TEXTCOLOR", (2, i), (2, i), C_GREEN)
             sum_ts.add("FONTNAME",  (2, i), (2, i), "Helvetica-Bold")
+        if d.get("WAIVED", 0) > 0:
+            sum_ts.add("TEXTCOLOR", (5, i), (5, i), C_PURPLE)
+            sum_ts.add("FONTNAME",  (5, i), (5, i), "Helvetica-Bold")
 
-    sum_col_w = [CONTENT_W * 0.42, CONTENT_W * 0.15, CONTENT_W * 0.15,
-                 CONTENT_W * 0.14, CONTENT_W * 0.14]
+    sum_col_w = [CONTENT_W * 0.34, CONTENT_W * 0.14, CONTENT_W * 0.13,
+                 CONTENT_W * 0.13, CONTENT_W * 0.13, CONTENT_W * 0.13]
     elems.append(Table(
         [[Paragraph(str(v), S["tbl_header_left"] if j == 0 else S["tbl_header"])
           for j, v in enumerate(row)]
