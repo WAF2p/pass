@@ -14,6 +14,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.platypus import (
     BaseDocTemplate,
+    Flowable,
     Frame,
     HRFlowable,
     NextPageTemplate,
@@ -117,6 +118,288 @@ STATUS_COLORS: dict[str, tuple] = {
     "SKIP": (C_GREY,   C_GREY_LT),
 }
 STATUS_ICON = {"PASS": "✓", "FAIL": "✗", "SKIP": "─"}
+
+
+# ── World map constants ───────────────────────────────────────────────────────
+
+_MAP_LAT_MIN, _MAP_LAT_MAX = -80.0, 80.0
+_MAP_LON_MIN, _MAP_LON_MAX = -180.0, 180.0
+
+_MAP_OCEAN   = colors.HexColor("#c8dff0")
+_MAP_LAND    = colors.HexColor("#e8e4d4")
+_MAP_BORDER  = colors.HexColor("#b0b89a")
+_MAP_GRID    = colors.HexColor("#b0c8dc")
+_MAP_OUTLINE = colors.HexColor("#7a9ab8")
+
+_PROVIDER_DOT_COLORS: dict[str, "colors.Color"] = {
+    "aws":   colors.HexColor("#f97316"),  # orange
+    "azure": colors.HexColor("#2b7fff"),  # blue
+    "gcp":   colors.HexColor("#22c55e"),  # green
+}
+
+# Simplified continent polygons as (lon, lat) lists
+_CONTINENT_POLYS: list[list[tuple[float, float]]] = [
+    # North America
+    [(-168,71),(-155,60),(-140,60),(-130,54),(-125,49),(-124,37),
+     (-118,33),(-110,23),(-90,16),(-85,10),(-77,8),
+     (-75,10),(-80,22),(-87,23),(-82,30),(-80,35),
+     (-75,45),(-70,47),(-63,47),(-60,47),(-55,50),(-55,60),
+     (-65,63),(-80,67),(-95,75),(-115,76),(-135,70),(-145,68),(-160,66),(-168,71)],
+    # Greenland
+    [(-44,60),(-40,65),(-36,70),(-22,76),(-18,83),(-30,84),
+     (-45,83),(-56,76),(-62,73),(-56,68),(-50,64),(-44,60)],
+    # South America
+    [(-80,12),(-77,8),(-75,0),(-78,-5),(-80,-15),(-76,-20),
+     (-70,-25),(-67,-35),(-65,-45),(-66,-55),(-68,-55),(-70,-50),
+     (-72,-42),(-65,-30),(-60,-23),(-50,-28),(-45,-23),(-40,-15),
+     (-38,-5),(-40,0),(-50,5),(-60,8),(-67,12),(-72,12),(-75,10),(-80,12)],
+    # Europe main body (Iberia, France, Mediterranean, Balkans)
+    [(-10,36),(0,36),(15,37),(28,37),(36,38),(36,42),(30,46),
+     (20,44),(18,40),(14,38),(10,38),(5,43),(-2,44),(-8,44),(-9,38),(-10,36)],
+    # Northern Europe + Scandinavia
+    [(-10,50),(0,50),(5,54),(10,57),(15,57),(18,60),(25,65),
+     (28,70),(30,72),(28,72),(25,70),(20,69),(15,68),(10,63),
+     (5,58),(0,54),(-5,50),(-10,50)],
+    # Great Britain
+    [(-5,50),(-3,50),(-2,51),(1,51),(0,52),(-1,54),(-2,57),
+     (-5,58),(-6,56),(-5,54),(-4,51),(-5,50)],
+    # Ireland
+    [(-10,52),(-7,52),(-6,53),(-7,55),(-8,55),(-10,54),(-10,52)],
+    # Africa
+    [(-17,15),(-15,10),(-10,5),(-2,5),(10,5),(10,2),(12,-4),
+     (12,-10),(14,-20),(18,-28),(20,-35),(26,-35),(32,-30),(36,-22),
+     (40,-10),(42,0),(42,10),(40,15),(45,12),(50,12),(44,20),
+     (38,22),(36,28),(33,31),(25,32),(10,37),(0,37),(-10,35),(-17,28),(-17,15)],
+    # Asia main body (Turkey to eastern Russia/China coast)
+    [(26,40),(36,42),(40,38),(50,30),(60,25),(70,25),(80,28),
+     (90,28),(100,20),(104,10),(110,5),(115,0),(120,5),(125,10),
+     (130,35),(135,40),(140,45),(145,50),(140,56),(135,60),
+     (130,65),(120,68),(100,73),(80,73),(60,70),(50,65),(40,65),
+     (30,70),(28,65),(25,60),(35,55),(40,50),(36,44),(30,44),(26,40)],
+    # Japan (Honshu simplified)
+    [(130,32),(132,34),(136,35),(138,36),(140,38),(141,41),
+     (140,44),(138,43),(135,42),(134,38),(133,35),(131,33),(130,32)],
+    # Australia
+    [(114,-22),(118,-16),(122,-14),(128,-14),(132,-12),(136,-12),
+     (138,-14),(140,-18),(145,-15),(148,-20),(150,-24),(152,-28),
+     (153,-30),(151,-33),(148,-38),(145,-40),(136,-35),(130,-33),
+     (120,-34),(115,-34),(114,-30),(114,-22)],
+    # New Zealand (South Island)
+    [(166,-46),(168,-46),(171,-42),(173,-38),(172,-37),(170,-38),(168,-44),(166,-46)],
+]
+
+# Region → (lat, lon) — canonical Terraform region identifiers (lowercase)
+_REGION_COORDS: dict[str, tuple[float, float]] = {
+    # ── AWS ──────────────────────────────────────────────────────────────────
+    "us-east-1":      (37.77, -77.42),   "us-east-2":      (39.96, -82.99),
+    "us-west-1":      (37.33, -121.89),  "us-west-2":      (45.51, -122.68),
+    "af-south-1":     (-33.92, 18.42),
+    "ap-east-1":      (22.32, 114.17),
+    "ap-south-1":     (19.08, 72.88),    "ap-south-2":     (17.39, 78.49),
+    "ap-southeast-1": (1.35, 103.82),    "ap-southeast-2": (-33.87, 151.21),
+    "ap-southeast-3": (-6.21, 106.85),   "ap-southeast-4": (-37.81, 144.96),
+    "ap-northeast-1": (35.68, 139.65),   "ap-northeast-2": (37.57, 126.98),
+    "ap-northeast-3": (34.69, 135.50),
+    "ca-central-1":   (45.42, -75.70),   "ca-west-1":      (51.04, -114.07),
+    "eu-central-1":   (50.11, 8.68),     "eu-central-2":   (47.38, 8.54),
+    "eu-west-1":      (53.35, -6.26),    "eu-west-2":      (51.51, -0.13),
+    "eu-west-3":      (48.86, 2.35),     "eu-south-1":     (45.47, 9.19),
+    "eu-south-2":     (40.42, -3.70),    "eu-north-1":     (59.33, 18.07),
+    "il-central-1":   (32.09, 34.78),
+    "me-central-1":   (25.20, 55.27),    "me-south-1":     (26.07, 50.56),
+    "sa-east-1":      (-23.55, -46.63),
+    # ── Azure ─────────────────────────────────────────────────────────────────
+    "eastus":             (37.77, -77.42),   "eastus2":            (36.67, -78.39),
+    "westus":             (37.33, -121.89),  "westus2":            (47.20, -119.85),
+    "westus3":            (33.45, -112.07),  "centralus":          (41.59, -93.62),
+    "northcentralus":     (41.88, -87.63),   "southcentralus":     (29.42, -98.49),
+    "westcentralus":      (40.89, -110.23),
+    "northeurope":        (53.35, -6.26),    "westeurope":         (52.37, 4.90),
+    "uksouth":            (51.51, -0.13),    "ukwest":             (53.41, -2.99),
+    "francecentral":      (48.86, 2.35),     "francesouth":        (43.83, 2.20),
+    "germanywestcentral": (50.11, 8.68),     "germanynorth":       (53.07, 8.81),
+    "switzerlandnorth":   (47.45, 8.45),     "switzerlandwest":    (46.20, 6.14),
+    "norwayeast":         (59.91, 10.75),    "swedencentral":      (60.67, 17.14),
+    "eastasia":           (22.32, 114.17),   "southeastasia":      (1.35, 103.82),
+    "australiaeast":      (-33.87, 151.21),  "australiasoutheast": (-37.81, 144.96),
+    "australiacentral":   (-35.31, 149.12),
+    "japaneast":          (35.68, 139.65),   "japanwest":          (34.69, 135.50),
+    "koreacentral":       (37.57, 126.98),   "koreasouth":         (35.18, 129.08),
+    "centralindia":       (18.52, 73.86),    "southindia":         (12.97, 77.59),
+    "westindia":          (19.08, 72.88),
+    "brazilsouth":        (-23.55, -46.63),  "brazilsoutheast":    (-22.91, -43.17),
+    "canadacentral":      (43.65, -79.38),   "canadaeast":         (46.81, -71.21),
+    "southafricanorth":   (-25.73, 28.22),   "southafricawest":    (-33.92, 18.42),
+    "uaenorth":           (25.20, 55.27),    "uaecentral":         (24.45, 54.38),
+    # ── GCP ───────────────────────────────────────────────────────────────────
+    "us-central1":             (41.26, -95.86),  "us-east1":              (33.20, -80.01),
+    "us-east4":                (38.99, -77.36),  "us-east5":              (40.02, -75.10),
+    "us-south1":               (32.78, -96.80),  "us-west1":              (45.59, -121.18),
+    "us-west2":                (34.05, -118.24), "us-west3":              (40.76, -111.89),
+    "us-west4":                (36.17, -115.14),
+    "northamerica-northeast1": (45.50, -73.57),  "northamerica-northeast2": (43.65, -79.38),
+    "southamerica-east1":      (-23.55, -46.63), "southamerica-west1":    (-33.45, -70.67),
+    "europe-central2":         (52.23, 21.01),   "europe-north1":         (60.57, 27.19),
+    "europe-southwest1":       (38.72, -9.14),   "europe-west1":          (50.45, 3.81),
+    "europe-west2":            (51.51, -0.13),   "europe-west3":          (50.11, 8.68),
+    "europe-west4":            (53.44, 6.84),    "europe-west6":          (47.38, 8.54),
+    "europe-west8":            (45.46, 9.19),    "europe-west9":          (48.86, 2.35),
+    "europe-west10":           (52.52, 13.41),   "europe-west12":         (45.07, 7.69),
+    "asia-east1":              (24.05, 120.52),  "asia-east2":            (22.32, 114.17),
+    "asia-northeast1":         (35.68, 139.65),  "asia-northeast2":       (34.69, 135.50),
+    "asia-northeast3":         (37.57, 126.98),  "asia-south1":           (19.08, 72.88),
+    "asia-south2":             (28.61, 77.21),   "asia-southeast1":       (1.35, 103.82),
+    "asia-southeast2":         (-6.21, 106.85),
+    "australia-southeast1":    (-33.87, 151.21), "australia-southeast2":  (-37.81, 144.96),
+    "me-central1":             (25.20, 55.27),   "me-central2":           (25.20, 55.27),
+    "me-west1":                (32.09, 34.78),   "africa-south1":         (-33.92, 18.42),
+}
+
+# Human-readable labels for common regions
+_REGION_LABELS: dict[str, str] = {
+    "us-east-1": "N. Virginia, USA",       "us-east-2": "Ohio, USA",
+    "us-west-1": "N. California, USA",     "us-west-2": "Oregon, USA",
+    "af-south-1": "Cape Town, South Africa",
+    "ap-east-1": "Hong Kong",              "ap-south-1": "Mumbai, India",
+    "ap-south-2": "Hyderabad, India",
+    "ap-southeast-1": "Singapore",         "ap-southeast-2": "Sydney, Australia",
+    "ap-southeast-3": "Jakarta, Indonesia","ap-southeast-4": "Melbourne, Australia",
+    "ap-northeast-1": "Tokyo, Japan",      "ap-northeast-2": "Seoul, South Korea",
+    "ap-northeast-3": "Osaka, Japan",
+    "ca-central-1": "Canada (Central)",    "ca-west-1": "Calgary, Canada",
+    "eu-central-1": "Frankfurt, Germany",  "eu-central-2": "Zurich, Switzerland",
+    "eu-west-1": "Ireland",                "eu-west-2": "London, UK",
+    "eu-west-3": "Paris, France",          "eu-south-1": "Milan, Italy",
+    "eu-south-2": "Madrid, Spain",         "eu-north-1": "Stockholm, Sweden",
+    "il-central-1": "Tel Aviv, Israel",
+    "me-central-1": "UAE",                 "me-south-1": "Bahrain",
+    "sa-east-1": "São Paulo, Brazil",
+    "eastus": "E. USA (Virginia)",         "eastus2": "E. USA 2 (Virginia)",
+    "westus": "W. USA (California)",       "westus2": "W. USA 2 (Washington)",
+    "westus3": "W. USA 3 (Arizona)",       "centralus": "Central USA (Iowa)",
+    "northcentralus": "N. Central USA",    "southcentralus": "S. Central USA",
+    "northeurope": "Ireland",              "westeurope": "Netherlands",
+    "uksouth": "London, UK",               "ukwest": "Cardiff, UK",
+    "francecentral": "Paris, France",      "germanywestcentral": "Frankfurt, Germany",
+    "switzerlandnorth": "Zurich, Switzerland",
+    "norwayeast": "Oslo, Norway",          "swedencentral": "Gävle, Sweden",
+    "eastasia": "Hong Kong",              "southeastasia": "Singapore",
+    "australiaeast": "Sydney, Australia",  "australiasoutheast": "Melbourne, Australia",
+    "japaneast": "Tokyo, Japan",           "koreacentral": "Seoul, South Korea",
+    "centralindia": "Pune, India",         "brazilsouth": "São Paulo, Brazil",
+    "canadacentral": "Toronto, Canada",    "southafricanorth": "Johannesburg, SA",
+    "uaenorth": "Dubai, UAE",
+    "us-central1": "Iowa, USA",            "us-east1": "S. Carolina, USA",
+    "us-east4": "N. Virginia, USA",        "us-west1": "Oregon, USA",
+    "us-west2": "Los Angeles, USA",
+    "northamerica-northeast1": "Montréal, Canada",
+    "southamerica-east1": "São Paulo, Brazil",
+    "europe-west1": "Belgium",             "europe-west2": "London, UK",
+    "europe-west3": "Frankfurt, Germany",  "europe-west4": "Netherlands",
+    "europe-west6": "Zurich, Switzerland", "europe-west9": "Paris, France",
+    "europe-north1": "Finland",            "europe-central2": "Warsaw, Poland",
+    "asia-east1": "Taiwan",                "asia-east2": "Hong Kong",
+    "asia-northeast1": "Tokyo, Japan",     "asia-northeast3": "Seoul, South Korea",
+    "asia-south1": "Mumbai, India",        "asia-southeast1": "Singapore",
+    "asia-southeast2": "Jakarta, Indonesia",
+    "australia-southeast1": "Sydney, Australia",
+    "me-west1": "Tel Aviv, Israel",        "africa-south1": "Cape Town, SA",
+}
+
+
+class _WorldMapFlowable(Flowable):
+    """A custom Flowable that draws an equirectangular world map with region markers."""
+
+    def __init__(
+        self,
+        width: float,
+        height: float,
+        regions: list[tuple[str, str]],  # (region_name, provider)
+    ) -> None:
+        Flowable.__init__(self)
+        self.width = width
+        self.height = height
+        self.regions = regions
+
+    def _proj(self, lon: float, lat: float) -> tuple[float, float]:
+        """Map (lon, lat) → canvas (x, y) in the flowable coordinate space."""
+        x = (lon - _MAP_LON_MIN) / (_MAP_LON_MAX - _MAP_LON_MIN) * self.width
+        y = (lat - _MAP_LAT_MIN) / (_MAP_LAT_MAX - _MAP_LAT_MIN) * self.height
+        return x, y
+
+    def draw(self) -> None:
+        c = self.canv
+        c.saveState()
+
+        # Ocean background
+        c.setFillColor(_MAP_OCEAN)
+        c.rect(0, 0, self.width, self.height, fill=1, stroke=0)
+
+        # Latitude / longitude grid lines
+        c.setStrokeColor(_MAP_GRID)
+        c.setLineWidth(0.3)
+        for lon in range(-150, 151, 30):
+            x, _ = self._proj(lon, 0)
+            c.line(x, 0, x, self.height)
+        for lat in range(-60, 61, 30):
+            _, y = self._proj(0, lat)
+            c.line(0, y, self.width, y)
+
+        # Equator — slightly more visible
+        c.setStrokeColor(colors.HexColor("#8fb8d4"))
+        c.setLineWidth(0.6)
+        _, y_eq = self._proj(0, 0)
+        c.line(0, y_eq, self.width, y_eq)
+
+        # Continent polygons
+        c.setFillColor(_MAP_LAND)
+        c.setStrokeColor(_MAP_BORDER)
+        c.setLineWidth(0.5)
+        for poly in _CONTINENT_POLYS:
+            if len(poly) < 3:
+                continue
+            path = c.beginPath()
+            x0, y0 = self._proj(*poly[0])
+            path.moveTo(x0, y0)
+            for lon, lat in poly[1:]:
+                x, y = self._proj(lon, lat)
+                path.lineTo(x, y)
+            path.close()
+            c.drawPath(path, fill=1, stroke=1)
+
+        # Map outer border
+        c.setStrokeColor(_MAP_OUTLINE)
+        c.setLineWidth(1.0)
+        c.rect(0, 0, self.width, self.height, fill=0, stroke=1)
+
+        # Region markers
+        dot_r = min(3.5, self.height * 0.045)
+        # Deduplicate before drawing
+        seen_pts: set[tuple[str, str]] = set()
+        for region_name, provider in self.regions:
+            key = (region_name.strip().lower(), provider.lower())
+            if key in seen_pts:
+                continue
+            seen_pts.add(key)
+            coords = _REGION_COORDS.get(region_name.strip().lower())
+            if not coords:
+                continue
+            lat, lon = coords
+            if lat < _MAP_LAT_MIN or lat > _MAP_LAT_MAX:
+                continue
+            x, y = self._proj(lon, lat)
+            prov_color = _PROVIDER_DOT_COLORS.get(provider.lower(), C_GREY)
+            # White halo for legibility over land polygons
+            c.setFillColor(C_WHITE)
+            c.setLineWidth(0)
+            c.circle(x, y, dot_r + 1.8, fill=1, stroke=0)
+            # Colored core dot
+            c.setFillColor(prov_color)
+            c.setStrokeColor(C_WHITE)
+            c.setLineWidth(0.8)
+            c.circle(x, y, dot_r, fill=1, stroke=1)
+
+        c.restoreState()
 
 
 # ── Styles ────────────────────────────────────────────────────────────────────
@@ -1048,6 +1331,129 @@ def _regulatory_alignment(report: Report, S: dict) -> list:
     return elems
 
 
+# ── Data Geography section ────────────────────────────────────────────────────
+
+def _data_geography_section(report: Report, S: dict) -> list:
+    """Build the Data Geography & Sovereignty world-map section."""
+    regions: list[tuple[str, str]] = getattr(report, "detected_regions", [])
+
+    elems: list = [
+        *_section_header("Data Geography & Sovereignty", S),
+        Paragraph(
+            "The map below plots the geographic footprint of cloud infrastructure "
+            "detected in the Terraform configuration. Each marker shows a region "
+            "where data may be processed or stored — a critical factor for data "
+            "sovereignty, residency compliance, and cross-border transfer assessments.",
+            S["muted"],
+        ),
+        Spacer(1, 4 * mm),
+    ]
+
+    # World map drawing
+    map_h = CONTENT_W * 0.48
+    elems.append(_WorldMapFlowable(CONTENT_W, map_h, regions))
+    elems.append(Spacer(1, 3 * mm))
+
+    # Legend (provider colour key)
+    legend_items = [
+        (colors.HexColor("#f97316"), "● AWS"),
+        (colors.HexColor("#2b7fff"), "● Azure"),
+        (colors.HexColor("#22c55e"), "● GCP"),
+    ]
+    legend_cells = [
+        Paragraph(
+            f'<font color="#{_hex(col)}" name="Helvetica-Bold">{label}</font>',
+            ParagraphStyle("leg", fontName="Helvetica", fontSize=8,
+                           leading=12, textColor=C_DARK),
+        )
+        for col, label in legend_items
+    ]
+    legend_table = Table(
+        [legend_cells],
+        colWidths=[3 * cm, 3 * cm, 3 * cm],
+        style=TableStyle([
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]),
+    )
+    elems.append(legend_table)
+    elems.append(Spacer(1, 5 * mm))
+
+    if not regions:
+        elems.append(Paragraph(
+            "No explicit region or location attributes were detected in the Terraform "
+            "configuration. Ensure provider blocks and resource definitions declare "
+            "regions explicitly to enable sovereignty validation.",
+            ParagraphStyle("warn", fontName="Helvetica", fontSize=9, leading=13,
+                           textColor=C_ORANGE, backColor=C_ORANGE_LT,
+                           borderPadding=(6, 8, 6, 8)),
+        ))
+        return elems
+
+    # Detected regions table
+    elems += _section_header("Detected Regions", S)
+    unique_regions = sorted(set(regions), key=lambda x: (x[1].lower(), x[0].lower()))
+    elems.append(Paragraph(
+        f"{len(unique_regions)} unique cloud region(s) identified across the Terraform "
+        "configuration.",
+        S["muted"],
+    ))
+    elems.append(Spacer(1, 3 * mm))
+
+    header_row = ["Region Identifier", "Provider", "Geographic Location"]
+    data_rows = []
+    for region_name, provider in unique_regions:
+        label = _REGION_LABELS.get(region_name.strip().lower(), "")
+        if not label:
+            coords = _REGION_COORDS.get(region_name.strip().lower())
+            if coords:
+                lat, lon = coords
+                ns = "N" if lat >= 0 else "S"
+                ew = "E" if lon >= 0 else "W"
+                label = f"{abs(lat):.1f}°{ns}, {abs(lon):.1f}°{ew}"
+        data_rows.append((region_name, provider.upper(), label or "—"))
+
+    ts = TableStyle([
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("LEADING",       (0, 0), (-1, -1), 11),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+    ])
+    prov_color_map = {
+        "AWS":   C_ORANGE,
+        "AZURE": C_BLUE,
+        "GCP":   C_GREEN,
+    }
+    for i, (_, provider, _) in enumerate(data_rows, start=1):
+        c = prov_color_map.get(provider, C_GREY)
+        ts.add("TEXTCOLOR", (1, i), (1, i), c)
+        ts.add("FONTNAME",  (1, i), (1, i), "Helvetica-Bold")
+
+    col_w = [5.5 * cm, 2.5 * cm, CONTENT_W - 8 * cm]
+    all_rows = [header_row] + [list(r) for r in data_rows]
+    elems.append(Table(
+        [
+            [Paragraph(str(v), S["tbl_header_left"] if j == 0 else S["tbl_header"])
+             for j, v in enumerate(row)]
+            if i == 0 else
+            [Paragraph(str(v), S["body_sm"]) for v in row]
+            for i, row in enumerate(all_rows)
+        ],
+        colWidths=col_w, style=ts,
+    ))
+
+    return elems
+
+
 # ── Hex color helper ──────────────────────────────────────────────────────────
 
 def _hex(color: colors.Color) -> str:
@@ -1103,8 +1509,12 @@ def generate_pdf(report: Report, output_path: Path) -> None:
     # ── Cover ──────────────────────────────────────────────────────────────────
     story += _cover_content(report, S, generated_at)
 
-    # ── Executive Summary ──────────────────────────────────────────────────────
+    # ── Data Geography & Sovereignty (world map — early for sovereign context) ─
     story += [NextPageTemplate("normal"), PageBreak()]
+    story += _data_geography_section(report, S)
+
+    # ── Executive Summary ──────────────────────────────────────────────────────
+    story += [PageBreak()]
     story += _executive_summary(report, S)
 
     # ── Controls Overview ──────────────────────────────────────────────────────

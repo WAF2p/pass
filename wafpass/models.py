@@ -102,6 +102,8 @@ class Report:
     controls_loaded: int
     controls_run: int
     results: list[ControlResult] = field(default_factory=list)
+    detected_regions: list[tuple[str, str]] = field(default_factory=list)
+    # Each entry: (region_name, provider) e.g. ("eu-central-1", "aws")
 
     @property
     def total_pass(self) -> int:

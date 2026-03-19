@@ -11,8 +11,49 @@ from wafpass import __name_full__, __version__
 from wafpass.engine import filter_by_severity, run_controls
 from wafpass.loader import load_controls
 from wafpass.models import Report
-from wafpass.parser import parse_terraform
+from wafpass.parser import TerraformState, parse_terraform
 from wafpass.reporter import print_report, print_summary_only
+
+
+def _is_literal_string(val: object) -> bool:
+    """Return True if val is a plain string, not a Terraform expression."""
+    if not isinstance(val, str):
+        return False
+    v = val.strip()
+    return bool(v) and "${" not in v and not v.startswith("var.") and not v.startswith("local.")
+
+
+def _extract_regions(tf_state: TerraformState) -> list[tuple[str, str]]:
+    """Extract (region_name, provider) tuples from parsed Terraform state."""
+    seen: set[tuple[str, str]] = set()
+    result: list[tuple[str, str]] = []
+
+    def add(val: object, provider: str) -> None:
+        if _is_literal_string(val):
+            key = (str(val).strip().lower(), provider)
+            if key not in seen:
+                seen.add(key)
+                result.append((str(val).strip(), provider))
+
+    for blk in tf_state.providers:
+        pname = blk.type.lower()
+        if pname == "aws":
+            add(blk.attributes.get("region"), "aws")
+        elif pname in ("azurerm", "azuread", "azurestack"):
+            add(blk.attributes.get("location") or blk.attributes.get("region"), "azure")
+        elif pname in ("google", "google-beta"):
+            add(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+
+    for blk in tf_state.resources:
+        rtype = blk.type.lower()
+        if rtype.startswith("aws_"):
+            add(blk.attributes.get("region"), "aws")
+        elif rtype.startswith("azurerm_"):
+            add(blk.attributes.get("location"), "azure")
+        elif rtype.startswith("google_"):
+            add(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+
+    return result
 
 app = typer.Typer(
     name="wafpass",
@@ -142,6 +183,7 @@ def check(
         controls_loaded=len(controls),
         controls_run=len(results),
         results=results,
+        detected_regions=_extract_regions(tf),
     )
 
     # ── Output ────────────────────────────────────────────────────────────────
