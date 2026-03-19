@@ -260,9 +260,20 @@ def check(
         results = filter_by_severity(results, severity)
 
     # ── Apply waivers ─────────────────────────────────────────────────────────
-    resolved_skip_file = skip_file or (
-        Path(DEFAULT_SKIP_FILE) if Path(DEFAULT_SKIP_FILE).exists() else None
-    )
+    # Discovery order: explicit --skip-file > CWD > each scanned path directory
+    def _find_skip_file() -> Path | None:
+        candidates = [Path(DEFAULT_SKIP_FILE)]
+        for p in paths:
+            d = p if p.is_dir() else p.parent
+            candidate = d / DEFAULT_SKIP_FILE
+            if candidate not in candidates:
+                candidates.append(candidate)
+        for c in candidates:
+            if c.exists():
+                return c
+        return None
+
+    resolved_skip_file = skip_file or _find_skip_file()
     if resolved_skip_file:
         try:
             waivers = load_waivers(resolved_skip_file)
