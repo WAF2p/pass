@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import List
 
 import typer
 
@@ -126,10 +127,13 @@ def main(
 
 @app.command()
 def check(
-    path: Path = typer.Argument(
+    paths: List[Path] = typer.Argument(
         ...,
-        help="Path to Terraform files (directory or single .tf file).",
-        exists=True,
+        help=(
+            "Path(s) to Terraform files (directories or .tf files). "
+            "Pass multiple paths to merge results from different cloud folders, "
+            "e.g. wafpass check ./aws ./azure ./gcp"
+        ),
     ),
     controls_dir: Path = typer.Option(
         Path("controls"),
@@ -180,6 +184,12 @@ def check(
 ) -> None:
     """Check Terraform files against WAF++ YAML controls."""
 
+    # ── Validate paths ────────────────────────────────────────────────────────
+    for p in paths:
+        if not p.exists():
+            typer.echo(f"ERROR: Path does not exist: {p}", err=True)
+            raise typer.Exit(code=2)
+
     # Parse control ID list
     ids: list[str] | None = None
     if control_ids:
@@ -201,16 +211,37 @@ def check(
         )
         raise typer.Exit(code=2)
 
-    # ── Parse Terraform ───────────────────────────────────────────────────────
-    try:
-        tf = parse_terraform(path)
-    except Exception as exc:
-        typer.echo(f"ERROR parsing Terraform files: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+    # ── Parse Terraform (merge across all paths) ──────────────────────────────
+    merged_tf = TerraformState()
+    all_regions: list[tuple[str, str]] = []
+
+    for p in paths:
+        if len(paths) > 1:
+            typer.echo(f"Scanning: {p}")
+        try:
+            tf = parse_terraform(p)
+        except Exception as exc:
+            typer.echo(f"ERROR parsing Terraform files in {p}: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        merged_tf.resources.extend(tf.resources)
+        merged_tf.providers.extend(tf.providers)
+        merged_tf.variables.extend(tf.variables)
+        merged_tf.modules.extend(tf.modules)
+        merged_tf.terraform_blocks.extend(tf.terraform_blocks)
+        all_regions.extend(_extract_regions(tf))
+
+    # Deduplicate regions while preserving order
+    seen_region_keys: set[tuple[str, str]] = set()
+    unique_regions: list[tuple[str, str]] = []
+    for r in all_regions:
+        key = (r[0].lower(), r[1])
+        if key not in seen_region_keys:
+            seen_region_keys.add(key)
+            unique_regions.append(r)
 
     # ── Run controls ──────────────────────────────────────────────────────────
     try:
-        results = run_controls(controls, tf)
+        results = run_controls(controls, merged_tf)
     except Exception as exc:
         typer.echo(f"ERROR running controls: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -220,12 +251,15 @@ def check(
         results = filter_by_severity(results, severity)
 
     # ── Build report ──────────────────────────────────────────────────────────
+    str_paths = [str(p) for p in paths]
+    path_display = " | ".join(str_paths)
     report = Report(
-        path=str(path),
+        path=path_display,
         controls_loaded=len(controls),
         controls_run=len(results),
         results=results,
-        detected_regions=_extract_regions(tf),
+        detected_regions=unique_regions,
+        source_paths=str_paths,
     )
 
     # ── Output ────────────────────────────────────────────────────────────────

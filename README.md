@@ -34,6 +34,9 @@ Or use a symlink / sync script appropriate for your workflow.
 # Check all controls against a Terraform directory
 wafpass check ./infra/
 
+# Multi-cloud: scan multiple folders and merge into a single report
+wafpass check ./aws ./azure ./gcp
+
 # Filter by pillar
 wafpass check ./infra/ --pillar cost
 
@@ -52,8 +55,40 @@ wafpass check ./infra/ --controls-dir /path/to/controls
 # Show only the summary table
 wafpass check ./infra/ --summary
 
+# Generate a PDF report from multiple cloud folders
+wafpass check ./aws ./azure --output pdf --pdf-out report.pdf
+
 # Print version
 wafpass --version
+```
+
+### Multi-cloud / multi-path scanning
+
+Pass multiple paths to `check` to scan Terraform code spread across separate folders (e.g. one per cloud provider) and get a single unified report:
+
+```bash
+wafpass check ./infra/aws ./infra/azure ./infra/gcp
+```
+
+Each path is parsed independently; resources, providers, and detected regions are merged before controls are evaluated. All other flags (`--pillar`, `--fail-on`, `--output`, etc.) apply to the merged result as usual. When multiple paths are provided, the tool prints a `Scanning: <path>` line for each one so progress is visible in CI logs.
+
+A typical multi-cloud repository layout:
+
+```
+infra/
+├── aws/
+│   ├── main.tf
+│   └── variables.tf
+├── azure/
+│   ├── main.tf
+│   └── variables.tf
+└── gcp/
+    ├── main.tf
+    └── variables.tf
+```
+
+```bash
+wafpass check infra/aws infra/azure infra/gcp --fail-on fail
 ```
 
 ## Exit codes
@@ -83,6 +118,40 @@ wafpass --version
 | `operations` | `WAF-OPS-*` |
 | `architecture` | `WAF-ARCH-*` |
 | `governance` | `WAF-GOV-*` |
+
+## CI/CD integration
+
+PASS is designed to run unattended in pipelines. The exit code reflects the check outcome; use `--fail-on` to tune the strictness.
+
+**GitHub Actions example (multi-cloud):**
+
+```yaml
+- name: Run WAF++ PASS
+  run: |
+    pip install -e .
+    wafpass check infra/aws infra/azure infra/gcp \
+      --fail-on fail \
+      --output pdf \
+      --pdf-out wafpass-report.pdf
+
+- name: Upload compliance report
+  uses: actions/upload-artifact@v4
+  with:
+    name: wafpass-report
+    path: wafpass-report.pdf
+```
+
+**GitLab CI example:**
+
+```yaml
+wafpass:
+  script:
+    - pip install -e .
+    - wafpass check infra/aws infra/azure --fail-on fail --summary
+  artifacts:
+    paths:
+      - wafpass-report.pdf
+```
 
 ## Running tests
 
