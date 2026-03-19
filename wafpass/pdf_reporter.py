@@ -33,6 +33,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 from reportlab.platypus.flowables import KeepTogether
+from reportlab.platypus.tableofcontents import TableOfContents
 
 from wafpass import __version__
 from wafpass.models import ControlResult, Report
@@ -125,6 +126,32 @@ STATUS_COLORS: dict[str, tuple] = {
     "SKIP": (C_GREY,   C_GREY_LT),
 }
 STATUS_ICON = {"PASS": "✓", "FAIL": "✗", "SKIP": "─"}
+
+# ── Risk & Financial impact constants ─────────────────────────────────────────
+
+_SEV_WEIGHTS: dict[str, int] = {
+    "critical": 10, "high": 6, "medium": 3, "low": 1,
+}
+
+# Estimated USD exposure per single failing control, by severity
+# Source basis: IBM Cost of a Data Breach Report 2024 ($4.88M avg) + Gartner
+_SEV_EXPOSURE_USD: dict[str, tuple[int, int]] = {
+    "critical": (500_000, 5_000_000),
+    "high":     (50_000,  500_000),
+    "medium":   (5_000,   50_000),
+    "low":      (500,     5_000),
+}
+
+# Risk context per pillar: (short category label, risk description)
+_PILLAR_RISK_CONTEXT: dict[str, tuple[str, str]] = {
+    "sovereign":    ("Regulatory & Compliance",  "Data residency violations, GDPR/NIS2 fines"),
+    "security":     ("Breach & Incident",        "Data breach costs, incident response, forensics"),
+    "cost":         ("Financial Waste",          "Over-provisioning, unmanaged commitments, waste"),
+    "reliability":  ("Availability & Downtime",  "SLA breaches, service disruption, recovery costs"),
+    "operations":   ("Operational Risk",         "Audit gaps, manual toil, remediation overhead"),
+    "architecture": ("Technical Debt",           "Re-architecture spend, vendor lock-in migration"),
+    "governance":   ("Governance & Audit",       "Compliance gaps, board-level findings, penalties"),
+}
 
 
 # ── World map constants ───────────────────────────────────────────────────────
@@ -558,6 +585,145 @@ def _render_world_map_pil(
     return buf
 
 
+def _risk_score(report: "Report") -> tuple[int, str, "colors.Color"]:
+    """Return (score 0-100, label, colour) for the overall risk posture."""
+    total_w = fail_w = 0
+    for cr in report.results:
+        w = _SEV_WEIGHTS.get((cr.control.severity or "low").lower(), 1)
+        total_w += w
+        if cr.status == "FAIL":
+            fail_w += w
+    score = int(fail_w / max(total_w, 1) * 100)
+    if score >= 70:
+        return score, "CRITICAL", C_RED
+    if score >= 40:
+        return score, "HIGH",     C_ORANGE
+    if score >= 20:
+        return score, "MEDIUM",   C_YELLOW
+    return score, "LOW", C_GREEN
+
+
+def _financial_exposure(
+    report: "Report",
+) -> tuple[int, int, dict[str, tuple[int, int, int]]]:
+    """Return (total_min, total_max, {severity: (count, min, max)}) in USD."""
+    breakdown: dict[str, list] = {}
+    total_min = total_max = 0
+    for cr in report.results:
+        if cr.status != "FAIL":
+            continue
+        sev = (cr.control.severity or "low").lower()
+        exp_min, exp_max = _SEV_EXPOSURE_USD.get(sev, (0, 0))
+        total_min += exp_min
+        total_max += exp_max
+        if sev not in breakdown:
+            breakdown[sev] = [0, 0, 0]
+        breakdown[sev][0] += 1
+        breakdown[sev][1] += exp_min
+        breakdown[sev][2] += exp_max
+    return total_min, total_max, {k: tuple(v) for k, v in breakdown.items()}
+
+
+def _fmt_usd(n: int) -> str:
+    """Format a USD integer as a compact string (e.g. $4.9M, $350K)."""
+    if n >= 1_000_000:
+        return f"${n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"${n / 1_000:.0f}K"
+    return f"${n:,}"
+
+
+class _TOCEntry(Flowable):
+    """Zero-height, invisible flowable that registers a TOC entry at build time."""
+
+    def __init__(self, level: int, text: str) -> None:
+        Flowable.__init__(self)
+        self.width  = 0
+        self.height = 0
+        self._level = level
+        self._text  = text
+
+    def draw(self) -> None:  # nothing to render
+        pass
+
+    def getPlainText(self) -> str:
+        return self._text
+
+
+class _RiskGaugeBar(Flowable):
+    """Horizontal coloured gauge bar visualising a 0-100 risk score."""
+
+    _ZONES = [
+        (0,  20,  "#22c55e"),   # Low     – green
+        (20, 40,  "#eab308"),   # Medium  – yellow
+        (40, 70,  "#f97316"),   # High    – orange
+        (70, 100, "#ef4444"),   # Critical – red
+    ]
+    _LABELS = [("LOW", 10), ("MEDIUM", 30), ("HIGH", 55), ("CRITICAL", 85)]
+
+    def __init__(self, score: int, width: float, height: float = 24.0) -> None:
+        Flowable.__init__(self)
+        self.score  = max(0, min(100, score))
+        self.width  = width
+        self.height = height
+
+    def _score_color(self) -> "colors.Color":
+        for z_start, z_end, z_hex in self._ZONES:
+            if self.score <= z_end:
+                return colors.HexColor(z_hex)
+        return colors.HexColor("#ef4444")
+
+    def draw(self) -> None:
+        from reportlab.lib.colors import Color as _RLColor
+        c = self.canv
+        c.saveState()
+        w, h  = self.width, self.height
+        bar_h = h * 0.30
+        bar_y = h * 0.46
+
+        # Grey background track
+        c.setFillColor(C_BORDER)
+        c.rect(0, bar_y, w, bar_h, fill=1, stroke=0)
+
+        # Subtle zone tint bands
+        for z_start, z_end, z_hex in self._ZONES:
+            rgb = colors.HexColor(z_hex)
+            c.setFillColor(_RLColor(rgb.red, rgb.green, rgb.blue, alpha=0.18))
+            x1 = z_start / 100 * w
+            c.rect(x1, bar_y, (z_end - z_start) / 100 * w, bar_h, fill=1, stroke=0)
+
+        # Zone dividers (white lines)
+        c.setStrokeColor(C_WHITE)
+        c.setLineWidth(0.7)
+        for z_start, _, _ in self._ZONES[1:]:
+            x = z_start / 100 * w
+            c.line(x, bar_y, x, bar_y + bar_h)
+
+        # Filled progress segment
+        fill_w = self.score / 100 * w
+        if fill_w > 0:
+            c.setFillColor(self._score_color())
+            c.rect(0, bar_y, fill_w, bar_h, fill=1, stroke=0)
+            c.setStrokeColor(C_WHITE)
+            c.setLineWidth(1.2)
+            c.line(fill_w, bar_y - 1, fill_w, bar_y + bar_h + 1)
+
+        # Zone labels below track
+        c.setFont("Helvetica", 5.5)
+        c.setFillColor(C_GREY)
+        for label, pct in self._LABELS:
+            c.drawCentredString(pct / 100 * w, bar_y - 8, label)
+
+        # Score marker pip above track
+        pip_r = bar_h * 0.48
+        c.setFillColor(self._score_color())
+        c.setStrokeColor(C_WHITE)
+        c.setLineWidth(1.0)
+        c.circle(fill_w if fill_w > 0 else 0, bar_y + bar_h + pip_r * 0.6, pip_r, fill=1, stroke=1)
+
+        c.restoreState()
+
+
 class _WorldMapFlowable(Flowable):
     """A custom Flowable that renders a modern world map with region markers."""
 
@@ -850,25 +1016,28 @@ def _severity_para(severity: str, S: dict) -> Paragraph:
     return Paragraph(severity.upper(), S[style_key])
 
 
-def _section_header(title: str, S: dict) -> list:
-    """Blue left-bordered section header."""
-    return [
+def _section_header(title: str, S: dict, toc_level: int | None = 0) -> list:
+    """Blue left-bordered section header. Auto-registers a TOC entry unless toc_level is None."""
+    entries: list = []
+    if toc_level is not None:
+        entries.append(_TOCEntry(toc_level, title))
+    entries += [
         Spacer(1, 4 * mm),
         Table(
             [[Paragraph(title, S["h2"])]],
             colWidths=[CONTENT_W],
             style=TableStyle([
-                ("LEFTPADDING",  (0, 0), (-1, -1), 10),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING",   (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
-                ("LINEAFTER",    (0, 0), (0, 0), 0, C_WHITE),
-                ("LINEBEFORE",   (0, 0), (0, 0), 3, C_BLUE),
-                ("BACKGROUND",   (0, 0), (-1, -1), C_GREY_LT),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LINEBEFORE",    (0, 0), (0, 0), 3, C_BLUE),
+                ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
             ]),
         ),
         Spacer(1, 3 * mm),
     ]
+    return entries
 
 
 # ── Cover page content ────────────────────────────────────────────────────────
@@ -1710,6 +1879,304 @@ def _data_geography_section(report: Report, S: dict) -> list:
     return elems
 
 
+# ── Table of Contents section ─────────────────────────────────────────────────
+
+def _toc_section(S: dict) -> list:
+    """Build the Table of Contents page."""
+    toc = TableOfContents()
+    toc.levelStyles = [
+        ParagraphStyle(
+            "TOCLevel0",
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=17,
+            textColor=C_NAVY,
+            leftIndent=0,
+            spaceAfter=3,
+            spaceBefore=5,
+        ),
+        ParagraphStyle(
+            "TOCLevel1",
+            fontName="Helvetica",
+            fontSize=9,
+            leading=13,
+            textColor=C_DARK,
+            leftIndent=1 * cm,
+            spaceAfter=1,
+        ),
+    ]
+    toc.dotsMinLevel = 0
+
+    return [
+        # Header drawn directly (not via _section_header to avoid circular TOC entry)
+        Spacer(1, 4 * mm),
+        Table(
+            [[Paragraph("Table of Contents", S["h2"])]],
+            colWidths=[CONTENT_W],
+            style=TableStyle([
+                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LINEBEFORE",    (0, 0), (0, 0), 3, C_BLUE),
+                ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
+            ]),
+        ),
+        Spacer(1, 6 * mm),
+        toc,
+    ]
+
+
+# ── Risk & Financial Impact section ──────────────────────────────────────────
+
+def _risk_financial_section(report: Report, S: dict) -> list:
+    """Build the Executive Risk Dashboard section (risk score + financial exposure)."""
+    score, label, score_color = _risk_score(report)
+    total_min, total_max, breakdown = _financial_exposure(report)
+
+    sev_order = ["critical", "high", "medium", "low"]
+    sev_label_map = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
+    sev_color_map = {
+        "critical": C_RED, "high": C_ORANGE, "medium": C_YELLOW, "low": C_BLUE,
+    }
+
+    elems: list = [*_section_header("Executive Risk Dashboard", S)]
+
+    # ── 1. Risk Score card ────────────────────────────────────────────────────
+    elems += [*_section_header("Overall Risk Score", S, toc_level=1)]
+
+    elems.append(Paragraph(
+        "The Risk Score aggregates all control failures weighted by severity. "
+        "A score of 0 represents full compliance; 100 represents maximum exposure across all controls.",
+        S["muted"],
+    ))
+    elems.append(Spacer(1, 4 * mm))
+
+    # Score number box (left) + gauge bar (right)
+    score_hex = _hex(score_color)
+    score_cell = Table(
+        [[
+            Paragraph(
+                f'<font color="#{score_hex}" size="36"><b>{score}</b></font>'
+                f'<br/><font size="9" color="#{score_hex}"><b>/ 100</b></font>',
+                ParagraphStyle("sc_num", fontName="Helvetica-Bold", fontSize=36,
+                               leading=40, alignment=TA_CENTER),
+            ),
+        ]],
+        colWidths=[3.5 * cm],
+        style=TableStyle([
+            ("TOPPADDING",    (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+            ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
+            ("BOX",           (0, 0), (-1, -1), 2, score_color),
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ]),
+    )
+
+    label_hex = score_hex
+    badge_cell = Table(
+        [[Paragraph(
+            f'<font color="#{label_hex}"><b>● {label}</b></font>',
+            ParagraphStyle("sc_badge", fontName="Helvetica-Bold", fontSize=11,
+                           leading=14, alignment=TA_CENTER),
+        )]],
+        colWidths=[3.5 * cm],
+        style=TableStyle([
+            ("TOPPADDING",    (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
+            ("BOX",           (0, 0), (-1, -1), 2, score_color),
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ]),
+    )
+
+    fail_count = report.total_fail
+    total_count = report.controls_run
+    gauge_bar   = _RiskGaugeBar(score, CONTENT_W - 3.5 * cm - 6 * mm, height=28)
+    gauge_desc  = Paragraph(
+        f"<b>{fail_count}</b> of <b>{total_count}</b> controls are currently failing. "
+        f"The weighted failure ratio drives the {label.lower()} risk posture. "
+        "Remediating critical and high-severity findings will have the greatest score impact.",
+        S["body_sm"],
+    )
+
+    score_col_w  = 3.5 * cm
+    gauge_col_w  = CONTENT_W - score_col_w - 4 * mm
+    score_layout = Table(
+        [[score_cell, Table([[gauge_bar], [Spacer(1, 3 * mm)], [gauge_desc]],
+                            colWidths=[gauge_col_w],
+                            style=TableStyle([
+                                ("LEFTPADDING",  (0, 0), (-1, -1), 10),
+                                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                ("TOPPADDING",   (0, 0), (-1, -1), 8),
+                                ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+                            ]))]],
+        colWidths=[score_col_w, gauge_col_w + 4 * mm],
+        style=TableStyle([
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ]),
+    )
+    elems.append(score_layout)
+    elems.append(Spacer(1, 6 * mm))
+
+    # ── 2. Risk Breakdown by Pillar ───────────────────────────────────────────
+    elems.append(Paragraph("Risk Breakdown by Pillar", S["h3"]))
+    elems.append(Spacer(1, 2 * mm))
+
+    pillar_data: dict[str, dict] = {}
+    for cr in report.results:
+        pillar = (cr.control.pillar or "unknown").lower()
+        if pillar not in pillar_data:
+            pillar_data[pillar] = {"total_w": 0, "fail_w": 0, "fail": 0, "total": 0}
+        w = _SEV_WEIGHTS.get((cr.control.severity or "low").lower(), 1)
+        pillar_data[pillar]["total_w"] += w
+        pillar_data[pillar]["total"]   += 1
+        if cr.status == "FAIL":
+            pillar_data[pillar]["fail_w"] += w
+            pillar_data[pillar]["fail"]   += 1
+
+    pillar_rows: list[list] = []
+    for pillar in sorted(pillar_data.keys()):
+        pd   = pillar_data[pillar]
+        pscore = int(pd["fail_w"] / max(pd["total_w"], 1) * 100)
+        if pscore >= 70:
+            p_label, p_color = "CRITICAL", C_RED
+        elif pscore >= 40:
+            p_label, p_color = "HIGH",     C_ORANGE
+        elif pscore >= 20:
+            p_label, p_color = "MEDIUM",   C_YELLOW
+        else:
+            p_label, p_color = "LOW",      C_GREEN
+        ctx_label, ctx_desc = _PILLAR_RISK_CONTEXT.get(pillar, ("—", "—"))
+        ph = _hex(p_color)
+        pillar_rows.append([
+            Paragraph(pillar.title(), S["body_sm"]),
+            Paragraph(f'<font color="#{ph}"><b>{pscore}</b></font>', S["body_sm"]),
+            Paragraph(f'<font color="#{ph}"><b>{p_label}</b></font>', S["body_sm"]),
+            Paragraph(f'{pd["fail"]}/{pd["total"]}', S["body_sm"]),
+            Paragraph(ctx_desc, S["body_sm"]),
+        ])
+
+    pillar_hdr = ["Pillar", "Score", "Category", "Failing", "Risk Context"]
+    col_ws = [2.8 * cm, 1.4 * cm, 2.2 * cm, 1.6 * cm, CONTENT_W - 8 * cm]
+    elems.append(Table(
+        [[Paragraph(h, S["tbl_header_left"]) for h in pillar_hdr]] + pillar_rows,
+        colWidths=col_ws,
+        style=TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+        ]),
+    ))
+    elems.append(Spacer(1, 6 * mm))
+
+    # ── 3. Financial Exposure (own page) ──────────────────────────────────────
+    elems.append(PageBreak())
+    elems += [*_section_header("Estimated Financial Exposure", S, toc_level=1)]
+
+    elems.append(Paragraph(
+        "Financial exposure is estimated based on severity-weighted failure counts, "
+        "referencing IBM Cost of a Data Breach Report 2024 (global average breach cost $4.88M), "
+        "Gartner infrastructure downtime benchmarks, and GDPR/NIS2 maximum penalty structures. "
+        "Figures represent a plausible range, not a guaranteed outcome.",
+        S["muted"],
+    ))
+    elems.append(Spacer(1, 4 * mm))
+
+    # Total exposure highlight box
+    exp_text = (
+        f"Total Estimated Exposure:  "
+        f"<b>{_fmt_usd(total_min)}</b>  –  <b>{_fmt_usd(total_max)}</b>"
+        if total_max > 0 else
+        "No failing controls — exposure within acceptable range."
+    )
+    elems.append(Table(
+        [[Paragraph(exp_text, ParagraphStyle(
+            "exp_total", fontName="Helvetica-Bold", fontSize=13, leading=18,
+            textColor=C_NAVY, alignment=TA_CENTER,
+        ))]],
+        colWidths=[CONTENT_W],
+        style=TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_BLUE_LT),
+            ("BOX",           (0, 0), (-1, -1), 1.5, C_BLUE),
+            ("TOPPADDING",    (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 12),
+        ]),
+    ))
+    elems.append(Spacer(1, 4 * mm))
+
+    # Breakdown by severity table
+    if breakdown:
+        sev_hdr = ["Severity", "Failing Controls", "Min Exposure (USD)", "Max Exposure (USD)", "Risk Type"]
+        sev_rows: list[list] = []
+        for sev in sev_order:
+            if sev not in breakdown:
+                continue
+            cnt, smin, smax = breakdown[sev]
+            sc = sev_color_map.get(sev, C_GREY)
+            sh = _hex(sc)
+            sev_rows.append([
+                Paragraph(f'<font color="#{sh}"><b>{sev_label_map[sev]}</b></font>', S["body_sm"]),
+                Paragraph(str(cnt), S["body_sm"]),
+                Paragraph(_fmt_usd(smin), S["body_sm"]),
+                Paragraph(_fmt_usd(smax), S["body_sm"]),
+                Paragraph(_PILLAR_RISK_CONTEXT.get("security", ("—", "—"))[0], S["body_sm"]),
+            ])
+
+        col_ws_fin = [2.2 * cm, 3.0 * cm, 3.8 * cm, 3.8 * cm, CONTENT_W - 12.8 * cm]
+        elems.append(Table(
+            [[Paragraph(h, S["tbl_header_left"]) for h in sev_hdr]] + sev_rows,
+            colWidths=col_ws_fin,
+            style=TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+                ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+                ("FONTSIZE",      (0, 0), (-1, -1), 8),
+                ("LEADING",       (0, 0), (-1, -1), 11),
+                ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+                ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ]),
+        ))
+        elems.append(Spacer(1, 3 * mm))
+
+    elems.append(Paragraph(
+        "⚠ Disclaimer: These estimates are indicative only and should not be used as formal "
+        "financial projections. Actual costs depend on incident scope, jurisdiction, insurance "
+        "coverage, and organisational response capability. Engage legal and risk advisory teams "
+        "for formal exposure quantification.",
+        ParagraphStyle("disclaimer", fontName="Helvetica-Oblique", fontSize=7.5,
+                       leading=11, textColor=C_GREY),
+    ))
+    return elems
+
+
+class _WAFDocTemplate(BaseDocTemplate):
+    """BaseDocTemplate that registers TOC entries from _TOCEntry flowables."""
+
+    def afterFlowable(self, flowable: object) -> None:
+        if isinstance(flowable, _TOCEntry):
+            self.notify("TOCEntry", (flowable._level, flowable._text, self.page))
+
+
 # ── Hex color helper ──────────────────────────────────────────────────────────
 
 def _hex(color: colors.Color) -> str:
@@ -1722,12 +2189,7 @@ def _hex(color: colors.Color) -> str:
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_pdf(report: Report, output_path: Path) -> None:
-    """Generate a structured PDF report for the given WAF++ PASS report.
-
-    Args:
-        report: Completed Report object from the engine.
-        output_path: Destination path for the PDF file.
-    """
+    """Generate a fully structured PDF report with TOC, risk scoring, and financial impact."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     S = _styles()
 
@@ -1737,7 +2199,6 @@ def generate_pdf(report: Report, output_path: Path) -> None:
     cover_on_page  = _CoverCanvas(generated_at)
     normal_on_page = _PageCanvas(generated_at)
 
-    # Content frame (inside margins, leaving room for header/footer)
     content_frame = Frame(
         MARGIN, MARGIN,
         CONTENT_W, PAGE_H - 2 * MARGIN,
@@ -1748,7 +2209,7 @@ def generate_pdf(report: Report, output_path: Path) -> None:
     cover_template  = PageTemplate(id="cover",  frames=[content_frame], onPage=cover_on_page)
     normal_template = PageTemplate(id="normal", frames=[content_frame], onPage=normal_on_page)
 
-    doc = BaseDocTemplate(
+    doc = _WAFDocTemplate(
         str(output_path),
         pagesize=A4,
         pageTemplates=[cover_template, normal_template],
@@ -1762,33 +2223,42 @@ def generate_pdf(report: Report, output_path: Path) -> None:
 
     story: list = []
 
-    # ── Cover ──────────────────────────────────────────────────────────────────
+    # ── 1. Cover ───────────────────────────────────────────────────────────────
     story += _cover_content(report, S, generated_at)
 
-    # ── Data Geography & Sovereignty (world map — early for sovereign context) ─
+    # ── 2. Table of Contents ───────────────────────────────────────────────────
     story += [NextPageTemplate("normal"), PageBreak()]
+    story += _toc_section(S)
+
+    # ── 3. Executive Risk Dashboard ────────────────────────────────────────────
+    story += [PageBreak()]
+    story += _risk_financial_section(report, S)
+
+    # ── 4. Data Geography & Sovereignty ───────────────────────────────────────
+    story += [PageBreak()]
     story += _data_geography_section(report, S)
 
-    # ── Executive Summary ──────────────────────────────────────────────────────
+    # ── 5. Executive Summary ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_summary(report, S)
 
-    # ── Controls Overview ──────────────────────────────────────────────────────
+    # ── 6. Controls Overview ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _controls_overview(report, S)
 
-    # ── Regulatory Alignment ───────────────────────────────────────────────────
+    # ── 7. Regulatory Alignment ────────────────────────────────────────────────
     reg_elems = _regulatory_alignment(report, S)
     if reg_elems:
         story += [PageBreak()]
         story += reg_elems
 
-    # ── Findings ──────────────────────────────────────────────────────────────
+    # ── 8. Detailed Findings ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _findings_section(report, S)
 
-    # ── Passed / Skipped appendix ──────────────────────────────────────────────
+    # ── 9. Appendix: Passed & Skipped Controls ─────────────────────────────────
     story += [PageBreak()]
     story += _passed_section(report, S)
 
-    doc.build(story)
+    # multiBuild runs two passes so the TableOfContents can resolve page numbers
+    doc.multiBuild(story)
