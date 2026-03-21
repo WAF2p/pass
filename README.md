@@ -518,34 +518,226 @@ Secret values may use `${ENV_VAR}` placeholders — they are expanded from the e
 | Slack | `slack` | **Stub** | Slack incoming webhook with Block Kit |
 | Generic webhook | `webhook` | **Implemented** | POST JSON snapshot to any HTTP endpoint |
 
-### Grafana setup
+### Grafana setup — step-by-step
 
-#### Ready-to-import dashboard
+The full observability stack is three services: **Pushgateway** (receives metrics from WAF++ after each run), **Prometheus** (scrapes and stores them), **Grafana** (visualises them). Everything needed to spin them up is in the `docker/` folder.
 
-A pre-built Grafana dashboard is included at **`assets/grafana-dashboard.json`**.
+```
+docker/
+  docker-compose.yml                         ← all three services, pre-wired
+  prometheus.yml                             ← scrape config for the Pushgateway
+  .wafpass-export.yml                        ← WAF++ export config pointing to localhost
+  grafana-provisioning/
+    datasources/prometheus.yml               ← auto-provisions Prometheus datasource
+    dashboards/dashboard.yml                 ← auto-provisions the WAF++ dashboard
+```
 
-Import it via **Dashboards → Import → Upload JSON file** in the Grafana UI. Select your Prometheus datasource when prompted.
+---
 
-The dashboard includes:
-- WAF++ logo in the header
-- Risk score gauge + PASS/FAIL/SKIP/WAIVED stat panels
-- Score delta, regressions, and improvements for the latest run
-- Risk score and control status trend lines over time
-- Per-pillar risk scores (horizontal bar gauge)
-- Score delta and regression/improvement trend lines
-- Full per-control status table (filterable, colour-coded by status and severity)
-- Check-level pass/fail/skip trends
+#### Option A — Docker Compose (quickest, everything local)
 
-Dashboard variables: **Data Source**, **IaC Plugin** (multi-select), **Source Path** (multi-select).
+**Prerequisites:** Docker + Docker Compose installed.
 
-#### Self-hosted Grafana + Prometheus + Pushgateway
+**Step 1 — Start the stack**
 
-1. Deploy a [Prometheus Pushgateway](https://github.com/prometheus/pushgateway)
-2. Configure Prometheus to scrape it
-3. In Grafana, add Prometheus as a data source
-4. Import `assets/grafana-dashboard.json` (see above)
+```bash
+cd docker/
+docker compose up -d
+```
 
-**Metrics reference**
+Three containers start:
+
+| Container | URL | Credentials |
+|-----------|-----|-------------|
+| Grafana | http://localhost:3000 | admin / wafpass |
+| Prometheus | http://localhost:9090 | — |
+| Pushgateway | http://localhost:9091 | — |
+
+The WAF++ dashboard and Prometheus datasource are **auto-provisioned** — no manual import needed. Open http://localhost:3000 and navigate to **Dashboards → WAF++ PASS — Compliance Monitor**.
+
+> **Note:** The dashboard uses HTML text panels to render the embedded WAF++ logo. The compose file sets `GF_PANELS_DISABLE_SANITIZE_HTML=true` to allow this. Remove that variable if you don't need the logo and want stricter HTML policy.
+
+**Step 2 — Configure WAF++ to push metrics**
+
+Copy the included export config to your project root (or use `--export-config`):
+
+```bash
+# From your IaC project directory:
+cp /path/to/waf++/pass/docker/.wafpass-export.yml ./.wafpass-export.yml
+```
+
+The file points to `http://localhost:9091` (the Pushgateway from Step 1):
+
+```yaml
+# .wafpass-export.yml
+exports:
+  grafana:
+    pushgateway_url: "http://localhost:9091"
+    job: "wafpass"
+```
+
+**Step 3 — Run WAF++ and push your first metrics**
+
+```bash
+wafpass check ./infra/ --export grafana
+```
+
+You should see output like:
+
+```
+Run state saved: .wafpass-state/runs/run-20260321-152251-a1e136bd.json
+Exporting to [grafana]...
+  ✓ grafana: Pushed to Pushgateway: HTTP 200
+```
+
+**Step 4 — Open the dashboard**
+
+Go to http://localhost:3000 → **Dashboards → WAF++ PASS — Compliance Monitor**.
+
+The dashboard auto-refreshes every minute. Run WAF++ a few more times (against different fixture paths or after changing your IaC) to build up trend data:
+
+```bash
+# Non-compliant run
+wafpass check tests/fixtures/non_compliant/ --export grafana
+
+# Compliant run — watch the improvements appear
+wafpass check tests/fixtures/compliant/ --export grafana
+```
+
+After two or more runs, the **Change Tracking** row shows regressions, improvements, and score delta. After several runs, the time-series charts show trends.
+
+**Step 5 — Verify raw metrics (optional)**
+
+Check that metrics arrived in the Pushgateway:
+
+```
+http://localhost:9091  →  "wafpass" job should appear
+```
+
+Check that Prometheus scraped them:
+
+```
+http://localhost:9090/graph  →  query: wafpass_score
+```
+
+---
+
+#### Option B — Import the dashboard manually into an existing Grafana
+
+If you already have Grafana + Prometheus + a Pushgateway running:
+
+**Step 1 — Point WAF++ at your Pushgateway**
+
+Create `.wafpass-export.yml` in your project root:
+
+```yaml
+exports:
+  grafana:
+    pushgateway_url: "http://<your-pushgateway-host>:9091"
+    job: "wafpass"
+```
+
+**Step 2 — Verify Prometheus scrapes the Pushgateway**
+
+In your `prometheus.yml` (or equivalent), add a scrape job if not already present:
+
+```yaml
+scrape_configs:
+  - job_name: wafpass
+    honor_labels: true          # ← required: preserves WAF++ label values
+    static_configs:
+      - targets:
+          - <pushgateway-host>:9091
+```
+
+Reload Prometheus: `curl -X POST http://localhost:9090/-/reload`
+
+**Step 3 — Import the dashboard**
+
+1. Open Grafana → **Dashboards** (left sidebar) → **Import**
+2. Click **Upload dashboard JSON file**
+3. Select `assets/grafana-dashboard.json`
+4. Under **Prometheus**, select your Prometheus datasource
+5. Click **Import**
+
+The dashboard opens immediately. Run `wafpass check ./infra/ --export grafana` to push the first data point.
+
+> **Logo rendering:** The dashboard embeds the WAF++ logo as a base64 PNG in an HTML text panel. To display it, enable `GF_PANELS_DISABLE_SANITIZE_HTML=true` in Grafana's environment, or add `disable_sanitize_html = true` under `[panels]` in `grafana.ini`. Without this setting, the logo panel shows empty — all metric panels work regardless.
+
+---
+
+#### Option C — Grafana Cloud
+
+Grafana Cloud's Prometheus endpoint requires binary `remote_write` format, which the WAF++ export plugin does not produce directly (to avoid heavy protobuf dependencies). The recommended path:
+
+**Step 1 — Run a local Pushgateway**
+
+```bash
+docker run -d -p 9091:9091 prom/pushgateway:v1.9.0
+```
+
+**Step 2 — Install Grafana Alloy (or Grafana Agent)**
+
+[Grafana Alloy](https://grafana.com/docs/alloy/latest/) is the current recommended agent. Add this scrape + remote_write config:
+
+```alloy
+prometheus.scrape "wafpass" {
+  targets = [{"__address__" = "localhost:9091"}]
+  honor_labels = true
+  forward_to   = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = "https://prometheus-prod-XX-eu-west-X.grafana.net/api/prom/push"
+    basic_auth {
+      username = "<your-numeric-user-id>"
+      password = env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
+```
+
+**Step 3 — Push metrics and import dashboard**
+
+```bash
+wafpass check ./infra/ --export grafana
+```
+
+In Grafana Cloud: **Dashboards → Import → Upload JSON file** → select `assets/grafana-dashboard.json` → choose your Cloud Prometheus datasource.
+
+---
+
+#### Dashboard panels reference
+
+| Panel | Type | What it shows |
+|-------|------|----------------|
+| Risk Score | Gauge (0–100) | Current weighted failure score — green below 20, red above 75 |
+| PASS / FAIL / SKIP / WAIVED | Stat | Control counts for the latest run |
+| Score Delta | Stat | Score change vs. previous run — red when positive (worse) |
+| Regressions / Improvements | Stat | Controls newly FAILing or leaving FAIL this run |
+| Last Run | Stat | Timestamp of the most recent push |
+| Risk Score Over Time | Time series | Score trend across all runs |
+| Controls by Status Over Time | Time series | PASS/FAIL/SKIP/WAIVED counts over time |
+| Risk Score per Pillar | Bar gauge | Per-pillar score — identify which pillar is most at risk |
+| Score Delta vs Previous Run | Time series | Run-to-run score change trend |
+| Regressions & Improvements | Time series | How many controls changed state per run |
+| Control Status (current) | Table | Every control: ID, severity, pillar, status — filterable |
+| Checks by Status Over Time | Time series | Individual check counts (more granular than control counts) |
+
+**Dashboard variables** (top of page, filter all panels simultaneously):
+
+| Variable | Description |
+|----------|-------------|
+| Data Source | Switch between Prometheus instances |
+| IaC Plugin | Filter to `terraform`, `cdk`, etc. |
+| Source Path | Filter to a specific scanned directory |
+
+---
+
+#### Metrics reference
+
+All metrics carry labels: `iac_plugin`, `run_id`, `tool_version`, `source`.
 
 | Metric | Type | Description |
 |--------|------|-------------|
@@ -553,32 +745,24 @@ Dashboard variables: **Data Source**, **IaC Plugin** (multi-select), **Source Pa
 | `wafpass_controls_total{status}` | gauge | Control count by `pass`, `fail`, `skip`, `waived` |
 | `wafpass_checks_total{status}` | gauge | Individual check count by status |
 | `wafpass_pillar_score{pillar}` | gauge | Risk score per WAF++ pillar |
-| `wafpass_control_status{control_id,severity,pillar}` | gauge | Per-control: 0=PASS 1=FAIL 2=SKIP 3=WAIVED |
-| `wafpass_score_delta` | gauge | Score change vs previous run (+ve = worse) |
+| `wafpass_control_status{control_id,severity,pillar}` | gauge | Per-control numeric status: 0=PASS 1=FAIL 2=SKIP 3=WAIVED |
+| `wafpass_score_delta` | gauge | Score change vs previous run (+ve = worse, −ve = improved) |
 | `wafpass_regressions_total` | gauge | Controls newly entering FAIL this run |
 | `wafpass_improvements_total` | gauge | Controls leaving FAIL this run |
 | `wafpass_run_timestamp_seconds` | gauge | Unix timestamp of this run |
 
-All metrics carry labels: `iac_plugin`, `run_id`, `tool_version`, `source`.
+**Example alert rules:**
 
-**Example Grafana alert rule** — fire when any control regresses:
 ```promql
+# Fire when any control newly fails
 increase(wafpass_regressions_total[1h]) > 0
-```
 
-**Example Grafana alert rule** — fire when risk score exceeds threshold:
-```promql
+# Fire when overall risk score exceeds threshold
 wafpass_score > 50
+
+# Fire when a specific critical control fails
+wafpass_control_status{control_id="WAF-SEC-020", severity="critical"} == 1
 ```
-
-#### Grafana Cloud
-
-Grafana Cloud's Prometheus endpoint requires binary remote_write format. The recommended approach:
-
-1. Deploy **Grafana Alloy** or **Grafana Agent** in your environment
-2. Configure it to scrape the Prometheus Pushgateway
-3. Set up `remote_write` from the agent to your Grafana Cloud Prometheus endpoint
-4. Point the `grafana` plugin at the local Pushgateway URL
 
 ### Writing a new export plugin
 

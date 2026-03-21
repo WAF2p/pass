@@ -1,0 +1,6 @@
+exports:
+  grafana:
+    # Prometheus Pushgateway running via docker/docker-compose.yml
+    pushgateway_url: "http://localhost:9091"
+    job: "wafpass"
+    # instance defaults to the run_id when left empty

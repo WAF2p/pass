@@ -1,0 +1,81 @@
+version: "3.8"
+
+# WAF++ PASS — local observability stack
+#
+# Services:
+#   grafana      → http://localhost:3000   (admin / wafpass)
+#   prometheus   → http://localhost:9090
+#   pushgateway  → http://localhost:9091
+#
+# Usage:
+#   docker compose up -d
+#   wafpass check ./infra/ --export grafana   # push metrics
+#   open http://localhost:3000                # view dashboard
+
+services:
+
+  # ── Prometheus Pushgateway ──────────────────────────────────────────────────
+  # Receives metrics pushed by `wafpass check --export grafana`.
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    container_name: wafpass-pushgateway
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    command:
+      - --web.listen-address=:9091
+      - --web.telemetry-path=/metrics
+      - --persistence.file=/data/pushgateway.db
+      - --persistence.interval=5m
+    volumes:
+      - pushgateway-data:/data
+
+  # ── Prometheus ──────────────────────────────────────────────────────────────
+  # Scrapes the Pushgateway every 15s and stores time-series data.
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: wafpass-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+      - --web.enable-lifecycle
+    depends_on:
+      - pushgateway
+
+  # ── Grafana ─────────────────────────────────────────────────────────────────
+  # Visualises the wafpass_* metric family.
+  # Dashboard and Prometheus datasource are auto-provisioned on first start.
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: wafpass-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Login credentials
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: wafpass
+      # Allow the HTML text panel to render the embedded WAF++ logo
+      GF_PANELS_DISABLE_SANITIZE_HTML: "true"
+      # Anonymous read access (remove for production)
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+      # Mount the dashboard JSON so Grafana auto-imports it
+      - ../assets/grafana-dashboard.json:/var/lib/grafana/dashboards/wafpass.json:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  pushgateway-data:
+  prometheus-data:
+  grafana-data:
