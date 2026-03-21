@@ -2985,9 +2985,262 @@ def _hex(color: colors.Color) -> str:
     )
 
 
+# ── Run change tracking section ───────────────────────────────────────────────
+
+def _changes_section(diff: dict, S: dict) -> list:
+    """Generate a 'Changes from Previous Run' section for the PDF report."""
+    from datetime import datetime
+
+    regressions = diff.get("regressions", [])
+    improvements = diff.get("improvements", [])
+    other_changes = diff.get("other_changes", [])
+    score_delta = diff.get("score_delta", 0)
+    prev_ts = diff.get("previous_generated_at", "")
+    prev_id = diff.get("previous_run_id", "")
+    total_changes = len(regressions) + len(improvements) + len(other_changes)
+
+    # Format previous run timestamp
+    try:
+        dt = datetime.fromisoformat(prev_ts.replace("Z", "+00:00"))
+        ts_display = dt.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        ts_display = prev_ts or "unknown"
+
+    elems: list = []
+
+    # ── Section heading
+    elems.append(
+        Paragraph("Run Change Tracking", S["h1"])
+    )
+    elems.append(Spacer(1, 4 * mm))
+    elems.append(
+        Paragraph(
+            f"Comparing against previous run from <b>{ts_display}</b>"
+            + (f" &nbsp;<font color='#64748b'>({prev_id})</font>" if prev_id else ""),
+            S["body"],
+        )
+    )
+    elems.append(Spacer(1, 6 * mm))
+
+    # ── Score delta card
+    if score_delta > 0:
+        delta_color = C_RED
+        delta_label = f"+{score_delta} pts (worse)"
+        delta_bg = C_RED_LT
+    elif score_delta < 0:
+        delta_color = C_GREEN
+        delta_label = f"{score_delta} pts (improved)"
+        delta_bg = C_GREEN_LT
+    else:
+        delta_color = C_GREY
+        delta_label = "no change"
+        delta_bg = C_GREY_LT
+
+    score_row = [
+        Paragraph(f"<b>Risk Score Delta</b>", S["body"]),
+        Paragraph(f"<font color='#{_hex(delta_color)}'><b>{delta_label}</b></font>", S["body"]),
+        Paragraph(f"<b>Controls Changed</b>", S["body"]),
+        Paragraph(f"<b>{total_changes}</b>", S["body"]),
+    ]
+    t = Table([score_row], colWidths=[CONTENT_W * 0.3, CONTENT_W * 0.2, CONTENT_W * 0.3, CONTENT_W * 0.2])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), C_GREY_LT),
+        ("ROUNDEDCORNERS", [4]),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    elems.append(t)
+    elems.append(Spacer(1, 6 * mm))
+
+    if total_changes == 0:
+        elems.append(
+            Paragraph(
+                "No control status changes detected since the previous run. "
+                "All controls maintained their previous state.",
+                S["body"],
+            )
+        )
+        return elems
+
+    _SEV_COLORS_PDF = {
+        "critical": C_RED,
+        "high": C_ORANGE,
+        "medium": C_YELLOW,
+        "low": C_BLUE,
+    }
+
+    def _change_rows(entries: list[dict], from_label: str, to_label: str,
+                     to_color: "colors.Color") -> list:
+        rows = []
+        for e in entries:
+            sev = (e.get("severity") or "low").lower()
+            sev_c = _SEV_COLORS_PDF.get(sev, C_GREY)
+            rows.append([
+                Paragraph(
+                    f"<font color='#{_hex(sev_c)}'><b>[{sev.upper()}]</b></font>",
+                    S["body_sm"],
+                ),
+                Paragraph(f"<b>{e['control_id']}</b>", S["body_sm"]),
+                Paragraph(e.get("title", ""), S["body_sm"]),
+                Paragraph(
+                    f"<font color='#64748b'>{from_label}</font> → "
+                    f"<font color='#{_hex(to_color)}'><b>{to_label}</b></font>",
+                    S["body_sm"],
+                ),
+            ])
+        return rows
+
+    col_w = [CONTENT_W * 0.10, CONTENT_W * 0.18, CONTENT_W * 0.52, CONTENT_W * 0.20]
+
+    # ── Regressions
+    if regressions:
+        elems.append(
+            Paragraph(
+                f"<font color='#{_hex(C_RED)}'><b>Regressions</b></font> "
+                f"<font color='#64748b'>— {len(regressions)} control(s) newly FAILED</font>",
+                S["h2"],
+            )
+        )
+        elems.append(Spacer(1, 2 * mm))
+        header = [
+            Paragraph("<b>Severity</b>", S["body_sm"]),
+            Paragraph("<b>Control</b>", S["body_sm"]),
+            Paragraph("<b>Title</b>", S["body_sm"]),
+            Paragraph("<b>Transition</b>", S["body_sm"]),
+        ]
+        rows = [header] + _change_rows(regressions, "PASS", "FAIL", C_RED)
+        t = Table(rows, colWidths=col_w, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_RED_LT),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("GRID", (0, 0), (-1, -1), 0.5, C_BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elems.append(t)
+        elems.append(Spacer(1, 5 * mm))
+
+    # ── Improvements
+    if improvements:
+        elems.append(
+            Paragraph(
+                f"<font color='#{_hex(C_GREEN)}'><b>Improvements</b></font> "
+                f"<font color='#64748b'>— {len(improvements)} control(s) left FAIL state</font>",
+                S["h2"],
+            )
+        )
+        elems.append(Spacer(1, 2 * mm))
+        header = [
+            Paragraph("<b>Severity</b>", S["body_sm"]),
+            Paragraph("<b>Control</b>", S["body_sm"]),
+            Paragraph("<b>Title</b>", S["body_sm"]),
+            Paragraph("<b>Transition</b>", S["body_sm"]),
+        ]
+
+        def _impr_rows(entries: list[dict]) -> list:
+            rows = []
+            for e in entries:
+                sev = (e.get("severity") or "low").lower()
+                sev_c = _SEV_COLORS_PDF.get(sev, C_GREY)
+                to_s = e.get("to", "PASS")
+                to_c = {"PASS": C_GREEN, "WAIVED": C_PURPLE, "SKIP": C_GREY}.get(to_s, C_GREEN)
+                rows.append([
+                    Paragraph(
+                        f"<font color='#{_hex(sev_c)}'><b>[{sev.upper()}]</b></font>",
+                        S["body_sm"],
+                    ),
+                    Paragraph(f"<b>{e['control_id']}</b>", S["body_sm"]),
+                    Paragraph(e.get("title", ""), S["body_sm"]),
+                    Paragraph(
+                        f"<font color='#64748b'>FAIL</font> → "
+                        f"<font color='#{_hex(to_c)}'><b>{to_s}</b></font>",
+                        S["body_sm"],
+                    ),
+                ])
+            return rows
+
+        rows = [header] + _impr_rows(improvements)
+        t = Table(rows, colWidths=col_w, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_GREEN_LT),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("GRID", (0, 0), (-1, -1), 0.5, C_BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elems.append(t)
+        elems.append(Spacer(1, 5 * mm))
+
+    # ── Other status changes
+    if other_changes:
+        elems.append(
+            Paragraph(
+                f"<font color='#{_hex(C_YELLOW)}'><b>Other Status Changes</b></font> "
+                f"<font color='#64748b'>— {len(other_changes)} control(s)</font>",
+                S["h2"],
+            )
+        )
+        elems.append(Spacer(1, 2 * mm))
+        header = [
+            Paragraph("<b>Severity</b>", S["body_sm"]),
+            Paragraph("<b>Control</b>", S["body_sm"]),
+            Paragraph("<b>Title</b>", S["body_sm"]),
+            Paragraph("<b>Transition</b>", S["body_sm"]),
+        ]
+
+        def _other_rows(entries: list[dict]) -> list:
+            rows = []
+            for e in entries:
+                sev = (e.get("severity") or "low").lower()
+                sev_c = _SEV_COLORS_PDF.get(sev, C_GREY)
+                rows.append([
+                    Paragraph(
+                        f"<font color='#{_hex(sev_c)}'><b>[{sev.upper()}]</b></font>",
+                        S["body_sm"],
+                    ),
+                    Paragraph(f"<b>{e['control_id']}</b>", S["body_sm"]),
+                    Paragraph(e.get("title", ""), S["body_sm"]),
+                    Paragraph(
+                        f"<font color='#64748b'>{e.get('from', '?')} → {e.get('to', '?')}</font>",
+                        S["body_sm"],
+                    ),
+                ])
+            return rows
+
+        rows = [header] + _other_rows(other_changes)
+        t = Table(rows, colWidths=col_w, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), C_YELLOW_LT),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("GRID", (0, 0), (-1, -1), 0.5, C_BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elems.append(t)
+
+    return elems
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def generate_pdf(report: Report, output_path: Path, baseline: dict | None = None) -> None:
+def generate_pdf(
+    report: Report,
+    output_path: Path,
+    baseline: dict | None = None,
+    diff: dict | None = None,
+) -> None:
     """Generate a fully structured PDF report with TOC, risk scoring, and financial impact."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     S = _styles()
@@ -3033,45 +3286,50 @@ def generate_pdf(report: Report, output_path: Path, baseline: dict | None = None
     story += [PageBreak()]
     story += _executive_decision_brief(report, S, baseline=baseline)
 
-    # ── 4. Executive Risk Dashboard ────────────────────────────────────────────
+    # ── 4. Run Change Tracking (only when a previous run exists) ───────────────
+    if diff is not None:
+        story += [PageBreak()]
+        story += _changes_section(diff, S)
+
+    # ── 5. Executive Risk Dashboard ────────────────────────────────────────────
     story += [PageBreak()]
     story += _risk_financial_section(report, S, baseline=baseline)
 
-    # ── 5. Remediation Roadmap ─────────────────────────────────────────────────
+    # ── 6. Remediation Roadmap ─────────────────────────────────────────────────
     roadmap_elems = _remediation_roadmap_section(report, S)
     if roadmap_elems:
         story += [PageBreak()]
         story += roadmap_elems
 
-    # ── 6. Root Cause Analysis ─────────────────────────────────────────────────
+    # ── 7. Root Cause Analysis ─────────────────────────────────────────────────
     root_cause_elems = _root_cause_section(report, S)
     if root_cause_elems:
         story += [PageBreak()]
         story += root_cause_elems
 
-    # ── 7. Data Geography & Sovereignty ───────────────────────────────────────
+    # ── 8. Data Geography & Sovereignty ───────────────────────────────────────
     story += [PageBreak()]
     story += _data_geography_section(report, S)
 
-    # ── 8. Executive Summary ───────────────────────────────────────────────────
+    # ── 9. Executive Summary ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_summary(report, S)
 
-    # ── 9. Controls Overview ───────────────────────────────────────────────────
+    # ── 10. Controls Overview ──────────────────────────────────────────────────
     story += [PageBreak()]
     story += _controls_overview(report, S)
 
-    # ── 10. Regulatory Alignment ────────────────────────────────────────────────
+    # ── 11. Regulatory Alignment ────────────────────────────────────────────────
     reg_elems = _regulatory_alignment(report, S)
     if reg_elems:
         story += [PageBreak()]
         story += reg_elems
 
-    # ── 11. Detailed Findings ───────────────────────────────────────────────────
+    # ── 12. Detailed Findings ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _findings_section(report, S)
 
-    # ── 12. Appendix: Passed & Skipped Controls ─────────────────────────────────
+    # ── 13. Appendix: Passed & Skipped Controls ─────────────────────────────────
     story += [PageBreak()]
     story += _passed_section(report, S)
 

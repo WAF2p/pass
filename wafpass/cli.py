@@ -17,6 +17,8 @@ from wafpass.models import Report
 from wafpass.reporter import print_report, print_summary_only
 from wafpass.waivers import DEFAULT_SKIP_FILE, apply_waivers, load_waivers
 
+_DEFAULT_STATE_DIR = Path(".wafpass-state")
+
 app = typer.Typer(
     name="wafpass",
     help="WAF++ PASS – IaC controls checker for the WAF++ framework.",
@@ -126,6 +128,20 @@ def check(
         None,
         "--save-baseline",
         help="Save the current run as a JSON baseline file for future trend comparison.",
+    ),
+    state_dir: Path = typer.Option(
+        _DEFAULT_STATE_DIR,
+        "--state-dir",
+        help=(
+            "Directory for versioned run state files "
+            f"(default: {_DEFAULT_STATE_DIR}). Each run is saved as a JSON snapshot. "
+            "Set to empty string to disable."
+        ),
+    ),
+    no_state: bool = typer.Option(
+        False,
+        "--no-state",
+        help="Disable automatic run state saving and change tracking.",
     ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
@@ -252,12 +268,40 @@ def check(
         source_paths=str_paths,
     )
 
+    # ── Run state: load previous, compute diff, save current ───────────────────
+    run_diff: dict | None = None
+    _state_enabled = not no_state and state_dir and str(state_dir) not in ("", "none")
+
+    if _state_enabled:
+        from wafpass.state import (
+            build_run_snapshot,
+            compute_diff,
+            generate_run_id,
+            load_latest_run,
+            save_run,
+        )
+
+        run_id = generate_run_id()
+        snapshot = build_run_snapshot(report, run_id=run_id, iac_plugin=iac.lower())
+
+        previous_run = load_latest_run(state_dir)
+        if previous_run is not None:
+            run_diff = compute_diff(previous_run, snapshot)
+            # Embed provenance of previous run into the snapshot for traceability
+            snapshot["diff_from_previous"] = run_diff
+
+        try:
+            saved_to = save_run(snapshot, state_dir)
+            typer.echo(f"Run state saved: {saved_to}  (run-id: {run_id})")
+        except Exception as exc:
+            typer.echo(f"WARNING: Could not save run state to '{state_dir}': {exc}", err=True)
+
     # ── Output ─────────────────────────────────────────────────────────────────
     if output == "console":
         if summary_only:
             print_summary_only(report)
         else:
-            print_report(report, verbose=verbose)
+            print_report(report, verbose=verbose, diff=run_diff)
     elif output == "pdf":
         try:
             from wafpass.pdf_reporter import generate_pdf
@@ -278,7 +322,7 @@ def check(
             except Exception as exc:
                 typer.echo(f"WARNING: Could not load baseline '{baseline_path}': {exc}", err=True)
 
-        generate_pdf(report, dest, baseline=baseline_data)
+        generate_pdf(report, dest, baseline=baseline_data, diff=run_diff)
         typer.echo(f"PDF report written to: {dest}")
 
         if save_baseline_path:

@@ -52,7 +52,7 @@ def _format_result_line(result: CheckResult, verbose: bool) -> list[tuple[Text, 
     return status_t, resource_t, message_t
 
 
-def print_report(report: Report, verbose: bool = False) -> None:
+def print_report(report: Report, verbose: bool = False, diff: dict | None = None) -> None:
     """Print the full WAF++ PASS report to the console."""
     # Header panel
     header_lines = [
@@ -69,6 +69,10 @@ def print_report(report: Report, verbose: bool = False) -> None:
 
     # Summary
     _print_summary(report)
+
+    # Change tracking (shown after summary when a previous run exists)
+    if diff is not None:
+        _print_diff(diff)
 
 
 def _print_control_section(cr: ControlResult, verbose: bool) -> None:
@@ -181,6 +185,113 @@ def _print_summary(report: Report) -> None:
         console.print("  [bold green]EXIT CODE: 0[/bold green]  [dim](all checks passed)[/dim]")
 
     console.print()
+
+
+def _print_diff(diff: dict) -> None:
+    """Print the 'Changes from Previous Run' section."""
+    regressions = diff.get("regressions", [])
+    improvements = diff.get("improvements", [])
+    other_changes = diff.get("other_changes", [])
+    score_delta = diff.get("score_delta", 0)
+    prev_ts = diff.get("previous_generated_at", "")
+    prev_id = diff.get("previous_run_id", "")
+
+    total_changes = len(regressions) + len(improvements) + len(other_changes)
+
+    # Section header
+    console.print()
+    console.print(Rule("[bold]Changes from Previous Run[/bold]", style="dim"))
+
+    # Previous run metadata
+    if prev_ts:
+        # Format ISO timestamp for readability
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(prev_ts.replace("Z", "+00:00"))
+            ts_display = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            ts_display = prev_ts
+        console.print(
+            f"  [dim]Previous run:[/dim] [white]{ts_display}[/white]"
+            + (f"  [dim]({prev_id})[/dim]" if prev_id else "")
+        )
+
+    # Score delta
+    if score_delta > 0:
+        delta_str = f"  [dim]Risk score delta:[/dim] [red]+{score_delta} (worse)[/red]"
+    elif score_delta < 0:
+        delta_str = f"  [dim]Risk score delta:[/dim] [green]{score_delta} (improved)[/green]"
+    else:
+        delta_str = f"  [dim]Risk score delta:[/dim] [dim]0 (no change)[/dim]"
+    console.print(delta_str)
+
+    if total_changes == 0:
+        console.print("  [dim]No control status changes detected.[/dim]")
+        console.print(Rule(style="dim"))
+        return
+
+    # Regressions
+    if regressions:
+        console.print()
+        console.print(
+            f"  [bold red]Regressions[/bold red]  [dim]({len(regressions)} control(s) newly FAILED)[/dim]"
+        )
+        for entry in regressions:
+            sev = entry.get("severity", "")
+            sev_color = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan"}.get(
+                sev.lower(), "white"
+            )
+            from_s = entry.get("from", "?")
+            cid = entry["control_id"]
+            title = entry.get("title", "")
+            console.print(
+                f"    [red]✗[/red]  [bold white]{cid}[/bold white]"
+                f"  [{sev_color}][{sev.upper()}][/{sev_color}]"
+                f"  [dim]{from_s} →[/dim] [red]FAIL[/red]"
+                f"  [dim]{title}[/dim]"
+            )
+
+    # Improvements
+    if improvements:
+        console.print()
+        console.print(
+            f"  [bold green]Improvements[/bold green]  [dim]({len(improvements)} control(s) left FAIL)[/dim]"
+        )
+        for entry in improvements:
+            sev = entry.get("severity", "")
+            sev_color = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan"}.get(
+                sev.lower(), "white"
+            )
+            to_s = entry.get("to", "?")
+            to_color = {"PASS": "green", "WAIVED": "blue", "SKIP": "yellow"}.get(to_s, "white")
+            cid = entry["control_id"]
+            title = entry.get("title", "")
+            console.print(
+                f"    [green]✓[/green]  [bold white]{cid}[/bold white]"
+                f"  [{sev_color}][{sev.upper()}][/{sev_color}]"
+                f"  [dim]FAIL →[/dim] [{to_color}]{to_s}[/{to_color}]"
+                f"  [dim]{title}[/dim]"
+            )
+
+    # Other changes
+    if other_changes:
+        console.print()
+        console.print(
+            f"  [bold yellow]Other changes[/bold yellow]  [dim]({len(other_changes)} control(s))[/dim]"
+        )
+        for entry in other_changes:
+            from_s = entry.get("from", "?")
+            to_s = entry.get("to", "?")
+            cid = entry["control_id"]
+            title = entry.get("title", "")
+            console.print(
+                f"    [yellow]─[/yellow]  [bold white]{cid}[/bold white]"
+                f"  [dim]{from_s} → {to_s}[/dim]"
+                f"  [dim]{title}[/dim]"
+            )
+
+    console.print()
+    console.print(Rule(style="dim"))
 
 
 def print_summary_only(report: Report) -> None:
