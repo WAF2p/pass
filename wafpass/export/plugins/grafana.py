@@ -10,8 +10,12 @@ Works with:
 
 Metrics pushed
 --------------
-All metrics carry labels: ``iac_plugin``, ``run_id``, ``tool_version``,
-and the first source path as ``source``.
+All metrics carry labels: ``iac_plugin``, ``tool_version``, and the first
+source path as ``source``.  ``run_id`` is **not** a label on regular metrics
+so that every push overwrites the same Prometheus time series — enabling
+clean instant queries (one value = latest run) and natural range-query
+history.  ``run_id`` is attached only to ``wafpass_run_timestamp_seconds``
+so a Grafana table can still show the full run history with identifiers.
 
 +--------------------------------------------+-------+--------------------------------------------+
 | Metric                                     | Type  | Description                                |
@@ -44,7 +48,7 @@ Config keys (``exports.grafana`` in ``.wafpass-export.yml``)
       grafana:
         pushgateway_url: "http://pushgateway.monitoring.svc:9091"  # required
         job: "wafpass"           # optional; Pushgateway job label (default: wafpass)
-        instance: ""             # optional; Pushgateway instance label (default: first source path)
+        instance: ""             # optional; Pushgateway instance label (default: source path or "default")
         username: ""             # optional; HTTP Basic Auth user (Grafana Cloud: numeric ID)
         password: "${GRAFANA_CLOUD_TOKEN}"  # optional; HTTP Basic Auth password / API token
         timeout: 10              # optional; HTTP timeout in seconds (default: 10)
@@ -64,6 +68,7 @@ Pushgateway federation handle the rest.
 from __future__ import annotations
 
 import base64
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -97,10 +102,13 @@ def _prometheus_text(snapshot: dict, job: str, instance: str) -> str:
     except Exception:
         ts_seconds = int(time.time())
 
-    # Base labels shared by all metrics
+    # Base labels shared by all metrics.
+    # run_id is intentionally excluded here — including it would create a new
+    # Prometheus time series per run, causing stat panels to show one entry per
+    # run instead of a single "latest" value.  run_id is kept only on
+    # wafpass_run_timestamp_seconds for run-history lookup.
     base_labels = (
         f'iac_plugin="{_esc(iac_plugin)}",'
-        f'run_id="{_esc(run_id)}",'
         f'tool_version="{_esc(tool_version)}",'
         f'source="{_esc(source)}"'
     )
@@ -198,11 +206,17 @@ def _prometheus_text(snapshot: dict, job: str, instance: str) -> str:
             float(improvements),
         )
 
-    # ── Run timestamp ─────────────────────────────────────────────────────────
+    # ── Run timestamp (carries run_id for history table lookup) ──────────────
+    # run_id IS included here so a Grafana table querying this metric over a
+    # time range can display one row per historical run with its identifier.
+    # Each new push overwrites the Pushgateway group (stable instance), so only
+    # the latest run_id is active at any time; past values are kept in
+    # Prometheus TSDB and visible via range queries.
+    ts_labels = f'{base_labels},run_id="{_esc(run_id)}"'
     _g(
         "wafpass_run_timestamp_seconds",
-        "Unix timestamp of this WAF++ run.",
-        base_labels,
+        "Unix timestamp of this WAF++ run (label run_id identifies the run).",
+        ts_labels,
         float(ts_seconds),
     )
 
@@ -212,6 +226,29 @@ def _prometheus_text(snapshot: dict, job: str, instance: str) -> str:
 def _esc(s: str) -> str:
     """Escape backslashes and double-quotes for Prometheus label values."""
     return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _pushgateway_label_segment(value: str) -> str:
+    """Sanitise and encode a label value for use as a Pushgateway URL segment.
+
+    The Pushgateway URL format is::
+
+        /metrics/job/<job>/[<name>/<value>]*
+
+    The path is split on ``/`` before any decoding, so percent-encoding ``/``
+    as ``%2F`` does not help — the router still sees extra segments and returns
+    HTTP 400 or 405.  We therefore replace every character that is not
+    alphanumeric, ``-``, ``_``, or ``.`` with ``_``, producing a stable,
+    human-readable, URL-safe segment.
+
+    Examples::
+
+        "../dummy_code"               → "___dummy_code"
+        "/home/user/project/infra"    → "_home_user_project_infra"
+        "20260321-123456-abcd1234"    → "20260321-123456-abcd1234"  (unchanged)
+    """
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", value)
+    return safe or "default"
 
 
 class GrafanaPlugin:
@@ -235,14 +272,20 @@ class GrafanaPlugin:
             )
 
         job = config.get("job") or "wafpass"
-        run_id = snapshot.get("run_id", "default")
-        instance = config.get("instance") or run_id
+        # Use a stable instance so every push overwrites the same Pushgateway
+        # group.  Defaulting to the source path makes it easy to distinguish
+        # multiple projects/repos without accumulating one group per run.
+        source_paths = snapshot.get("source_paths", [])
+        source_default = source_paths[0] if source_paths else "default"
+        instance = config.get("instance") or source_default or "default"
         timeout = int(config.get("timeout", 10))
 
         # Pushgateway URL: /metrics/job/<job>/instance/<instance>
+        # Use @base64 encoding for values that contain '/' to avoid HTTP routers
+        # decoding %2F back to '/' and misrouting the request (HTTP 405).
         push_url = (
-            f"{url_base}/metrics/job/{urllib.parse.quote(job, safe='')}"
-            f"/instance/{urllib.parse.quote(instance, safe='')}"
+            f"{url_base}/metrics/job/{_pushgateway_label_segment(job)}"
+            f"/instance/{_pushgateway_label_segment(instance)}"
         )
 
         payload = _prometheus_text(snapshot, job=job, instance=instance).encode("utf-8")

@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Prometheus datasource scraping the Prometheus Pushgateway that receives WAF++ run snapshots.",
+      "description": "Prometheus datasource scraping the WAF++ Pushgateway.",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -70,13 +70,13 @@
         },
         "enable": true,
         "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
+        "iconColor": "rgba(0,211,255,1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
       }
     ]
   },
-  "description": "WAF++ PASS compliance monitoring — risk scores, control status, and run-to-run change tracking.",
+  "description": "WAF++ PASS compliance monitoring \u2014 risk scores, control status, and run-to-run change tracking.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -86,7 +86,7 @@
       "icon": "external link",
       "tags": [],
       "title": "WAF++ Framework",
-      "tooltip": "waf2p.dev — WAF++ framework documentation",
+      "tooltip": "waf2p.dev",
       "type": "link",
       "url": "https://waf2p.dev",
       "targetBlank": true
@@ -120,7 +120,7 @@
       },
       "options": {
         "mode": "html",
-        "content": "<div style=\"display:flex;flex-direction:column;justify-content:center;height:100%;padding:8px\"><div style=\"font-size:20px;font-weight:700;color:#2b7fff;margin-bottom:4px\">WAF++ PASS — Compliance Monitor</div><div style=\"font-size:12px;color:#64748b\">IaC security &amp; compliance posture · powered by <a href=\"https://waf2p.dev\" style=\"color:#2b7fff\">waf2p.dev</a> · data via Prometheus Pushgateway</div></div>"
+        "content": "<div style=\"display:flex;flex-direction:column;justify-content:center;height:100%;padding:8px\"><div style=\"font-size:20px;font-weight:700;color:#2b7fff;margin-bottom:4px\">WAF++ PASS \u2014 Compliance Monitor</div><div style=\"font-size:12px;color:#64748b\">IaC security &amp; compliance posture \u00b7 powered by <a href=\"https://waf2p.dev\" style=\"color:#2b7fff\">waf2p.dev</a> \u00b7 data via Prometheus Pushgateway</div></div>"
       }
     },
     {
@@ -140,7 +140,7 @@
       "id": 4,
       "type": "gauge",
       "title": "Risk Score",
-      "description": "0 = fully compliant · 100 = all critical controls failing",
+      "description": "0 = fully compliant \u00b7 100 = all critical controls failing",
       "gridPos": {
         "x": 0,
         "y": 4,
@@ -161,8 +161,7 @@
         },
         "orientation": "auto",
         "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "text": {}
+        "showThresholdMarkers": true
       },
       "fieldConfig": {
         "defaults": {
@@ -192,7 +191,8 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "mappings": []
         },
         "overrides": []
       },
@@ -202,7 +202,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_score{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_score{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -213,6 +213,7 @@
       "id": 5,
       "type": "stat",
       "title": "PASS",
+      "description": "",
       "gridPos": {
         "x": 4,
         "y": 4,
@@ -232,8 +233,8 @@
           "values": false
         },
         "colorMode": "background_solid",
-        "graphMode": "none",
-        "textMode": "value_and_name",
+        "graphMode": "area",
+        "textMode": "auto",
         "justifyMode": "center"
       },
       "fieldConfig": {
@@ -263,7 +264,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"pass\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -274,6 +275,7 @@
       "id": 6,
       "type": "stat",
       "title": "FAIL",
+      "description": "",
       "gridPos": {
         "x": 8,
         "y": 4,
@@ -293,8 +295,8 @@
           "values": false
         },
         "colorMode": "background_solid",
-        "graphMode": "none",
-        "textMode": "value_and_name",
+        "graphMode": "area",
+        "textMode": "auto",
         "justifyMode": "center"
       },
       "fieldConfig": {
@@ -309,8 +311,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "green",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
               }
             ]
           },
@@ -324,7 +330,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"fail\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -335,6 +341,7 @@
       "id": 7,
       "type": "stat",
       "title": "SKIP",
+      "description": "",
       "gridPos": {
         "x": 12,
         "y": 4,
@@ -354,8 +361,8 @@
           "values": false
         },
         "colorMode": "background_solid",
-        "graphMode": "none",
-        "textMode": "value_and_name",
+        "graphMode": "area",
+        "textMode": "auto",
         "justifyMode": "center"
       },
       "fieldConfig": {
@@ -364,14 +371,18 @@
           "decimals": 0,
           "color": {
             "mode": "fixed",
-            "fixedColor": "yellow"
+            "fixedColor": "#eab308"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "yellow",
+                "color": "green",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
               }
             ]
           },
@@ -385,7 +396,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"skip\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -396,6 +407,7 @@
       "id": 8,
       "type": "stat",
       "title": "WAIVED",
+      "description": "",
       "gridPos": {
         "x": 16,
         "y": 4,
@@ -415,8 +427,8 @@
           "values": false
         },
         "colorMode": "background_solid",
-        "graphMode": "none",
-        "textMode": "value_and_name",
+        "graphMode": "area",
+        "textMode": "auto",
         "justifyMode": "center"
       },
       "fieldConfig": {
@@ -425,13 +437,13 @@
           "decimals": 0,
           "color": {
             "mode": "fixed",
-            "fixedColor": "blue"
+            "fixedColor": "#7c3aed"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "text",
                 "value": null
               }
             ]
@@ -446,7 +458,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"waived\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"waived\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -457,6 +469,7 @@
       "id": 9,
       "type": "stat",
       "title": "Controls Run",
+      "description": "",
       "gridPos": {
         "x": 20,
         "y": 4,
@@ -476,8 +489,8 @@
           "values": false
         },
         "colorMode": "background_solid",
-        "graphMode": "none",
-        "textMode": "value_and_name",
+        "graphMode": "area",
+        "textMode": "auto",
         "justifyMode": "center"
       },
       "fieldConfig": {
@@ -507,7 +520,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"} + wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"} + wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"} + wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"waived\"}",
+          "expr": "sum by(iac_plugin, source)(max by(iac_plugin, source, status)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"}))",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -518,7 +531,7 @@
       "id": 10,
       "type": "stat",
       "title": "Score Delta",
-      "description": "+ve = worse",
+      "description": "+ve = worse, \u2212ve = improved",
       "gridPos": {
         "x": 4,
         "y": 7,
@@ -576,7 +589,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_score_delta{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_score_delta{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -587,7 +600,7 @@
       "id": 11,
       "type": "stat",
       "title": "Regressions",
-      "description": "New FAILs this run",
+      "description": "Controls newly FAILING this run",
       "gridPos": {
         "x": 8,
         "y": 7,
@@ -645,7 +658,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_regressions_total{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_regressions_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -656,7 +669,7 @@
       "id": 12,
       "type": "stat",
       "title": "Improvements",
-      "description": "Controls leaving FAIL",
+      "description": "Controls that left FAIL state",
       "gridPos": {
         "x": 12,
         "y": 7,
@@ -691,7 +704,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "grey",
+                "color": "text",
                 "value": null
               },
               {
@@ -710,7 +723,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_improvements_total{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_improvements_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -771,7 +784,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_run_timestamp_seconds{iac_plugin=~\"\", source=~\"\"} * 1000",
+          "expr": "max(wafpass_run_timestamp_seconds{iac_plugin=~\"$iac_plugin\", source=~\"$source\"}) * 1000",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -854,7 +867,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_score{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_score{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "Risk Score",
           "instant": false,
           "refId": "A"
@@ -969,7 +982,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"pass\"})",
           "legendFormat": "PASS",
           "instant": false,
           "refId": "A"
@@ -979,7 +992,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"fail\"})",
           "legendFormat": "FAIL",
           "instant": false,
           "refId": "B"
@@ -989,7 +1002,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"skip\"})",
           "legendFormat": "SKIP",
           "instant": false,
           "refId": "C"
@@ -999,7 +1012,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"waived\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_controls_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"waived\"})",
           "legendFormat": "WAIVED",
           "instant": false,
           "refId": "D"
@@ -1023,7 +1036,7 @@
       "id": 18,
       "type": "bargauge",
       "title": "Risk Score per Pillar (0 = clean, 100 = all failing)",
-      "description": "Higher score = more failing controls in that pillar (weighted by severity).",
+      "description": "Higher = more failing controls in that pillar (weighted by severity).",
       "gridPos": {
         "x": 0,
         "y": 21,
@@ -1044,12 +1057,8 @@
         },
         "orientation": "horizontal",
         "displayMode": "gradient",
-        "valueMode": "color",
         "showUnfilled": true,
-        "minVizWidth": 0,
-        "minVizHeight": 10,
-        "namePlacement": "auto",
-        "fillOpacity": 80
+        "minVizHeight": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -1091,8 +1100,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_pillar_score{iac_plugin=~\"\", source=~\"\"}",
-          "legendFormat": "{{{{pillar}}}}",
+          "expr": "max by(iac_plugin, source, pillar)(wafpass_pillar_score{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
+          "legendFormat": "{{pillar}}",
           "instant": true,
           "refId": "A"
         }
@@ -1195,7 +1204,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_score_delta{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_score_delta{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "Score Delta",
           "instant": false,
           "refId": "A"
@@ -1280,7 +1289,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_regressions_total{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_regressions_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "Regressions (new FAILs)",
           "instant": false,
           "refId": "A"
@@ -1290,7 +1299,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_improvements_total{iac_plugin=~\"\", source=~\"\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_improvements_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
           "legendFormat": "Improvements (left FAIL)",
           "instant": false,
           "refId": "B"
@@ -1314,7 +1323,7 @@
       "id": 23,
       "type": "table",
       "title": "Control Status (current)",
-      "description": "Live view of every control's status. Red rows = FAIL. Filter by pillar or severity using the dropdowns above.",
+      "description": "Live view of every control. Red = FAIL. Use column headers to sort and filter.",
       "gridPos": {
         "x": 0,
         "y": 38,
@@ -1333,7 +1342,7 @@
         "cellHeight": "sm",
         "sortBy": [
           {
-            "displayName": "Status (num)",
+            "displayName": "Value",
             "desc": true
           }
         ]
@@ -1345,7 +1354,6 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": false,
             "filterable": true
           },
           "mappings": [],
@@ -1391,6 +1399,12 @@
                 "value": 100
               },
               {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
                 "id": "mappings",
                 "value": [
                   {
@@ -1419,12 +1433,6 @@
                     }
                   }
                 ]
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
               }
             ]
           },
@@ -1452,57 +1460,11 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Status (num)"
-              },
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Value #status"
-            },
-            "properties": [
-              {
-                "id": "displayName",
                 "value": "Status"
               },
               {
                 "id": "custom.width",
                 "value": 110
-              },
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "type": "value",
-                    "options": {
-                      "0": {
-                        "text": "✓ PASS",
-                        "color": "green",
-                        "index": 0
-                      },
-                      "1": {
-                        "text": "✗ FAIL",
-                        "color": "red",
-                        "index": 1
-                      },
-                      "2": {
-                        "text": "─ SKIP",
-                        "color": "yellow",
-                        "index": 2
-                      },
-                      "3": {
-                        "text": "○ WAIVED",
-                        "color": "blue",
-                        "index": 3
-                      }
-                    }
-                  }
-                ]
               },
               {
                 "id": "custom.cellOptions",
@@ -1511,13 +1473,55 @@
                 }
               },
               {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "\u2713 PASS",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "\u2717 FAIL",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "\u2500 SKIP",
+                        "color": "yellow",
+                        "index": 2
+                      },
+                      "3": {
+                        "text": "\u25cb WAIVED",
+                        "color": "blue",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "text",
+                      "color": "green",
                       "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1.5
+                    },
+                    {
+                      "color": "blue",
+                      "value": 2.5
                     }
                   ]
                 }
@@ -1526,25 +1530,45 @@
           }
         ]
       },
-      "transformations": [
-        {
-          "id": "labelsToFields",
-          "options": {
-            "valueLabel": "control_id"
-          }
-        }
-      ],
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_control_status{iac_plugin=~\"\", source=~\"\"}",
-          "legendFormat": "{{{{control_id}}}} | {{{{severity}}}} | {{{{pillar}}}}",
+          "expr": "max by(iac_plugin, source, control_id, severity, pillar)(wafpass_control_status{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
+          "legendFormat": "{{control_id}}",
           "instant": true,
-          "refId": "status",
+          "refId": "A",
           "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "run_id": true,
+              "tool_version": true,
+              "source": true,
+              "iac_plugin": true,
+              "__name__": true
+            },
+            "renameByName": {},
+            "indexByName": {
+              "control_id": 0,
+              "severity": 1,
+              "pillar": 2,
+              "Value": 3
+            }
+          }
         }
       ]
     },
@@ -1654,7 +1678,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_checks_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_checks_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"pass\"})",
           "legendFormat": "Checks PASS",
           "instant": false,
           "refId": "A"
@@ -1664,7 +1688,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_checks_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_checks_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"fail\"})",
           "legendFormat": "Checks FAIL",
           "instant": false,
           "refId": "B"
@@ -1674,12 +1698,247 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "wafpass_checks_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"}",
+          "expr": "max by(iac_plugin, source)(wafpass_checks_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\", status=\"skip\"})",
           "legendFormat": "Checks SKIP",
           "instant": false,
           "refId": "C"
         }
       ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "Run History",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 27,
+      "type": "table",
+      "title": "Score History per Run",
+      "description": "Historical WAF++ scores.  Each row is one Prometheus scrape that captured a change.  Use the time range selector to zoom in or out.",
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by(iac_plugin, source)(wafpass_score{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
+          "legendFormat": "score",
+          "instant": false,
+          "refId": "A",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by(iac_plugin, source)(wafpass_regressions_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
+          "legendFormat": "regressions",
+          "instant": false,
+          "refId": "B",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by(iac_plugin, source)(wafpass_improvements_total{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
+          "legendFormat": "improvements",
+          "instant": false,
+          "refId": "C",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by(iac_plugin, source, run_id)(wafpass_run_timestamp_seconds{iac_plugin=~\"$iac_plugin\", source=~\"$source\"})",
+          "legendFormat": "run_id",
+          "instant": false,
+          "refId": "D",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "Time",
+                "Value #A",
+                "Value #B",
+                "Value #C",
+                "run_id"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Time": "Time",
+              "Value #A": "Risk Score",
+              "Value #B": "Regressions",
+              "Value #C": "Improvements",
+              "run_id": "Run ID"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": [
+              {
+                "displayName": "Time",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ],
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Risk Score"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 60
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Regressions"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-text"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Improvements"
+            },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-text"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "refresh": "1m",
@@ -1699,12 +1958,12 @@
         "includeAll": false,
         "multi": false,
         "name": "datasource",
+        "label": "Data Source",
         "options": [],
         "query": "prometheus",
         "refresh": 1,
         "regex": "",
-        "type": "datasource",
-        "label": "Data Source"
+        "type": "datasource"
       },
       {
         "datasource": {
@@ -1716,6 +1975,11 @@
         "includeAll": true,
         "multi": true,
         "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
         "name": "iac_plugin",
         "label": "IaC Plugin",
         "query": {
@@ -1737,6 +2001,11 @@
         "includeAll": true,
         "multi": true,
         "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
         "name": "source",
         "label": "Source Path",
         "query": {
@@ -1756,7 +2025,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "WAF++ PASS — Compliance Monitor",
+  "title": "WAF++ PASS \u2014 Compliance Monitor",
   "uid": "wafpp-pass-v1",
   "version": 1,
   "weekStart": ""
