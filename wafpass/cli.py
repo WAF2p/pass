@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 from typing import List
@@ -11,132 +10,16 @@ import typer
 
 from wafpass import __name_full__, __version__
 from wafpass.engine import filter_by_severity, run_controls
+from wafpass.iac import registry
+from wafpass.iac.base import IaCState
 from wafpass.loader import load_controls
 from wafpass.models import Report
-from wafpass.parser import TerraformState, parse_terraform
 from wafpass.reporter import print_report, print_summary_only
 from wafpass.waivers import DEFAULT_SKIP_FILE, apply_waivers, load_waivers
 
-
-def _is_literal_string(val: object) -> bool:
-    """Return True if val is a plain string, not a Terraform expression."""
-    if not isinstance(val, str):
-        return False
-    v = val.strip()
-    return bool(v) and "${" not in v and not v.startswith("var.") and not v.startswith("local.")
-
-
-_AZ_RE = re.compile(r"^([a-z]{2}-[a-z]+-\d+)[a-z]$")
-_REGION_IN_STRING_RE = re.compile(r"\b([a-z]{2}-(?:central|west|east|north|south|southeast|northeast|northwest|southwest)-\d+)\b")
-
-
-def _region_from_az(val: str) -> str | None:
-    """Return the AWS region from an AZ string, e.g. 'eu-central-1a' → 'eu-central-1'."""
-    m = _AZ_RE.match(val.strip())
-    return m.group(1) if m else None
-
-
-def _region_from_zone(val: str) -> str | None:
-    """Return region from a zone string (Alibaba/Yandex).
-
-    Examples: 'cn-hangzhou-b' → 'cn-hangzhou', 'ru-central1-a' → 'ru-central1'
-    Returns None if val doesn't look like a zone identifier (e.g. plain 'cn-hangzhou').
-    """
-    parts = val.strip().split("-")
-    if len(parts) >= 3 and len(parts[-1]) == 1 and parts[-1].isalpha():
-        return "-".join(parts[:-1])
-    return None
-
-
-def _region_from_string(val: str) -> str | None:
-    """Extract an AWS region embedded in an arbitrary string (e.g. service endpoint)."""
-    m = _REGION_IN_STRING_RE.search(val)
-    return m.group(1) if m else None
-
-
-def _extract_regions(tf_state: TerraformState) -> list[tuple[str, str]]:
-    """Extract (region_name, provider) tuples from parsed Terraform state."""
-    seen: set[tuple[str, str]] = set()
-    result: list[tuple[str, str]] = []
-
-    def add(region: str, provider: str) -> None:
-        key = (region.lower(), provider)
-        if key not in seen:
-            seen.add(key)
-            result.append((region, provider))
-
-    def try_add_literal(val: object, provider: str) -> None:
-        """Add val directly if it is a literal region string."""
-        if _is_literal_string(val):
-            add(str(val).strip(), provider)
-
-    def try_add_aws_val(val: object) -> None:
-        """Try to extract an AWS region from a literal attribute value."""
-        if not _is_literal_string(val):
-            return
-        s = str(val).strip()
-        # Direct region string (e.g. "eu-central-1")
-        if re.match(r"^[a-z]{2}-[a-z]+-\d+$", s):
-            add(s, "aws")
-            return
-        # AZ string (e.g. "eu-central-1a")
-        region = _region_from_az(s)
-        if region:
-            add(region, "aws")
-            return
-        # Embedded in a service name / ARN (e.g. "com.amazonaws.eu-central-1.s3")
-        region = _region_from_string(s)
-        if region:
-            add(region, "aws")
-
-    def try_add_zone_val(val: object, provider: str) -> None:
-        """Add a region extracted from an Alibaba/Yandex zone string."""
-        if not _is_literal_string(val):
-            return
-        s = str(val).strip()
-        region = _region_from_zone(s) or s  # fall back to the value itself if no zone suffix
-        add(region, provider)
-
-    for blk in tf_state.providers:
-        pname = blk.type.lower()
-        if pname == "aws":
-            try_add_literal(blk.attributes.get("region"), "aws")
-        elif pname in ("azurerm", "azuread", "azurestack"):
-            try_add_literal(blk.attributes.get("location") or blk.attributes.get("region"), "azure")
-        elif pname in ("google", "google-beta"):
-            try_add_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
-        elif pname == "alicloud":
-            try_add_zone_val(blk.attributes.get("region") or blk.attributes.get("zone"), "alicloud")
-        elif pname == "yandex":
-            try_add_zone_val(blk.attributes.get("zone") or blk.attributes.get("region"), "yandex")
-        elif pname == "oci":
-            try_add_literal(blk.attributes.get("region"), "oci")
-
-    for blk in tf_state.resources:
-        rtype = blk.type.lower()
-        if rtype.startswith("aws_"):
-            for attr in ("region", "availability_zone", "service_name"):
-                try_add_aws_val(blk.attributes.get(attr))
-            # subnet_ids list items may be expressions; skip
-        elif rtype.startswith("azurerm_"):
-            try_add_literal(blk.attributes.get("location"), "azure")
-        elif rtype.startswith("google_"):
-            try_add_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
-        elif rtype.startswith("alicloud_"):
-            try_add_zone_val(
-                blk.attributes.get("region") or blk.attributes.get("zone") or blk.attributes.get("zone_id"),
-                "alicloud",
-            )
-        elif rtype.startswith("yandex_"):
-            try_add_zone_val(blk.attributes.get("zone") or blk.attributes.get("region"), "yandex")
-        elif rtype.startswith("oci_"):
-            try_add_literal(blk.attributes.get("region"), "oci")
-
-    return result
-
 app = typer.Typer(
     name="wafpass",
-    help="WAF++ PASS – Terraform controls checker for the WAF++ framework.",
+    help="WAF++ PASS – IaC controls checker for the WAF++ framework.",
     add_completion=False,
 )
 
@@ -158,7 +41,7 @@ def main(
         help="Show version and exit.",
     ),
 ) -> None:
-    """WAF++ PASS – check Terraform files against WAF++ controls."""
+    """WAF++ PASS – check IaC files against WAF++ controls."""
 
 
 @app.command()
@@ -166,9 +49,18 @@ def check(
     paths: List[Path] = typer.Argument(
         ...,
         help=(
-            "Path(s) to Terraform files (directories or .tf files). "
+            "Path(s) to IaC files (directories or individual files). "
             "Pass multiple paths to merge results from different cloud folders, "
             "e.g. wafpass check ./aws ./azure ./gcp"
+        ),
+    ),
+    iac: str = typer.Option(
+        "terraform",
+        "--iac",
+        help=(
+            "IaC framework plugin to use for parsing. "
+            f"Available: terraform, bicep, cdk, pulumi. "
+            "Default: terraform."
         ),
     ),
     controls_dir: Path = typer.Option(
@@ -236,9 +128,19 @@ def check(
         help="Save the current run as a JSON baseline file for future trend comparison.",
     ),
 ) -> None:
-    """Check Terraform files against WAF++ YAML controls."""
+    """Check IaC files against WAF++ YAML controls."""
 
-    # ── Validate paths ────────────────────────────────────────────────────────
+    # ── Resolve plugin ─────────────────────────────────────────────────────────
+    plugin = registry.get(iac.lower())
+    if plugin is None:
+        available = ", ".join(registry.available) or "(none)"
+        typer.echo(
+            f"ERROR: Unknown IaC plugin '{iac}'. Available: {available}",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    # ── Validate paths ─────────────────────────────────────────────────────────
     for p in paths:
         if not p.exists():
             typer.echo(f"ERROR: Path does not exist: {p}", err=True)
@@ -249,7 +151,7 @@ def check(
     if control_ids:
         ids = [i.strip() for i in control_ids.split(",") if i.strip()]
 
-    # ── Load controls ─────────────────────────────────────────────────────────
+    # ── Load controls ──────────────────────────────────────────────────────────
     try:
         controls = load_controls(controls_dir, pillar=pillar, ids=ids)
     except Exception as exc:
@@ -265,24 +167,24 @@ def check(
         )
         raise typer.Exit(code=2)
 
-    # ── Parse Terraform (merge across all paths) ──────────────────────────────
-    merged_tf = TerraformState()
+    # ── Parse IaC files (merge across all paths) ───────────────────────────────
+    merged_state = IaCState()
     all_regions: list[tuple[str, str]] = []
 
     for p in paths:
         if len(paths) > 1:
-            typer.echo(f"Scanning: {p}")
+            typer.echo(f"Scanning [{iac}]: {p}")
         try:
-            tf = parse_terraform(p)
+            state = plugin.parse(p)
         except Exception as exc:
-            typer.echo(f"ERROR parsing Terraform files in {p}: {exc}", err=True)
+            typer.echo(f"ERROR parsing {iac} files in {p}: {exc}", err=True)
             raise typer.Exit(code=2) from exc
-        merged_tf.resources.extend(tf.resources)
-        merged_tf.providers.extend(tf.providers)
-        merged_tf.variables.extend(tf.variables)
-        merged_tf.modules.extend(tf.modules)
-        merged_tf.terraform_blocks.extend(tf.terraform_blocks)
-        all_regions.extend(_extract_regions(tf))
+        merged_state.resources.extend(state.resources)
+        merged_state.providers.extend(state.providers)
+        merged_state.variables.extend(state.variables)
+        merged_state.modules.extend(state.modules)
+        merged_state.config_blocks.extend(state.config_blocks)
+        all_regions.extend(plugin.extract_regions(state))
 
     # Deduplicate regions while preserving order
     seen_region_keys: set[tuple[str, str]] = set()
@@ -293,19 +195,18 @@ def check(
             seen_region_keys.add(key)
             unique_regions.append(r)
 
-    # ── Run controls ──────────────────────────────────────────────────────────
+    # ── Run controls ───────────────────────────────────────────────────────────
     try:
-        results = run_controls(controls, merged_tf)
+        results = run_controls(controls, merged_state, engine_name=iac.lower())
     except Exception as exc:
         typer.echo(f"ERROR running controls: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    # ── Apply severity filter ─────────────────────────────────────────────────
+    # ── Apply severity filter ──────────────────────────────────────────────────
     if severity:
         results = filter_by_severity(results, severity)
 
-    # ── Apply waivers ─────────────────────────────────────────────────────────
-    # Discovery order: explicit --skip-file > CWD > each scanned path directory
+    # ── Apply waivers ──────────────────────────────────────────────────────────
     def _find_skip_file() -> Path | None:
         candidates = [Path(DEFAULT_SKIP_FILE)]
         for p in paths:
@@ -339,7 +240,7 @@ def check(
                     err=True,
                 )
 
-    # ── Build report ──────────────────────────────────────────────────────────
+    # ── Build report ───────────────────────────────────────────────────────────
     str_paths = [str(p) for p in paths]
     path_display = " | ".join(str_paths)
     report = Report(
@@ -351,7 +252,7 @@ def check(
         source_paths=str_paths,
     )
 
-    # ── Output ────────────────────────────────────────────────────────────────
+    # ── Output ─────────────────────────────────────────────────────────────────
     if output == "console":
         if summary_only:
             print_summary_only(report)
@@ -390,7 +291,7 @@ def check(
         typer.echo(f"Output format '{output}' is not yet supported.", err=True)
         raise typer.Exit(code=2)
 
-    # ── Exit code ─────────────────────────────────────────────────────────────
+    # ── Exit code ──────────────────────────────────────────────────────────────
     fail_on_lower = fail_on.lower()
     if fail_on_lower == "fail" and report.total_fail > 0:
         raise typer.Exit(code=1)
