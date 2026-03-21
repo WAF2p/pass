@@ -143,6 +143,24 @@ def check(
         "--no-state",
         help="Disable automatic run state saving and change tracking.",
     ),
+    export: str | None = typer.Option(
+        None,
+        "--export",
+        help=(
+            "Comma-separated list of export plugin names to push the run snapshot to "
+            "(e.g. 'grafana', 'grafana,webhook', 'slack'). "
+            "Available: grafana, prometheus, datadog, splunk, slack, webhook."
+        ),
+    ),
+    export_config: Path = typer.Option(
+        None,
+        "--export-config",
+        help=(
+            "Path to a YAML export config file (default: auto-discovered "
+            "'.wafpass-export.yml' in the current directory). "
+            "See README for the expected format."
+        ),
+    ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
 
@@ -270,6 +288,7 @@ def check(
 
     # ── Run state: load previous, compute diff, save current ───────────────────
     run_diff: dict | None = None
+    snapshot: dict | None = None
     _state_enabled = not no_state and state_dir and str(state_dir) not in ("", "none")
 
     if _state_enabled:
@@ -334,6 +353,48 @@ def check(
     else:
         typer.echo(f"Output format '{output}' is not yet supported.", err=True)
         raise typer.Exit(code=2)
+
+    # ── Export to monitoring systems ───────────────────────────────────────────
+    if export and _state_enabled and snapshot is not None:
+        import wafpass.export.plugins  # noqa: F401 — triggers self-registration
+        from wafpass.export.registry import registry as export_registry
+        from wafpass.export.config import load_export_config, DEFAULT_EXPORT_CONFIG
+
+        # Load export config file
+        _export_cfg_path = export_config or DEFAULT_EXPORT_CONFIG
+        _export_configs: dict[str, dict] = {}
+        if _export_cfg_path.exists():
+            try:
+                _export_configs = load_export_config(_export_cfg_path)
+            except Exception as exc:
+                typer.echo(f"WARNING: Could not load export config '{_export_cfg_path}': {exc}", err=True)
+        elif export_config is not None:
+            typer.echo(f"ERROR: Export config file not found: {export_config}", err=True)
+            raise typer.Exit(code=2)
+
+        for plugin_name in [n.strip() for n in export.split(",") if n.strip()]:
+            exp_plugin = export_registry.get(plugin_name)
+            if exp_plugin is None:
+                available_exp = ", ".join(export_registry.available) or "(none)"
+                typer.echo(
+                    f"WARNING: Unknown export plugin '{plugin_name}'. "
+                    f"Available: {available_exp}",
+                    err=True,
+                )
+                continue
+            plugin_cfg = _export_configs.get(plugin_name, {})
+            typer.echo(f"Exporting to [{plugin_name}]...")
+            result = exp_plugin.export(snapshot, plugin_cfg)
+            if result.success:
+                typer.echo(f"  ✓ {plugin_name}: {result.message}")
+            else:
+                typer.echo(f"  ✗ {plugin_name}: {result.message}", err=True)
+    elif export and not _state_enabled:
+        typer.echo(
+            "WARNING: --export requires run state tracking. "
+            "Remove --no-state or set --state-dir to enable export.",
+            err=True,
+        )
 
     # ── Exit code ──────────────────────────────────────────────────────────────
     fail_on_lower = fail_on.lower()

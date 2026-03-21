@@ -367,6 +367,266 @@ If a waiver has expired, the tool prints a warning to stderr but continues norma
 
 ---
 
+## Run versioning & change tracking
+
+WAF++ PASS automatically records every run as a versioned JSON snapshot in a local state directory (default: `.wafpass-state/`). On subsequent runs, changes in control status are detected and shown in the console report and the PDF.
+
+### State directory layout
+
+```
+.wafpass-state/
+  index.json          ← lightweight index of all runs (machine-readable)
+  runs/
+    run-20260321-152251-a1e136bd.json   ← full snapshot per run
+    run-20260321-160000-def67890.json
+    …
+```
+
+### Snapshot content
+
+Each run file is a self-contained JSON document:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "20260321-152251-a1e136bd",
+  "generated_at": "2026-03-21T15:22:51+00:00",
+  "tool_version": "0.1.0",
+  "iac_plugin": "terraform",
+  "source_paths": ["./infra"],
+  "score": 45,
+  "totals": { "controls_run": 70, "pass": 55, "fail": 10, "skip": 5, "waived": 0 },
+  "pillar_scores": { "cost": 20, "security": 60, "sovereign": 0 },
+  "control_statuses": { "WAF-COST-010": "PASS", "WAF-SEC-020": "FAIL" },
+  "control_details": { "WAF-COST-010": { "status": "PASS", "severity": "high", … } },
+  "diff_from_previous": {
+    "previous_run_id": "…",
+    "score_delta": 5,
+    "regressions": [{ "control_id": "WAF-SEC-020", "from": "PASS", "to": "FAIL", … }],
+    "improvements": [],
+    "other_changes": []
+  }
+}
+```
+
+### Console output — Changes section
+
+After each run (when a previous run exists), the console shows a **Changes from Previous Run** section:
+
+```
+────────────────────────── Changes from Previous Run ───────────────────────────
+  Previous run: 2026-03-20 10:00 UTC  (20260320-100000-abc12345)
+  Risk score delta: +7 (worse)
+
+  Regressions  (2 control(s) newly FAILED)
+    ✗  WAF-COST-010  [HIGH]  PASS → FAIL  Cost Allocation Tagging Enforced
+    ✗  WAF-SEC-020   [CRITICAL]  PASS → FAIL  Encryption at Rest
+
+  Improvements  (1 control(s) left FAIL)
+    ✓  WAF-COST-030  [MEDIUM]  FAIL → PASS  Budget Alerts Configured
+────────────────────────────────────────────────────────────────────────────────
+```
+
+The same information appears as a dedicated **Run Change Tracking** page in PDF reports.
+
+### State CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--state-dir PATH` | `.wafpass-state` | Directory for versioned state files |
+| `--no-state` | off | Disable state saving and change tracking |
+
+```bash
+# Use a custom state directory (e.g. shared across teams via a mounted volume)
+wafpass check ./infra/ --state-dir /var/wafpass-state
+
+# Disable state tracking (useful for one-off ad-hoc runs)
+wafpass check ./infra/ --no-state
+```
+
+---
+
+## Monitoring & observability export plugins
+
+WAF++ PASS ships a monitoring export plugin system that pushes run snapshots to external observability platforms after every check. This feeds dashboards, alerts, and time-series trend analysis without requiring a separate CI job.
+
+### Quick start
+
+```bash
+# Push to Grafana via Prometheus Pushgateway
+wafpass check ./infra/ --export grafana
+
+# Push to multiple targets in one run
+wafpass check ./infra/ --export grafana,slack,webhook
+```
+
+### Export config file
+
+Create `.wafpass-export.yml` in your working directory (auto-discovered) or pass `--export-config`:
+
+```yaml
+# .wafpass-export.yml
+exports:
+
+  # ── Grafana via Prometheus Pushgateway (fully implemented) ─────────────────
+  grafana:
+    pushgateway_url: "http://pushgateway.monitoring.svc:9091"
+    job: "wafpass"                    # Pushgateway job label (default: wafpass)
+    instance: "my-project"            # Pushgateway instance label (default: run_id)
+    # username: "12345"               # optional Basic Auth (Grafana Cloud proxy)
+    # password: "${GRAFANA_CLOUD_TOKEN}"
+
+  # ── Prometheus Pushgateway — standalone (stub, delegates to grafana plugin) ──
+  prometheus:
+    pushgateway_url: "http://pushgateway:9091"
+    job: "wafpass"
+
+  # ── Datadog Metrics API v2 (stub) ─────────────────────────────────────────
+  datadog:
+    api_key: "${DD_API_KEY}"
+    site: "datadoghq.eu"              # or datadoghq.com
+
+  # ── Splunk HTTP Event Collector (stub) ────────────────────────────────────
+  splunk:
+    hec_url: "https://splunk.example.com:8088/services/collector"
+    token: "${SPLUNK_HEC_TOKEN}"
+    index: "main"
+
+  # ── Slack incoming webhook (stub) ─────────────────────────────────────────
+  slack:
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    only_on_regression: true          # only post when new FAILs appear
+
+  # ── Generic HTTP webhook (fully implemented) ──────────────────────────────
+  webhook:
+    url: "https://my-webhook.example.com/wafpass"
+    headers:
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"
+    include_full_snapshot: true       # false = lightweight summary only
+```
+
+Secret values may use `${ENV_VAR}` placeholders — they are expanded from the environment at runtime and never stored in state files.
+
+### Available export plugins
+
+| Plugin | `--export` name | Status | Description |
+|--------|----------------|--------|-------------|
+| Grafana (Pushgateway) | `grafana` | **Implemented** | Prometheus text format → Pushgateway |
+| Prometheus Pushgateway | `prometheus` | Stub (delegates to grafana) | Direct Pushgateway without Grafana branding |
+| Datadog | `datadog` | **Stub** | Datadog Metrics API v2 |
+| Splunk | `splunk` | **Stub** | Splunk HTTP Event Collector |
+| Slack | `slack` | **Stub** | Slack incoming webhook with Block Kit |
+| Generic webhook | `webhook` | **Implemented** | POST JSON snapshot to any HTTP endpoint |
+
+### Grafana setup
+
+#### Self-hosted Grafana + Prometheus + Pushgateway
+
+1. Deploy a [Prometheus Pushgateway](https://github.com/prometheus/pushgateway)
+2. Configure Prometheus to scrape it
+3. In Grafana, add Prometheus as a data source and build dashboards on the `wafpass_*` metrics family
+
+**Metrics reference**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `wafpass_score` | gauge | Overall risk score (0 = fully compliant, 100 = all critical controls failing) |
+| `wafpass_controls_total{status}` | gauge | Control count by `pass`, `fail`, `skip`, `waived` |
+| `wafpass_checks_total{status}` | gauge | Individual check count by status |
+| `wafpass_pillar_score{pillar}` | gauge | Risk score per WAF++ pillar |
+| `wafpass_control_status{control_id,severity,pillar}` | gauge | Per-control: 0=PASS 1=FAIL 2=SKIP 3=WAIVED |
+| `wafpass_score_delta` | gauge | Score change vs previous run (+ve = worse) |
+| `wafpass_regressions_total` | gauge | Controls newly entering FAIL this run |
+| `wafpass_improvements_total` | gauge | Controls leaving FAIL this run |
+| `wafpass_run_timestamp_seconds` | gauge | Unix timestamp of this run |
+
+All metrics carry labels: `iac_plugin`, `run_id`, `tool_version`, `source`.
+
+**Example Grafana alert rule** — fire when any control regresses:
+```promql
+increase(wafpass_regressions_total[1h]) > 0
+```
+
+**Example Grafana alert rule** — fire when risk score exceeds threshold:
+```promql
+wafpass_score > 50
+```
+
+#### Grafana Cloud
+
+Grafana Cloud's Prometheus endpoint requires binary remote_write format. The recommended approach:
+
+1. Deploy **Grafana Alloy** or **Grafana Agent** in your environment
+2. Configure it to scrape the Prometheus Pushgateway
+3. Set up `remote_write` from the agent to your Grafana Cloud Prometheus endpoint
+4. Point the `grafana` plugin at the local Pushgateway URL
+
+### Writing a new export plugin
+
+1. Create `wafpass/export/plugins/mytool.py`:
+
+```python
+from wafpass.export.base import ExportPlugin, ExportResult
+from wafpass.export.registry import registry
+
+class MyToolPlugin:
+    name = "mytool"
+    description = "Push WAF++ metrics to MyTool."
+
+    def export(self, snapshot: dict, config: dict) -> ExportResult:
+        url = config.get("url") or ""
+        if not url:
+            return ExportResult(success=False, message="mytool: 'url' is required.")
+        try:
+            # … send snapshot to MyTool …
+            return ExportResult(success=True, message="OK")
+        except Exception as exc:
+            return ExportResult(success=False, message=str(exc))
+
+registry.register(MyToolPlugin())
+```
+
+2. Add an import to `wafpass/export/plugins/__init__.py`:
+
+```python
+from wafpass.export.plugins import mytool  # noqa: F401
+```
+
+3. Add a config block to `.wafpass-export.yml`:
+
+```yaml
+exports:
+  mytool:
+    url: "https://mytool.example.com/ingest"
+```
+
+4. Run:
+
+```bash
+wafpass check ./infra/ --export mytool
+```
+
+The `snapshot` dict passed to `export()` is the complete run snapshot from `wafpass.state.build_run_snapshot()` — see the schema in the **Run versioning** section above.
+
+### CI/CD with export
+
+```yaml
+# GitHub Actions: push metrics to Grafana on every PR and main branch run
+- name: Run WAF++ PASS + push to Grafana
+  env:
+    GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+  run: |
+    pip install -e .
+    wafpass check ./infra/ \
+      --fail-on fail \
+      --export grafana \
+      --export-config .wafpass-export.yml \
+      --output pdf \
+      --pdf-out wafpass-report.pdf
+```
+
+---
+
 ## Exit codes
 
 | Code | Meaning |
@@ -399,9 +659,18 @@ If a waiver has expired, the tool prints a warning to stderr but continues norma
 
 PASS is designed to run unattended in pipelines. The exit code reflects the check outcome; use `--fail-on` to tune the strictness.
 
-**GitHub Actions — Terraform (multi-cloud):**
+Run state is saved to `.wafpass-state/` by default. Persist this directory between pipeline runs (via cache or an artifact) to get cross-run change tracking. Without persistence, each run starts fresh with no previous state to compare against.
+
+**GitHub Actions — Terraform (multi-cloud) with state persistence:**
 
 ```yaml
+- name: Restore WAF++ state cache
+  uses: actions/cache@v4
+  with:
+    path: .wafpass-state
+    key: wafpass-state-${{ github.ref }}
+    restore-keys: wafpass-state-
+
 - name: Run WAF++ PASS
   run: |
     pip install -e .
@@ -436,10 +705,29 @@ PASS is designed to run unattended in pipelines. The exit code reflects the chec
     path: wafpass-report.pdf
 ```
 
-**GitLab CI — Terraform:**
+**GitHub Actions — with Grafana export:**
+
+```yaml
+- name: Run WAF++ PASS + push metrics to Grafana
+  env:
+    GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+  run: |
+    pip install -e .
+    wafpass check ./infra/ \
+      --fail-on fail \
+      --export grafana \
+      --output pdf \
+      --pdf-out wafpass-report.pdf
+```
+
+**GitLab CI — Terraform with state persistence:**
 
 ```yaml
 wafpass:
+  cache:
+    key: wafpass-state-$CI_COMMIT_REF_SLUG
+    paths:
+      - .wafpass-state/
   script:
     - pip install -e .
     - wafpass check infra/aws infra/azure --fail-on fail --summary
