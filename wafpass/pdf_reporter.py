@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -157,6 +158,131 @@ _PILLAR_RISK_CONTEXT: dict[str, tuple[str, str]] = {
 }
 
 
+# ── Per-pillar risk type & exposure ranges ────────────────────────────────────
+# Each pillar has its own risk category and appropriate exposure multipliers.
+# Sources: GDPR Art.83, IBM Breach Report 2024, Gartner downtime benchmarks, CSRD.
+_PILLAR_EXPOSURE_USD: dict[str, tuple] = {
+    # pillar: (risk_type_label, risk_description, {severity: (min_usd, max_usd)})
+    "security":     ("Breach & Regulatory",
+                     "Data breach response, GDPR/NIS2 fines, forensics, notification costs",
+                     {"critical": (500_000, 5_000_000), "high": (50_000, 500_000),
+                      "medium": (5_000, 50_000), "low": (500, 5_000)}),
+    "sovereign":    ("Regulatory Fine (GDPR Art. 83)",
+                     "Up to €20M or 4% global turnover — GDPR Article 83(5) tier",
+                     {"critical": (200_000, 2_000_000), "high": (50_000, 500_000),
+                      "medium": (10_000, 100_000), "low": (1_000, 10_000)}),
+    "cost":         ("Operational Waste",
+                     "Direct cloud spend waste — over-provisioned resources, unmanaged lifecycle",
+                     {"critical": (20_000, 200_000), "high": (5_000, 50_000),
+                      "medium": (1_000, 10_000), "low": (200, 2_000)}),
+    "reliability":  ("Service Availability",
+                     "SLA breach costs — Gartner avg enterprise downtime $5,600/min",
+                     {"critical": (100_000, 1_000_000), "high": (20_000, 200_000),
+                      "medium": (5_000, 50_000), "low": (500, 5_000)}),
+    "operations":   ("Operational Efficiency",
+                     "Incident MTTR overhead, manual toil cost, audit remediation spend",
+                     {"critical": (20_000, 100_000), "high": (5_000, 50_000),
+                      "medium": (1_000, 10_000), "low": (200, 2_000)}),
+    "performance":  ("Performance SLA Breach",
+                     "Customer churn, SLA penalty payouts, support escalation costs",
+                     {"critical": (50_000, 500_000), "high": (10_000, 100_000),
+                      "medium": (2_000, 20_000), "low": (200, 2_000)}),
+    "sustainability": ("CSRD / ESG Reporting Risk",
+                       "CSRD non-compliance penalties, ESG investor exposure, reputational cost",
+                       {"critical": (50_000, 200_000), "high": (10_000, 100_000),
+                        "medium": (2_000, 20_000), "low": (500, 5_000)}),
+}
+
+# ── Root cause patterns for architectural analysis ────────────────────────────
+# Each pattern matches a class of finding by regex on the check result message.
+# effort_days is the estimated engineering effort to fix all instances at once.
+_ROOT_CAUSE_PATTERNS: list[dict] = [
+    {
+        "id":          "log_retention",
+        "title":       "CloudWatch log group retention not configured",
+        "fix":         "Add retention_in_days = 90 to all aws_cloudwatch_log_group resources "
+                       "(or your required minimum). A single locals block and for_each loop covers all groups.",
+        "effort_days": 0.5,
+        "regexes":     [r"retention_in_days", r"Log group retention", r"retention.*log"],
+    },
+    {
+        "id":          "missing_tags",
+        "title":       "Mandatory cost/governance tags missing on resources",
+        "fix":         "Introduce a shared tags local (cost-center, owner, environment, workload) "
+                       "and reference it in every resource's tags block, or use a tagging Terraform module.",
+        "effort_days": 1.0,
+        "regexes":     [r"is missing the", r"Azure resource is missing", r"EC2 instance is missing",
+                        r"missing.*tag", r"cost-center"],
+    },
+    {
+        "id":          "alarm_config",
+        "title":       "CloudWatch alarm configuration incomplete",
+        "fix":         "Standardise all alarm definitions: set alarm_description, evaluation_periods >= 3, "
+                       "and alarm_actions with a valid SNS topic ARN. A shared alarm module enforces this.",
+        "effort_days": 1.5,
+        "regexes":     [r"CloudWatch alarm", r"alarm description", r"Alarm must evaluate",
+                        r"alarm_actions", r"alarm must have"],
+    },
+    {
+        "id":          "encryption_rest",
+        "title":       "Encryption at rest not enforced on data stores",
+        "fix":         "Enable KMS encryption on aws_db_instance (storage_encrypted), "
+                       "aws_dynamodb_table (server_side_encryption), aws_elasticache_cluster, "
+                       "and all aws_s3_bucket resources.",
+        "effort_days": 2.0,
+        "regexes":     [r"Data-storing resource MUST", r"encryption", r"kms_key_id"],
+    },
+    {
+        "id":          "secrets_rotation",
+        "title":       "Secrets Manager rotation not configured",
+        "fix":         "Enable automatic rotation on all aws_secretsmanager_secret resources "
+                       "by setting rotation_rules and linking a Lambda rotation function.",
+        "effort_days": 1.0,
+        "regexes":     [r"Secrets Manager secret", r"rotation_rules", r"secret rotation"],
+    },
+    {
+        "id":          "iam_baseline",
+        "title":       "IAM & KMS account-level security baseline not configured",
+        "fix":         "Apply a compliant aws_iam_account_password_policy (min 14 chars, MFA, rotation). "
+                       "Set deletion_window_in_days >= 14 on aws_kms_key resources.",
+        "effort_days": 0.5,
+        "regexes":     [r"IAM password policy", r"password policy", r"KMS key deletion"],
+    },
+    {
+        "id":          "storage_config",
+        "title":       "S3 versioning disabled and EBS volumes using deprecated gp2",
+        "fix":         "Enable versioning on all S3 state buckets. "
+                       "Change volume_type from gp2 to gp3 on all aws_ebs_volume and launch template block devices.",
+        "effort_days": 0.5,
+        "regexes":     [r"versioning", r"gp2", r"EBS volume"],
+    },
+    {
+        "id":          "vpc_endpoints",
+        "title":       "VPC endpoint configuration non-compliant",
+        "fix":         "Set vpc_endpoint_type = \"Interface\" and enable private_dns_enabled = true "
+                       "on all aws_vpc_endpoint resources.",
+        "effort_days": 0.5,
+        "regexes":     [r"VPC endpoint", r"vpc_endpoint_type", r"S3 VPC Endpoint"],
+    },
+    {
+        "id":          "lambda_config",
+        "title":       "Lambda function observability and sizing not configured",
+        "fix":         "Set tracing_config { mode = \"Active\" } and right-size memory_size "
+                       "on all aws_lambda_function resources.",
+        "effort_days": 0.5,
+        "regexes":     [r"Lambda tracing", r"Lambda memory_size", r"tracing mode"],
+    },
+    {
+        "id":          "lock_in",
+        "title":       "High lock-in cloud-native services used without exit strategy",
+        "fix":         "Document a portability strategy for proprietary services (Kinesis, DynamoDB). "
+                       "Consider abstraction layers or open-source equivalents.",
+        "effort_days": 5.0,
+        "regexes":     [r"High lock-in resource", r"lock.in", r"portability"],
+    },
+]
+
+
 # ── World map constants ───────────────────────────────────────────────────────
 
 _MAP_LAT_MIN, _MAP_LAT_MAX = -80.0, 80.0
@@ -170,9 +296,12 @@ _MAP_GRID    = colors.HexColor("#121e30")
 _MAP_OUTLINE = colors.HexColor("#2d5a8e")
 
 _PROVIDER_DOT_COLORS: dict[str, "colors.Color"] = {
-    "aws":   colors.HexColor("#f97316"),
-    "azure": colors.HexColor("#2b7fff"),
-    "gcp":   colors.HexColor("#22c55e"),
+    "aws":      colors.HexColor("#f97316"),
+    "azure":    colors.HexColor("#2b7fff"),
+    "gcp":      colors.HexColor("#22c55e"),
+    "alicloud": colors.HexColor("#ff6a00"),
+    "yandex":   colors.HexColor("#fcdb03"),
+    "oci":      colors.HexColor("#c74634"),
 }
 
 # ── PIL color palette (modern dark theme) ─────────────────────────────────────
@@ -184,9 +313,12 @@ _PIL_C_EQ     = (26,  48,  78)   # equator (slightly brighter)
 _PIL_C_FRAME  = (55,  88, 126)   # map frame border
 
 _PIL_PROV_RGB: dict[str, tuple[int, int, int]] = {
-    "aws":   (249, 115,  22),
-    "azure": ( 43, 127, 255),
-    "gcp":   ( 34, 197,  94),
+    "aws":      (249, 115,  22),
+    "azure":    ( 43, 127, 255),
+    "gcp":      ( 34, 197,  94),
+    "alicloud": (255, 106,   0),
+    "yandex":   (252, 219,   3),
+    "oci":      (199,  70,  52),
 }
 
 # Continent polygons as (lon, lat) lists — significantly more detailed than
@@ -363,6 +495,37 @@ _REGION_COORDS: dict[str, tuple[float, float]] = {
     "australia-southeast1":    (-33.87, 151.21), "australia-southeast2":  (-37.81, 144.96),
     "me-central1":             (25.20, 55.27),   "me-central2":           (25.20, 55.27),
     "me-west1":                (32.09, 34.78),   "africa-south1":         (-33.92, 18.42),
+    # ── Alibaba Cloud ─────────────────────────────────────────────────────────
+    "cn-hangzhou":     (30.25, 120.16),  "cn-shanghai":     (31.23, 121.47),
+    "cn-beijing":      (39.91, 116.39),  "cn-shenzhen":     (22.54, 114.05),
+    "cn-zhangjiakou":  (40.77, 114.88),  "cn-huhehaote":    (40.81, 111.65),
+    "cn-wulanchabu":   (41.00, 113.09),  "cn-chengdu":      (30.57, 104.07),
+    "cn-hongkong":     (22.32, 114.17),  "cn-nanjing":      (32.06, 118.78),
+    "cn-fuzhou":       (26.07, 119.30),  "cn-guangzhou":    (23.13, 113.26),
+    "cn-heyuan":       (23.73, 114.69),  "cn-wuhan":        (30.59, 114.31),
+    "ap-southeast-3":  (3.14,  101.69),  "ap-southeast-6":  (14.60, 120.98),
+    "ap-southeast-7":  (13.75, 100.52),  "me-east-1":       (25.20,  55.27),
+    # ── Yandex Cloud ──────────────────────────────────────────────────────────
+    "ru-central1":     (55.75,  37.61),
+    # ── Oracle Cloud Infrastructure (OCI) ─────────────────────────────────────
+    "us-phoenix-1":    (33.45, -112.07), "us-ashburn-1":    (39.03,  -77.49),
+    "us-sanjose-1":    (37.34, -121.89), "us-chicago-1":    (41.88,  -87.63),
+    "ca-toronto-1":    (43.65,  -79.38), "ca-montreal-1":   (45.50,  -73.57),
+    "sa-saopaulo-1":   (-23.55, -46.63), "sa-vinhedo-1":    (-23.03, -47.01),
+    "uk-london-1":     (51.51,   -0.13), "uk-cardiff-1":    (51.48,   -3.18),
+    "eu-frankfurt-1":  (50.11,    8.68), "eu-amsterdam-1":  (52.37,    4.90),
+    "eu-stockholm-1":  (59.33,   18.07), "eu-milan-1":      (45.47,    9.19),
+    "eu-marseille-1":  (43.30,    5.37), "eu-paris-1":      (48.86,    2.35),
+    "eu-madrid-1":     (40.42,   -3.70), "eu-jovanovac-1":  (44.01,   21.32),
+    "ap-tokyo-1":      (35.68,  139.65), "ap-osaka-1":      (34.69,  135.50),
+    "ap-seoul-1":      (37.57,  126.98), "ap-chuncheon-1":  (37.87,  127.72),
+    "ap-mumbai-1":     (19.08,   72.88), "ap-hyderabad-1":  (17.39,   78.49),
+    "ap-singapore-1":  (1.35,   103.82), "ap-singapore-2":  (1.35,   103.82),
+    "ap-melbourne-1":  (-37.81, 144.96), "ap-sydney-1":     (-33.87, 151.21),
+    "me-dubai-1":      (25.20,   55.27), "me-jeddah-1":     (21.49,   39.19),
+    "me-abudhabi-1":   (24.45,   54.38), "af-johannesburg-1": (-26.20, 28.04),
+    "il-jerusalem-1":  (31.77,   35.21), "mx-queretaro-1":  (20.59, -100.39),
+    "mx-monterrey-1":  (25.69, -100.32),
 }
 
 # Human-readable labels for common regions
@@ -414,6 +577,38 @@ _REGION_LABELS: dict[str, str] = {
     "asia-southeast2": "Jakarta, Indonesia",
     "australia-southeast1": "Sydney, Australia",
     "me-west1": "Tel Aviv, Israel",        "africa-south1": "Cape Town, SA",
+    # Alibaba Cloud
+    "cn-hangzhou":    "Hangzhou, China",    "cn-shanghai":    "Shanghai, China",
+    "cn-beijing":     "Beijing, China",     "cn-shenzhen":    "Shenzhen, China",
+    "cn-zhangjiakou": "Zhangjiakou, China", "cn-huhehaote":   "Hohhot, China",
+    "cn-wulanchabu":  "Ulanqab, China",     "cn-chengdu":     "Chengdu, China",
+    "cn-hongkong":    "Hong Kong, China",   "cn-nanjing":     "Nanjing, China",
+    "cn-fuzhou":      "Fuzhou, China",      "cn-guangzhou":   "Guangzhou, China",
+    "cn-heyuan":      "Heyuan, China",      "cn-wuhan":       "Wuhan, China",
+    "ap-southeast-3": "Kuala Lumpur, Malaysia",
+    "ap-southeast-6": "Manila, Philippines", "ap-southeast-7": "Bangkok, Thailand",
+    "me-east-1":      "Dubai, UAE",
+    # Yandex Cloud
+    "ru-central1":    "Moscow, Russia",
+    # Oracle Cloud Infrastructure
+    "us-phoenix-1":   "Phoenix, USA",       "us-ashburn-1":   "Ashburn, USA",
+    "us-sanjose-1":   "San Jose, USA",      "us-chicago-1":   "Chicago, USA",
+    "ca-toronto-1":   "Toronto, Canada",    "ca-montreal-1":  "Montréal, Canada",
+    "sa-saopaulo-1":  "São Paulo, Brazil",  "sa-vinhedo-1":   "Vinhedo, Brazil",
+    "uk-london-1":    "London, UK",         "uk-cardiff-1":   "Cardiff, UK",
+    "eu-frankfurt-1": "Frankfurt, Germany", "eu-amsterdam-1": "Amsterdam, Netherlands",
+    "eu-stockholm-1": "Stockholm, Sweden",  "eu-milan-1":     "Milan, Italy",
+    "eu-marseille-1": "Marseille, France",  "eu-paris-1":     "Paris, France",
+    "eu-madrid-1":    "Madrid, Spain",      "eu-jovanovac-1": "Jovanovac, Serbia",
+    "ap-tokyo-1":     "Tokyo, Japan",       "ap-osaka-1":     "Osaka, Japan",
+    "ap-seoul-1":     "Seoul, South Korea", "ap-chuncheon-1": "Chuncheon, South Korea",
+    "ap-mumbai-1":    "Mumbai, India",      "ap-hyderabad-1": "Hyderabad, India",
+    "ap-singapore-1": "Singapore",          "ap-singapore-2": "Singapore (2)",
+    "ap-melbourne-1": "Melbourne, Australia","ap-sydney-1":    "Sydney, Australia",
+    "me-dubai-1":     "Dubai, UAE",         "me-jeddah-1":    "Jeddah, Saudi Arabia",
+    "me-abudhabi-1":  "Abu Dhabi, UAE",     "af-johannesburg-1": "Johannesburg, SA",
+    "il-jerusalem-1": "Jerusalem, Israel",  "mx-queretaro-1": "Querétaro, Mexico",
+    "mx-monterrey-1": "Monterrey, Mexico",
 }
 
 
@@ -634,6 +829,103 @@ def _fmt_usd(n: int) -> str:
     if n >= 1_000:
         return f"${n / 1_000:.0f}K"
     return f"${n:,}"
+
+
+def _pillar_scores(report: "Report") -> dict[str, int]:
+    """Return {pillar: score_0_to_100} for all pillars in the report."""
+    pd: dict[str, dict] = {}
+    for cr in report.results:
+        p = (cr.control.pillar or "unknown").lower()
+        w = _SEV_WEIGHTS.get((cr.control.severity or "low").lower(), 1)
+        if p not in pd:
+            pd[p] = {"total_w": 0, "fail_w": 0}
+        pd[p]["total_w"] += w
+        if cr.status == "FAIL":
+            pd[p]["fail_w"] += w
+    return {p: int(d["fail_w"] / max(d["total_w"], 1) * 100) for p, d in pd.items()}
+
+
+def _analyse_root_causes(report: "Report") -> list[dict]:
+    """
+    Match failing check results against root cause patterns.
+
+    Returns a list of pattern dicts enriched with:
+      - matched_controls: list of ControlResult
+      - finding_count: int
+      - score_impact: float (points dropped from risk score if fixed)
+    """
+    total_w = sum(
+        _SEV_WEIGHTS.get((cr.control.severity or "low").lower(), 1)
+        for cr in report.results
+    )
+    results: list[dict] = []
+    for pat in _ROOT_CAUSE_PATTERNS:
+        compiled = [re.compile(rx, re.IGNORECASE) for rx in pat["regexes"]]
+        matched_crs: list = []
+        finding_count = 0
+        for cr in report.results:
+            if cr.status != "FAIL":
+                continue
+            cr_hit = False
+            for r in cr.results:
+                if r.status == "FAIL":
+                    if any(rx.search(r.message or "") for rx in compiled):
+                        finding_count += 1
+                        cr_hit = True
+            if cr_hit and cr not in matched_crs:
+                matched_crs.append(cr)
+        if not matched_crs:
+            continue
+        fix_w = sum(_SEV_WEIGHTS.get((cr.control.severity or "low").lower(), 1) for cr in matched_crs)
+        score_impact = fix_w / max(total_w, 1) * 100
+        results.append({
+            **pat,
+            "matched_controls": matched_crs,
+            "finding_count":    finding_count,
+            "score_impact":     score_impact,
+            "roi":              score_impact / max(pat["effort_days"], 0.1),
+        })
+    results.sort(key=lambda x: x["roi"], reverse=True)
+    return results
+
+
+def _financial_exposure_by_risk_type(report: "Report") -> list[dict]:
+    """
+    Return financial exposure segmented by pillar risk type.
+
+    Each entry: {risk_type, description, pillar, fail_count, min_usd, max_usd}
+    Sorted by max_usd descending.
+    """
+    aggregated: dict[str, dict] = {}
+    for cr in report.results:
+        if cr.status != "FAIL":
+            continue
+        pillar = (cr.control.pillar or "unknown").lower()
+        sev    = (cr.control.severity or "low").lower()
+        entry  = _PILLAR_EXPOSURE_USD.get(pillar)
+        if entry is None:
+            # Fallback: use security ranges
+            entry = _PILLAR_EXPOSURE_USD["security"]
+        risk_type, desc, ranges = entry
+        exp_min, exp_max = ranges.get(sev, (0, 0))
+        if risk_type not in aggregated:
+            aggregated[risk_type] = {
+                "risk_type":   risk_type,
+                "description": desc,
+                "pillars":     set(),
+                "fail_count":  0,
+                "min_usd":     0,
+                "max_usd":     0,
+            }
+        aggregated[risk_type]["pillars"].add(pillar.title())
+        aggregated[risk_type]["fail_count"] += 1
+        aggregated[risk_type]["min_usd"]    += exp_min
+        aggregated[risk_type]["max_usd"]    += exp_max
+    rows = list(aggregated.values())
+    for r in rows:
+        r["pillars"] = ", ".join(sorted(r["pillars"]))
+    rows.sort(key=lambda x: x["max_usd"], reverse=True)
+    return rows
 
 
 class _TOCEntry(Flowable):
@@ -1835,12 +2127,20 @@ def _data_geography_section(report: Report, S: dict) -> list:
     ))
     elems.append(Spacer(1, 2 * mm))
 
-    # Legend (provider colour key)
-    legend_items = [
-        (colors.HexColor("#f97316"), "● AWS"),
-        (colors.HexColor("#2b7fff"), "● Azure"),
-        (colors.HexColor("#22c55e"), "● GCP"),
+    # Legend (provider colour key) — only show providers present in this report
+    _all_legend = [
+        ("aws",      colors.HexColor("#f97316"), "● AWS"),
+        ("azure",    colors.HexColor("#2b7fff"), "● Azure"),
+        ("gcp",      colors.HexColor("#22c55e"), "● GCP"),
+        ("alicloud", colors.HexColor("#ff6a00"), "● Alibaba Cloud"),
+        ("yandex",   colors.HexColor("#fcdb03"), "● Yandex Cloud"),
+        ("oci",      colors.HexColor("#c74634"), "● Oracle Cloud"),
     ]
+    present_providers = {p.lower() for _, p in regions}
+    legend_items = [(col, label) for key, col, label in _all_legend if key in present_providers]
+    if not legend_items:
+        legend_items = [(col, label) for _, col, label in _all_legend[:3]]
+    col_w_each = CONTENT_W / len(legend_items)
     legend_cells = [
         Paragraph(
             f'<font color="#{_hex(col)}" name="Helvetica-Bold">{label}</font>',
@@ -1851,7 +2151,7 @@ def _data_geography_section(report: Report, S: dict) -> list:
     ]
     legend_table = Table(
         [legend_cells],
-        colWidths=[3 * cm, 3 * cm, 3 * cm],
+        colWidths=[col_w_each] * len(legend_items),
         style=TableStyle([
             ("LEFTPADDING",   (0, 0), (-1, -1), 0),
             ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
@@ -1910,9 +2210,12 @@ def _data_geography_section(report: Report, S: dict) -> list:
         ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
     ])
     prov_color_map = {
-        "AWS":   C_ORANGE,
-        "AZURE": C_BLUE,
-        "GCP":   C_GREEN,
+        "AWS":      C_ORANGE,
+        "AZURE":    C_BLUE,
+        "GCP":      C_GREEN,
+        "ALICLOUD": colors.HexColor("#ff6a00"),
+        "YANDEX":   colors.HexColor("#fcdb03"),
+        "OCI":      colors.HexColor("#c74634"),
     }
     for i, (_, provider, _) in enumerate(data_rows, start=1):
         c = prov_color_map.get(provider, C_GREY)
@@ -1983,9 +2286,411 @@ def _toc_section(S: dict) -> list:
     ]
 
 
+# ── Executive Decision Brief ──────────────────────────────────────────────────
+
+def _executive_decision_brief(report: "Report", S: dict, baseline: dict | None = None) -> list:
+    """Generate the Executive Decision Brief with 3 actionable decision cards."""
+    root_causes = _analyse_root_causes(report)
+    score, label, score_color = _risk_score(report)
+    total_min, total_max, _ = _financial_exposure(report)
+
+    decisions: list[dict] = []
+
+    # Decision 1: Top root cause by ROI (quick win)
+    if root_causes:
+        top = root_causes[0]
+        impact_pts = f"{top['score_impact']:.1f} pts risk score reduction"
+        decisions.append({
+            "num": "1",
+            "color": C_RED,
+            "title": top["title"],
+            "impact": impact_pts,
+            "effort": f"{top['effort_days']} engineering day(s)",
+            "action": "DO NOW",
+            "action_color": C_RED,
+            "detail": top["fix"][:180],
+        })
+    else:
+        decisions.append({
+            "num": "1",
+            "color": C_GREEN,
+            "title": "No high-ROI quick wins detected",
+            "impact": "All controls are passing or waived",
+            "effort": "—",
+            "action": "MONITOR",
+            "action_color": C_GREEN,
+            "detail": "Continue monitoring and re-run after infrastructure changes.",
+        })
+
+    # Decision 2: Regulatory exposure — sovereign or security pillar GDPR failures
+    sov_fails = [cr for cr in report.results
+                 if cr.status == "FAIL" and (cr.control.pillar or "").lower() in ("sovereign", "security")]
+    gdpr_fails = [cr for cr in sov_fails
+                  if any("gdpr" in (reg.get("framework", "")).lower()
+                         for reg in cr.control.regulatory_mapping)]
+    reg_min = reg_max = 0
+    for cr in sov_fails:
+        pillar = (cr.control.pillar or "security").lower()
+        sev = (cr.control.severity or "low").lower()
+        entry = _PILLAR_EXPOSURE_USD.get(pillar, _PILLAR_EXPOSURE_USD["security"])
+        _, _, ranges = entry
+        emin, emax = ranges.get(sev, (0, 0))
+        reg_min += emin
+        reg_max += emax
+
+    if sov_fails:
+        gdpr_note = f"{len(gdpr_fails)} GDPR-mapped control(s) failing. " if gdpr_fails else ""
+        decisions.append({
+            "num": "2",
+            "color": C_PURPLE,
+            "title": f"Regulatory Exposure: {len(sov_fails)} sovereign/security control(s) failing",
+            "impact": f"{gdpr_note}Estimated fine exposure: {_fmt_usd(reg_min)} – {_fmt_usd(reg_max)}",
+            "effort": "Legal & compliance review required",
+            "action": "LEGAL INPUT NEEDED",
+            "action_color": C_PURPLE,
+            "detail": (
+                "Engage Data Protection Officer and legal counsel. "
+                "Review GDPR Art. 83 applicability for each failing sovereign control. "
+                "Document risk acceptance or accelerate remediation timeline."
+            ),
+        })
+    else:
+        decisions.append({
+            "num": "2",
+            "color": C_GREEN,
+            "title": "No regulatory / sovereign control failures detected",
+            "impact": "GDPR Art. 83 and NIS2 exposure appears contained",
+            "effort": "Periodic review recommended",
+            "action": "SCHEDULE",
+            "action_color": C_BLUE,
+            "detail": (
+                "Schedule a quarterly regulatory alignment review to ensure "
+                "new infrastructure changes do not introduce data residency violations."
+            ),
+        })
+
+    # Decision 3: Expiring waivers or second-best ROI root cause
+    waived_crs = [cr for cr in report.results if cr.status == "WAIVED"]
+    from datetime import date as _date
+    expiring_waivers = []
+    for cr in waived_crs:
+        if hasattr(cr, "waived_expires") and cr.waived_expires:
+            try:
+                exp_date = _date.fromisoformat(str(cr.waived_expires))
+                days_left = (exp_date - _date.today()).days
+                if days_left <= 90:
+                    expiring_waivers.append((cr, days_left))
+            except Exception:
+                pass
+
+    if expiring_waivers:
+        soonest = sorted(expiring_waivers, key=lambda x: x[1])[0]
+        cr_exp, days_left = soonest
+        decisions.append({
+            "num": "3",
+            "color": C_ORANGE,
+            "title": f"Waiver expiring: {cr_exp.control.id} ({days_left} day(s) remaining)",
+            "impact": f"Control reverts to FAIL status after expiry — affects risk score",
+            "effort": "0.5 day(s) — waiver renewal or remediation decision",
+            "action": "RENEW WAIVER",
+            "action_color": C_ORANGE,
+            "detail": (
+                f"Review waiver for {cr_exp.control.id} ({cr_exp.control.title[:80]}). "
+                "Either remediate the underlying finding to close the waiver, "
+                "or document a renewed risk acceptance with updated expiry."
+            ),
+        })
+    elif len(root_causes) >= 2:
+        sec = root_causes[1]
+        decisions.append({
+            "num": "3",
+            "color": C_BLUE,
+            "title": sec["title"],
+            "impact": f"{sec['score_impact']:.1f} pts risk score reduction",
+            "effort": f"{sec['effort_days']} engineering day(s)",
+            "action": "SCHEDULE",
+            "action_color": C_BLUE,
+            "detail": sec["fix"][:180],
+        })
+    else:
+        decisions.append({
+            "num": "3",
+            "color": C_GREY,
+            "title": "Review waiver register for accuracy",
+            "impact": f"{len(waived_crs)} control(s) currently waived",
+            "effort": "0.5 day(s) — periodic review",
+            "action": "SCHEDULE",
+            "action_color": C_BLUE,
+            "detail": (
+                "Confirm all active waivers are still valid and have not expired. "
+                "Remove waivers for controls that have been remediated."
+            ),
+        })
+
+    elems: list = [
+        *_section_header("Executive Decision Brief", S),
+        Paragraph(
+            "Three decisions required from executive leadership based on this assessment. "
+            "Each card summarises impact, effort, and the recommended action.",
+            S["muted"],
+        ),
+        Spacer(1, 5 * mm),
+    ]
+
+    card_w = CONTENT_W
+    badge_w = 1.4 * cm
+
+    for dec in decisions:
+        num_color = dec["color"]
+        num_hex   = _hex(num_color)
+        act_hex   = _hex(dec["action_color"])
+
+        badge_para = Paragraph(
+            f'<font name="Helvetica-Bold" size="16" color="white">{dec["num"]}</font>',
+            ParagraphStyle("dec_badge", alignment=TA_CENTER, leading=20),
+        )
+
+        title_para = Paragraph(
+            f'<font name="Helvetica-Bold" size="11" color="#{_hex(C_NAVY)}">{dec["title"]}</font>',
+            ParagraphStyle("dec_title", leading=15),
+        )
+        action_para = Paragraph(
+            f'<font name="Helvetica-Bold" size="10" color="#{act_hex}">[ {dec["action"]} ]</font>',
+            ParagraphStyle("dec_action", alignment=TA_RIGHT, leading=13),
+        )
+        title_row = Table(
+            [[title_para, action_para]],
+            colWidths=[card_w - badge_w - 3 * cm - 10, 3 * cm],
+            style=TableStyle([
+                ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+                ("TOPPADDING",    (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ]),
+        )
+
+        info_rows = [
+            ["Impact",  dec["impact"]],
+            ["Effort",  dec["effort"]],
+            ["Action",  dec["detail"]],
+        ]
+        info_table = Table(
+            [
+                [
+                    Paragraph(f'<font name="Helvetica-Bold" size="8" color="#{_hex(C_GREY)}">{k}</font>',
+                               ParagraphStyle("ik", leading=11)),
+                    Paragraph(f'<font size="8" color="#{_hex(C_DARK)}">{v}</font>',
+                               ParagraphStyle("iv", leading=11)),
+                ]
+                for k, v in info_rows
+            ],
+            colWidths=[1.6 * cm, card_w - badge_w - 1.6 * cm - 16],
+            style=TableStyle([
+                ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+                ("TOPPADDING",    (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                ("LINEBELOW",     (0, 0), (-1, -2), 0.3, C_BORDER),
+            ]),
+        )
+
+        content_cell = Table(
+            [[title_row], [Spacer(1, 3 * mm)], [info_table]],
+            colWidths=[card_w - badge_w - 14],
+            style=TableStyle([
+                ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+                ("TOPPADDING",    (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]),
+        )
+
+        card = Table(
+            [[badge_para, content_cell]],
+            colWidths=[badge_w, card_w - badge_w],
+            style=TableStyle([
+                ("BACKGROUND",    (0, 0), (0, -1),  num_color),
+                ("BACKGROUND",    (1, 0), (1, -1),  C_WHITE),
+                ("BOX",           (0, 0), (-1, -1), 1.5, num_color),
+                ("LINEBEFORE",    (1, 0), (1, -1),  3,   num_color),
+                ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING",    (0, 0), (0, -1),  14),
+                ("BOTTOMPADDING", (0, 0), (0, -1),  14),
+                ("LEFTPADDING",   (0, 0), (0, -1),  0),
+                ("RIGHTPADDING",  (0, 0), (0, -1),  0),
+                ("TOPPADDING",    (1, 0), (1, -1),  8),
+                ("BOTTOMPADDING", (1, 0), (1, -1),  8),
+                ("LEFTPADDING",   (1, 0), (1, -1),  0),
+                ("RIGHTPADDING",  (1, 0), (1, -1),  0),
+            ]),
+        )
+        elems.append(card)
+        elems.append(Spacer(1, 4 * mm))
+
+    return elems
+
+
+# ── Root Cause Analysis section ───────────────────────────────────────────────
+
+def _root_cause_section(report: "Report", S: dict) -> list:
+    """Build the Root Cause Analysis table section."""
+    patterns = _analyse_root_causes(report)
+    if not patterns:
+        return []
+
+    elems: list = [
+        *_section_header("Root Cause Analysis", S),
+        Paragraph(
+            "Recurring infrastructure patterns that account for multiple control failures. "
+            "Fixing each root cause closes multiple findings simultaneously, maximising remediation ROI.",
+            S["muted"],
+        ),
+        Spacer(1, 4 * mm),
+    ]
+
+    hdr = ["Root Cause", "Controls\nAffected", "Findings\nClosed", "Score\nImpact", "Est. Effort", "Fix Summary"]
+    col_ws = [
+        CONTENT_W * 0.22,
+        CONTENT_W * 0.09,
+        CONTENT_W * 0.09,
+        CONTENT_W * 0.09,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.41,
+    ]
+
+    rows: list[list] = [
+        [Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"]) for i, h in enumerate(hdr)]
+    ]
+
+    for pat in patterns:
+        n_ctrl = len(pat["matched_controls"])
+        n_find = pat["finding_count"]
+        impact = f"{pat['score_impact']:.1f} pts"
+        effort = f"{pat['effort_days']}d"
+        rows.append([
+            Paragraph(f'<b>{pat["title"]}</b>', S["body_sm"]),
+            Paragraph(str(n_ctrl), S["body_sm"]),
+            Paragraph(str(n_find), S["body_sm"]),
+            Paragraph(impact, S["body_sm"]),
+            Paragraph(effort, S["body_sm"]),
+            Paragraph(pat["fix"][:200], S["body_sm"]),
+        ])
+
+    ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("LEADING",       (0, 0), (-1, -1), 11),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
+        ("ALIGN",         (0, 0), (0, -1),  "LEFT"),
+        ("ALIGN",         (5, 0), (5, -1),  "LEFT"),
+    ])
+    elems.append(Table(rows, colWidths=col_ws, style=ts))
+    return elems
+
+
+# ── Remediation Roadmap section ───────────────────────────────────────────────
+
+def _remediation_roadmap_section(report: "Report", S: dict) -> list:
+    """Build the ROI-ranked remediation roadmap section."""
+    patterns = _analyse_root_causes(report)
+    if not patterns:
+        return []
+
+    elems: list = [
+        *_section_header("Remediation Roadmap", S),
+        Paragraph(
+            "Remediations ranked by ROI (score impact per engineering day). "
+            "Address DO NOW items first for maximum risk reduction with minimal effort.",
+            S["muted"],
+        ),
+        Spacer(1, 4 * mm),
+    ]
+
+    hdr = ["#", "Remediation", "Score\nImpact", "Findings", "Effort", "Priority"]
+    col_ws = [
+        0.5 * cm,
+        CONTENT_W * 0.38,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.09,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.17,
+    ]
+
+    rows: list[list] = [
+        [Paragraph(h, S["tbl_header"] if i != 1 else S["tbl_header_left"]) for i, h in enumerate(hdr)]
+    ]
+
+    for rank, pat in enumerate(patterns, start=1):
+        roi = pat["roi"]
+        effort = pat["effort_days"]
+        if roi > 5:
+            priority_label = "DO NOW"
+            p_color = C_RED
+        elif roi >= 2:
+            priority_label = "SCHEDULE"
+            p_color = C_ORANGE
+        else:
+            priority_label = "PLAN"
+            p_color = C_BLUE
+
+        ph = _hex(p_color)
+        rows.append([
+            Paragraph(str(rank), S["body_sm"]),
+            Paragraph(f'<b>{pat["title"]}</b>', S["body_sm"]),
+            Paragraph(f"{pat['score_impact']:.1f} pts", S["body_sm"]),
+            Paragraph(str(pat["finding_count"]), S["body_sm"]),
+            Paragraph(f"{effort}d", S["body_sm"]),
+            Paragraph(
+                f'<font name="Helvetica-Bold" color="#{ph}">{priority_label}</font>',
+                ParagraphStyle("prio", fontSize=8, leading=11, alignment=TA_CENTER),
+            ),
+        ])
+
+    ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("LEADING",       (0, 0), (-1, -1), 11),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN",         (1, 0), (1, -1),  "LEFT"),
+    ])
+
+    # Colour the priority column per row
+    for i, pat in enumerate(patterns, start=1):
+        roi = pat["roi"]
+        effort = pat["effort_days"]
+        if roi > 5:
+            bg = C_RED_LT
+        elif roi >= 2:
+            bg = C_ORANGE_LT
+        else:
+            bg = C_BLUE_LT
+        ts.add("BACKGROUND", (5, i), (5, i), bg)
+
+    elems.append(Table(rows, colWidths=col_ws, style=ts))
+    return elems
+
+
 # ── Risk & Financial Impact section ──────────────────────────────────────────
 
-def _risk_financial_section(report: Report, S: dict) -> list:
+def _risk_financial_section(report: Report, S: dict, baseline: dict | None = None) -> list:
     """Build the Executive Risk Dashboard section (risk score + financial exposure)."""
     score, label, score_color = _risk_score(report)
     total_min, total_max, breakdown = _financial_exposure(report)
@@ -2080,6 +2785,38 @@ def _risk_financial_section(report: Report, S: dict) -> list:
         ]),
     )
     elems.append(score_layout)
+
+    # ── Baseline delta badge (if baseline provided) ───────────────────────────
+    if baseline is not None:
+        prev_score = baseline.get("score")
+        if prev_score is not None:
+            delta = score - int(prev_score)
+            if delta > 0:
+                delta_text = f"▲ +{delta} pts vs. baseline (worsened)"
+                delta_color = C_RED
+            elif delta < 0:
+                delta_text = f"▼ {delta} pts vs. baseline (improved)"
+                delta_color = C_GREEN
+            else:
+                delta_text = "= No change vs. baseline"
+                delta_color = C_GREY
+            elems.append(Spacer(1, 3 * mm))
+            elems.append(Table(
+                [[Paragraph(
+                    f'<font name="Helvetica-Bold" size="9" color="#{_hex(delta_color)}">{delta_text}</font>',
+                    ParagraphStyle("delta", alignment=TA_CENTER, leading=13),
+                )]],
+                colWidths=[CONTENT_W],
+                style=TableStyle([
+                    ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
+                    ("BOX",           (0, 0), (-1, -1), 1, delta_color),
+                    ("TOPPADDING",    (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+                ]),
+            ))
+
     elems.append(Spacer(1, 6 * mm))
 
     # ── 2. Risk Breakdown by Pillar ───────────────────────────────────────────
@@ -2177,27 +2914,30 @@ def _risk_financial_section(report: Report, S: dict) -> list:
     ))
     elems.append(Spacer(1, 4 * mm))
 
-    # Breakdown by severity table
-    if breakdown:
-        sev_hdr = ["Severity", "Failing Controls", "Min Exposure (USD)", "Max Exposure (USD)", "Risk Type"]
-        sev_rows: list[list] = []
-        for sev in sev_order:
-            if sev not in breakdown:
-                continue
-            cnt, smin, smax = breakdown[sev]
-            sc = sev_color_map.get(sev, C_GREY)
-            sh = _hex(sc)
-            sev_rows.append([
-                Paragraph(f'<font color="#{sh}"><b>{sev_label_map[sev]}</b></font>', S["body_sm"]),
-                Paragraph(str(cnt), S["body_sm"]),
-                Paragraph(_fmt_usd(smin), S["body_sm"]),
-                Paragraph(_fmt_usd(smax), S["body_sm"]),
-                Paragraph(_PILLAR_RISK_CONTEXT.get("security", ("—", "—"))[0], S["body_sm"]),
+    # Breakdown by risk type (pillar-aware exposure table)
+    risk_type_rows = _financial_exposure_by_risk_type(report)
+    if risk_type_rows:
+        rt_hdr = ["Risk Type", "Pillars", "Failing\nControls", "Min Exposure\n(USD)", "Max Exposure\n(USD)"]
+        col_ws_fin = [
+            CONTENT_W * 0.24,
+            CONTENT_W * 0.20,
+            CONTENT_W * 0.10,
+            CONTENT_W * 0.20,
+            CONTENT_W * 0.20,
+        ]
+        rt_table_rows: list[list] = [
+            [Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"]) for i, h in enumerate(rt_hdr)]
+        ]
+        for row in risk_type_rows:
+            rt_table_rows.append([
+                Paragraph(f'<b>{row["risk_type"]}</b>', S["body_sm"]),
+                Paragraph(row["pillars"], S["body_sm"]),
+                Paragraph(str(row["fail_count"]), S["body_sm"]),
+                Paragraph(_fmt_usd(row["min_usd"]), S["body_sm"]),
+                Paragraph(_fmt_usd(row["max_usd"]), S["body_sm"]),
             ])
-
-        col_ws_fin = [2.2 * cm, 3.0 * cm, 3.8 * cm, 3.8 * cm, CONTENT_W - 12.8 * cm]
         elems.append(Table(
-            [[Paragraph(h, S["tbl_header_left"]) for h in sev_hdr]] + sev_rows,
+            rt_table_rows,
             colWidths=col_ws_fin,
             style=TableStyle([
                 ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
@@ -2210,6 +2950,9 @@ def _risk_financial_section(report: Report, S: dict) -> list:
                 ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
                 ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
                 ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                ("ALIGN",         (2, 0), (-1, -1), "CENTER"),
+                ("ALIGN",         (0, 0), (1, -1),  "LEFT"),
             ]),
         ))
         elems.append(Spacer(1, 3 * mm))
@@ -2244,7 +2987,7 @@ def _hex(color: colors.Color) -> str:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def generate_pdf(report: Report, output_path: Path) -> None:
+def generate_pdf(report: Report, output_path: Path, baseline: dict | None = None) -> None:
     """Generate a fully structured PDF report with TOC, risk scoring, and financial impact."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     S = _styles()
@@ -2286,33 +3029,49 @@ def generate_pdf(report: Report, output_path: Path) -> None:
     story += [NextPageTemplate("normal"), PageBreak()]
     story += _toc_section(S)
 
-    # ── 3. Executive Risk Dashboard ────────────────────────────────────────────
+    # ── 3. Executive Decision Brief ────────────────────────────────────────────
     story += [PageBreak()]
-    story += _risk_financial_section(report, S)
+    story += _executive_decision_brief(report, S, baseline=baseline)
 
-    # ── 4. Data Geography & Sovereignty ───────────────────────────────────────
+    # ── 4. Executive Risk Dashboard ────────────────────────────────────────────
+    story += [PageBreak()]
+    story += _risk_financial_section(report, S, baseline=baseline)
+
+    # ── 5. Remediation Roadmap ─────────────────────────────────────────────────
+    roadmap_elems = _remediation_roadmap_section(report, S)
+    if roadmap_elems:
+        story += [PageBreak()]
+        story += roadmap_elems
+
+    # ── 6. Root Cause Analysis ─────────────────────────────────────────────────
+    root_cause_elems = _root_cause_section(report, S)
+    if root_cause_elems:
+        story += [PageBreak()]
+        story += root_cause_elems
+
+    # ── 7. Data Geography & Sovereignty ───────────────────────────────────────
     story += [PageBreak()]
     story += _data_geography_section(report, S)
 
-    # ── 5. Executive Summary ───────────────────────────────────────────────────
+    # ── 8. Executive Summary ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_summary(report, S)
 
-    # ── 6. Controls Overview ───────────────────────────────────────────────────
+    # ── 9. Controls Overview ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _controls_overview(report, S)
 
-    # ── 7. Regulatory Alignment ────────────────────────────────────────────────
+    # ── 10. Regulatory Alignment ────────────────────────────────────────────────
     reg_elems = _regulatory_alignment(report, S)
     if reg_elems:
         story += [PageBreak()]
         story += reg_elems
 
-    # ── 8. Detailed Findings ───────────────────────────────────────────────────
+    # ── 11. Detailed Findings ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _findings_section(report, S)
 
-    # ── 9. Appendix: Passed & Skipped Controls ─────────────────────────────────
+    # ── 12. Appendix: Passed & Skipped Controls ─────────────────────────────────
     story += [PageBreak()]
     story += _passed_section(report, S)
 

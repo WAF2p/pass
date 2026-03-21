@@ -36,6 +36,18 @@ def _region_from_az(val: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _region_from_zone(val: str) -> str | None:
+    """Return region from a zone string (Alibaba/Yandex).
+
+    Examples: 'cn-hangzhou-b' → 'cn-hangzhou', 'ru-central1-a' → 'ru-central1'
+    Returns None if val doesn't look like a zone identifier (e.g. plain 'cn-hangzhou').
+    """
+    parts = val.strip().split("-")
+    if len(parts) >= 3 and len(parts[-1]) == 1 and parts[-1].isalpha():
+        return "-".join(parts[:-1])
+    return None
+
+
 def _region_from_string(val: str) -> str | None:
     """Extract an AWS region embedded in an arbitrary string (e.g. service endpoint)."""
     m = _REGION_IN_STRING_RE.search(val)
@@ -77,6 +89,14 @@ def _extract_regions(tf_state: TerraformState) -> list[tuple[str, str]]:
         if region:
             add(region, "aws")
 
+    def try_add_zone_val(val: object, provider: str) -> None:
+        """Add a region extracted from an Alibaba/Yandex zone string."""
+        if not _is_literal_string(val):
+            return
+        s = str(val).strip()
+        region = _region_from_zone(s) or s  # fall back to the value itself if no zone suffix
+        add(region, provider)
+
     for blk in tf_state.providers:
         pname = blk.type.lower()
         if pname == "aws":
@@ -85,6 +105,12 @@ def _extract_regions(tf_state: TerraformState) -> list[tuple[str, str]]:
             try_add_literal(blk.attributes.get("location") or blk.attributes.get("region"), "azure")
         elif pname in ("google", "google-beta"):
             try_add_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+        elif pname == "alicloud":
+            try_add_zone_val(blk.attributes.get("region") or blk.attributes.get("zone"), "alicloud")
+        elif pname == "yandex":
+            try_add_zone_val(blk.attributes.get("zone") or blk.attributes.get("region"), "yandex")
+        elif pname == "oci":
+            try_add_literal(blk.attributes.get("region"), "oci")
 
     for blk in tf_state.resources:
         rtype = blk.type.lower()
@@ -96,6 +122,15 @@ def _extract_regions(tf_state: TerraformState) -> list[tuple[str, str]]:
             try_add_literal(blk.attributes.get("location"), "azure")
         elif rtype.startswith("google_"):
             try_add_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+        elif rtype.startswith("alicloud_"):
+            try_add_zone_val(
+                blk.attributes.get("region") or blk.attributes.get("zone") or blk.attributes.get("zone_id"),
+                "alicloud",
+            )
+        elif rtype.startswith("yandex_"):
+            try_add_zone_val(blk.attributes.get("zone") or blk.attributes.get("region"), "yandex")
+        elif rtype.startswith("oci_"):
+            try_add_literal(blk.attributes.get("region"), "oci")
 
     return result
 
@@ -189,6 +224,16 @@ def check(
             f"Path to a YAML waiver file listing controls to intentionally skip "
             f"(default: auto-discovered '{DEFAULT_SKIP_FILE}' in the current directory)."
         ),
+    ),
+    baseline_path: Path = typer.Option(
+        None,
+        "--baseline",
+        help="Path to a JSON baseline from a previous run — enables trend/delta in the PDF report.",
+    ),
+    save_baseline_path: Path = typer.Option(
+        None,
+        "--save-baseline",
+        help="Save the current run as a JSON baseline file for future trend comparison.",
     ),
 ) -> None:
     """Check Terraform files against WAF++ YAML controls."""
@@ -321,9 +366,24 @@ def check(
                 err=True,
             )
             raise typer.Exit(code=2)
+        from wafpass.baseline import build_baseline, load_baseline, save_baseline as save_baseline_file
+
         dest = pdf_out or Path("wafpass-report.pdf")
-        generate_pdf(report, dest)
+
+        baseline_data: dict | None = None
+        if baseline_path:
+            try:
+                baseline_data = load_baseline(baseline_path)
+            except Exception as exc:
+                typer.echo(f"WARNING: Could not load baseline '{baseline_path}': {exc}", err=True)
+
+        generate_pdf(report, dest, baseline=baseline_data)
         typer.echo(f"PDF report written to: {dest}")
+
+        if save_baseline_path:
+            snap = build_baseline(report)
+            save_baseline_file(snap, save_baseline_path)
+            typer.echo(f"Baseline saved to: {save_baseline_path}")
         # Also print summary to console so CI pipelines see the result
         print_summary_only(report)
     else:
