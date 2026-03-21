@@ -1,0 +1,1763 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource scraping the Prometheus Pushgateway that receives WAF++ run snapshots.",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__elements": {},
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "bargauge",
+      "name": "Bar gauge",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "gauge",
+      "name": "Gauge",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "text",
+      "name": "Text",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "WAF++ PASS compliance monitoring — risk scores, control status, and run-to-run change tracking.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "icon": "external link",
+      "tags": [],
+      "title": "WAF++ Framework",
+      "tooltip": "waf2p.dev — WAF++ framework documentation",
+      "type": "link",
+      "url": "https://waf2p.dev",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 5,
+        "h": 3
+      },
+      "options": {
+        "mode": "html",
+        "content": "<div style=\"display:flex;align-items:center;height:100%;padding:8px\"><img src=\"data:image/png;base64,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\" style=\"max-height:56px;object-fit:contain\"></div>"
+      }
+    },
+    {
+      "id": 2,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 5,
+        "y": 0,
+        "w": 19,
+        "h": 3
+      },
+      "options": {
+        "mode": "html",
+        "content": "<div style=\"display:flex;flex-direction:column;justify-content:center;height:100%;padding:8px\"><div style=\"font-size:20px;font-weight:700;color:#2b7fff;margin-bottom:4px\">WAF++ PASS — Compliance Monitor</div><div style=\"font-size:12px;color:#64748b\">IaC security &amp; compliance posture · powered by <a href=\"https://waf2p.dev\" style=\"color:#2b7fff\">waf2p.dev</a> · data via Prometheus Pushgateway</div></div>"
+      }
+    },
+    {
+      "id": 3,
+      "type": "row",
+      "title": "Current Posture",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Risk Score",
+      "description": "0 = fully compliant · 100 = all critical controls failing",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 4,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_score{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "PASS",
+      "gridPos": {
+        "x": 4,
+        "y": 4,
+        "w": 4,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "FAIL",
+      "gridPos": {
+        "x": 8,
+        "y": 4,
+        "w": 4,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "SKIP",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 4,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "WAIVED",
+      "gridPos": {
+        "x": 16,
+        "y": 4,
+        "w": 4,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"waived\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Controls Run",
+      "gridPos": {
+        "x": 20,
+        "y": 4,
+        "w": 4,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#64748b"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"} + wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"} + wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"} + wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"waived\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Score Delta",
+      "description": "+ve = worse",
+      "gridPos": {
+        "x": 4,
+        "y": 7,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_score_delta{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Regressions",
+      "description": "New FAILs this run",
+      "gridPos": {
+        "x": 8,
+        "y": 7,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_regressions_total{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Improvements",
+      "description": "Controls leaving FAIL",
+      "gridPos": {
+        "x": 12,
+        "y": 7,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "grey",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_improvements_total{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Last Run",
+      "gridPos": {
+        "x": 16,
+        "y": 7,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#64748b"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_run_timestamp_seconds{iac_plugin=~\"\", source=~\"\"} * 1000",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Trend Over Time",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Risk Score Over Time",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false,
+            "showPoints": "never",
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Risk Score"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_score{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "Risk Score",
+          "instant": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Controls by Status Over Time",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false,
+            "showPoints": "never",
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PASS"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FAIL"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SKIP"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#eab308"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "WAIVED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7c3aed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"}",
+          "legendFormat": "PASS",
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"}",
+          "legendFormat": "FAIL",
+          "instant": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"}",
+          "legendFormat": "SKIP",
+          "instant": false,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_controls_total{iac_plugin=~\"\", source=~\"\",status=\"waived\"}",
+          "legendFormat": "WAIVED",
+          "instant": false,
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "Pillar Risk Scores",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "bargauge",
+      "title": "Risk Score per Pillar (0 = clean, 100 = all failing)",
+      "description": "Higher score = more failing controls in that pillar (weighted by severity).",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 10,
+        "namePlacement": "auto",
+        "fillOpacity": 80
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_pillar_score{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "{{{{pillar}}}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Change Tracking Trends",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Score Delta vs Previous Run",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false,
+            "showPoints": "never",
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Score Delta"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "area"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_score_delta{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "Score Delta",
+          "instant": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Regressions & Improvements per Run",
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false,
+            "showPoints": "never",
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Regressions (new FAILs)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Improvements (left FAIL)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_regressions_total{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "Regressions (new FAILs)",
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_improvements_total{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "Improvements (left FAIL)",
+          "instant": false,
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "row",
+      "title": "Per-Control Status",
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 23,
+      "type": "table",
+      "title": "Control Status (current)",
+      "description": "Live view of every control's status. Red rows = FAIL. Filter by pillar or severity using the dropdowns above.",
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "footer": {
+          "show": false
+        },
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Status (num)",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "control_id"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Control"
+              },
+              {
+                "id": "custom.width",
+                "value": 160
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "severity"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Severity"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "critical": {
+                        "text": "CRITICAL",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "high": {
+                        "text": "HIGH",
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "medium": {
+                        "text": "MEDIUM",
+                        "color": "yellow",
+                        "index": 2
+                      },
+                      "low": {
+                        "text": "LOW",
+                        "color": "blue",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pillar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Pillar"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status (num)"
+              },
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #status"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "✓ PASS",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "✗ FAIL",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "─ SKIP",
+                        "color": "yellow",
+                        "index": 2
+                      },
+                      "3": {
+                        "text": "○ WAIVED",
+                        "color": "blue",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "valueLabel": "control_id"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_control_status{iac_plugin=~\"\", source=~\"\"}",
+          "legendFormat": "{{{{control_id}}}} | {{{{severity}}}} | {{{{pillar}}}}",
+          "instant": true,
+          "refId": "status",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "row",
+      "title": "Check-Level Detail",
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Individual Checks by Status Over Time",
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false,
+            "showPoints": "never",
+            "gradientMode": "opacity"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Checks PASS"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Checks FAIL"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Checks SKIP"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#eab308"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_checks_total{iac_plugin=~\"\", source=~\"\",status=\"pass\"}",
+          "legendFormat": "Checks PASS",
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_checks_total{iac_plugin=~\"\", source=~\"\",status=\"fail\"}",
+          "legendFormat": "Checks FAIL",
+          "instant": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "wafpass_checks_total{iac_plugin=~\"\", source=~\"\",status=\"skip\"}",
+          "legendFormat": "Checks SKIP",
+          "instant": false,
+          "refId": "C"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": [
+    "wafpass",
+    "compliance",
+    "iac",
+    "security",
+    "waf++"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource",
+        "label": "Data Source"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(wafpass_score, iac_plugin)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "name": "iac_plugin",
+        "label": "IaC Plugin",
+        "query": {
+          "query": "label_values(wafpass_score, iac_plugin)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(wafpass_score, source)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "name": "source",
+        "label": "Source Path",
+        "query": {
+          "query": "label_values(wafpass_score, source)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "WAF++ PASS — Compliance Monitor",
+  "uid": "wafpp-pass-v1",
+  "version": 1,
+  "weekStart": ""
+}

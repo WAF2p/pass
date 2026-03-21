@@ -520,11 +520,30 @@ Secret values may use `${ENV_VAR}` placeholders — they are expanded from the e
 
 ### Grafana setup
 
+#### Ready-to-import dashboard
+
+A pre-built Grafana dashboard is included at **`assets/grafana-dashboard.json`**.
+
+Import it via **Dashboards → Import → Upload JSON file** in the Grafana UI. Select your Prometheus datasource when prompted.
+
+The dashboard includes:
+- WAF++ logo in the header
+- Risk score gauge + PASS/FAIL/SKIP/WAIVED stat panels
+- Score delta, regressions, and improvements for the latest run
+- Risk score and control status trend lines over time
+- Per-pillar risk scores (horizontal bar gauge)
+- Score delta and regression/improvement trend lines
+- Full per-control status table (filterable, colour-coded by status and severity)
+- Check-level pass/fail/skip trends
+
+Dashboard variables: **Data Source**, **IaC Plugin** (multi-select), **Source Path** (multi-select).
+
 #### Self-hosted Grafana + Prometheus + Pushgateway
 
 1. Deploy a [Prometheus Pushgateway](https://github.com/prometheus/pushgateway)
 2. Configure Prometheus to scrape it
-3. In Grafana, add Prometheus as a data source and build dashboards on the `wafpass_*` metrics family
+3. In Grafana, add Prometheus as a data source
+4. Import `assets/grafana-dashboard.json` (see above)
 
 **Metrics reference**
 
