@@ -399,6 +399,111 @@ If a waiver has expired, the tool prints a warning to stderr but continues norma
 
 ---
 
+## Hardcoded secret detection
+
+WAF++ PASS scans your IaC source files for hardcoded credentials **before** evaluating controls. Findings are printed prominently to the console and included as the first section of the PDF report.
+
+The scanner is **enabled by default** on every `wafpass check` run. Disable it with `--no-secrets` if needed.
+
+### What is detected
+
+| Category | Example attribute names matched |
+|---|---|
+| Passwords | `password`, `passwd`, `db_password`, `MASTER_PASSWORD`, … |
+| Secrets | `secret`, `client_secret`, `APP_SECRET`, … |
+| API keys | `api_key`, `apikey`, `SUBSCRIPTION_KEY`, … |
+| Tokens | `token`, `auth_token`, `SLACK_BOT_TOKEN`, `GITHUB_TOKEN`, … |
+| Access keys | `access_key`, `access_key_id`, `AWS_ACCESS_KEY_ID`, … |
+| Secret keys | `secret_key`, `secret_access_key`, `AWS_SECRET_ACCESS_KEY`, … |
+| Private keys | `private_key`, `rsa_private_key`, `TLS_PRIVATE_KEY`, … |
+| Connection strings | `connection_string`, `database_url`, `POSTGRES_URL`, … |
+| AWS AKIA key IDs | Any value matching `AKIA[A-Z0-9]{16}` |
+| PEM private key blocks | `-----BEGIN … PRIVATE KEY-----` |
+
+Compound underscore-delimited key names (e.g. `SLACK_BOT_TOKEN`, `DB_MASTER_PASSWORD`) are matched regardless of casing.
+
+### What is NOT flagged (safe values)
+
+The scanner skips values that are clearly IaC references or placeholders:
+
+- Terraform variable references: `var.db_password`, `${var.secret}`
+- Data source references: `data.aws_secretsmanager_secret_version.db.secret_string`
+- Module outputs: `module.secrets.api_key`
+- Vault / Key Vault / Secrets Manager paths (contain the words `vault`, `secretsmanager`, `keyvault`)
+- Common placeholder strings: `REPLACE_…`, `YOUR_…`, `changeme`, `dummy`, `example`, `<YOUR_KEY>`, `****`, …
+
+### Console output
+
+When secrets are found, a red warning panel is printed to stderr **before** the main report:
+
+```
+╭──────────────────── ⚠  HARDCODED SECRETS DETECTED ─────────────────────╮
+│  Severity  File : Line               Finding              Attribute       │
+│  CRITICAL  providers.tf:35           Hardcoded access key access_key      │
+│  CRITICAL  providers.tf:36           Hardcoded secret key secret_key      │
+│  CRITICAL  database.tf:48            Hardcoded password   password        │
+│  HIGH      monitoring.tf:39          Hardcoded token      SLACK_BOT_TOKEN │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+4 hardcoded secret(s) found. These must be remediated before deployment.
+```
+
+Values are always **masked** in output (`Wafp********`) — the raw secret is never printed.
+
+### PDF report
+
+Secret findings appear as the **first section** of the PDF report (immediately after the table of contents), with:
+- A severity KPI strip (Critical / High / Medium / Suppressed counts)
+- A findings table with file path, line number, matched attribute, and masked value
+- Inline remediation guidance for AWS, Azure, GCP, and HashiCorp Vault
+
+### How to fix
+
+Instead of hardcoding credentials, reference a managed secret:
+
+```hcl
+# ✗ Before — hardcoded
+password = "Wafpp@Postgres2024!"
+
+# ✓ After — AWS Secrets Manager
+password = data.aws_secretsmanager_secret_version.db.secret_string
+
+# ✓ After — AWS SSM Parameter Store
+password = data.aws_ssm_parameter.db_password.value
+
+# ✓ After — Terraform variable (pass value via TF_VAR_db_password env var)
+variable "db_password" {}
+password = var.db_password
+
+# ✓ After — Azure Key Vault
+password = "@Microsoft.KeyVault(SecretUri=https://myvault.vault.azure.net/secrets/db-pass)"
+
+# ✓ After — HashiCorp Vault
+password = data.vault_generic_secret.db.data["password"]
+```
+
+### Suppressing a finding
+
+If a value is intentionally non-sensitive (e.g. a known-public test credential or a CI seed value), suppress the finding on that line with an inline comment:
+
+```hcl
+password = "ci-seed-only-not-real"  # wafpass:ignore-secret  reason: non-sensitive CI seed value
+```
+
+Suppressed findings are excluded from the console output and counted separately in the PDF report. Use sparingly — every suppression should include a `reason`.
+
+### CLI flag
+
+```bash
+# Run with secret scanning (default)
+wafpass check ./infra/
+
+# Disable secret scanning
+wafpass check ./infra/ --no-secrets
+```
+
+---
+
 ## Run versioning & change tracking
 
 WAF++ PASS automatically records every run as a versioned JSON snapshot in a local state directory (default: `.wafpass-state/`). On subsequent runs, changes in control status are detected and shown in the console report and the PDF.
@@ -859,6 +964,65 @@ The `snapshot` dict passed to `export()` is the complete run snapshot from `wafp
       --output pdf \
       --pdf-out wafpass-report.pdf
 ```
+
+---
+
+## Blast radius analysis
+
+When a resource fails a control, other resources that *reference* it inherit part of that risk — this is the blast radius. Run `--blast-radius` to visualise the propagation:
+
+```bash
+wafpass check ./infra/ --blast-radius
+wafpass check ./infra/ --blast-radius --blast-radius-out diagrams/blast.md
+wafpass check ./infra/ --blast-radius --output pdf --pdf-out report.pdf
+```
+
+### How it works
+
+1. **Reference extraction** — the scanner reads every Terraform `${resource_type.name.attr}` interpolation in attribute values to build a downstream dependency graph.
+2. **BFS propagation** — starting from every resource that failed at least one control, a breadth-first search walks the graph and assigns each downstream resource a *hop distance*.
+3. **Criticality labelling** — hop distance maps to an impact tier:
+
+| Hop | Label | Meaning |
+|-----|-------|---------|
+| 0 | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` | Root cause — the resource itself failed a control; label = failing control severity |
+| 1 | `HIGH` | Directly references a failing resource |
+| 2 | `MEDIUM` | Two hops away |
+| 3+ | `LOW` | Residual / tertiary exposure |
+
+### Console output
+
+A colour-coded Rich tree is printed after the main report:
+
+```
+🔴 aws_kms_key.main  [WAF-SEC-010]  CRITICAL
+ └── 🟠 aws_db_instance.prod  HIGH
+      └── 🟡 aws_lambda_function.api  MEDIUM
+
+  🔴 CRITICAL  🟠 HIGH  🟡 MEDIUM  ⚪ LOW
+```
+
+### Mermaid diagram
+
+A `blast_radius.md` file is written containing a `graph LR` Mermaid diagram with colour-coded nodes, renderable natively in GitHub, GitLab, and Notion:
+
+```markdown
+​```mermaid
+graph LR
+  aws_kms_key__main["aws_kms_key.main\nFAIL: WAF-SEC-010\nCRITICAL"]
+  aws_db_instance__prod["aws_db_instance.prod\nHIGH"]
+  aws_kms_key__main --> aws_db_instance__prod
+  style aws_kms_key__main fill:#c0392b,stroke:#c0392b,color:#ffffff
+  style aws_db_instance__prod fill:#e67e22,stroke:#e67e22,color:#ffffff
+​```
+```
+
+### PDF report
+
+When `--blast-radius` is combined with `--output pdf`, the PDF report includes a **Blast Radius Analysis** section with:
+- KPI strip: root-cause resource count, downstream affected count, total impacted
+- Root-cause resources table (with failed control IDs and severity)
+- Downstream affected resources table (with hop distance and parent resources)
 
 ---
 
