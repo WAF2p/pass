@@ -161,6 +161,20 @@ def check(
             "See README for the expected format."
         ),
     ),
+    blast_radius: bool = typer.Option(
+        False,
+        "--blast-radius",
+        help=(
+            "After the main report, analyse and visualise how failing resources "
+            "affect downstream dependent resources (blast radius). "
+            "Also writes a Mermaid diagram to blast_radius.md."
+        ),
+    ),
+    blast_radius_out: Path = typer.Option(
+        Path("blast_radius.md"),
+        "--blast-radius-out",
+        help="Destination for the Mermaid blast radius diagram (default: blast_radius.md).",
+    ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
 
@@ -324,6 +338,13 @@ def check(
         except Exception as exc:
             typer.echo(f"WARNING: Could not save run state to '{state_dir}': {exc}", err=True)
 
+    # ── Blast radius computation (needed by both console and PDF output) ────────
+    _br_result = None
+    if blast_radius:
+        from wafpass.blast_radius import build_dependency_graph, compute_blast_radius
+        graph = build_dependency_graph(merged_state)
+        _br_result = compute_blast_radius(report, merged_state, graph)
+
     # ── Output ─────────────────────────────────────────────────────────────────
     if output == "console":
         if summary_only:
@@ -350,7 +371,7 @@ def check(
             except Exception as exc:
                 typer.echo(f"WARNING: Could not load baseline '{baseline_path}': {exc}", err=True)
 
-        generate_pdf(report, dest, baseline=baseline_data, diff=run_diff)
+        generate_pdf(report, dest, baseline=baseline_data, diff=run_diff, blast_radius_result=_br_result)
         typer.echo(f"PDF report written to: {dest}")
 
         if save_baseline_path:
@@ -404,6 +425,18 @@ def check(
             "Remove --no-state or set --state-dir to enable export.",
             err=True,
         )
+
+    # ── Blast radius analysis — terminal + Mermaid output ─────────────────────
+    if blast_radius and _br_result is not None:
+        from wafpass.blast_renderer import print_blast_radius, write_mermaid
+        from rich.console import Console
+
+        print_blast_radius(_br_result, console=Console())
+        try:
+            write_mermaid(_br_result, blast_radius_out)
+            typer.echo(f"Blast radius diagram written to: {blast_radius_out}")
+        except Exception as exc:
+            typer.echo(f"WARNING: Could not write blast radius diagram: {exc}", err=True)
 
     # ── Exit code ──────────────────────────────────────────────────────────────
     fail_on_lower = fail_on.lower()
