@@ -104,6 +104,15 @@ def _parse_control(raw: dict) -> Control | None:
     if not checks:
         return None
 
+    # Parse regulatory_mapping: list of {framework, controls} dicts
+    regulatory_mapping: list[dict] = []
+    for entry in raw.get("regulatory_mapping", []):
+        if isinstance(entry, dict) and "framework" in entry:
+            regulatory_mapping.append({
+                "framework": str(entry["framework"]),
+                "controls": [str(c) for c in entry.get("controls", [])],
+            })
+
     return Control(
         id=raw.get("id", ""),
         title=raw.get("title", ""),
@@ -112,6 +121,7 @@ def _parse_control(raw: dict) -> Control | None:
         category=raw.get("category", ""),
         description=str(raw.get("description", "")).strip(),
         checks=checks,
+        regulatory_mapping=regulatory_mapping,
     )
 
 

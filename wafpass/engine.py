@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from wafpass.iac.base import IaCBlock, IaCState
 from wafpass.models import (
     Assertion,
     Check,
@@ -14,7 +15,11 @@ from wafpass.models import (
     ControlResult,
     Scope,
 )
-from wafpass.parser import TerraformBlock, TerraformState
+
+# Backward-compat aliases (parser.py users may pass TerraformState/TerraformBlock,
+# which are the same types — just different names).
+TerraformBlock = IaCBlock
+TerraformState = IaCState
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +91,7 @@ def _coerce_numeric(value: Any) -> float | None:
 
 
 def evaluate_assertion(
-    assertion: Assertion, block: TerraformBlock, tf: TerraformState
+    assertion: Assertion, block: IaCBlock, tf: IaCState
 ) -> tuple[bool, str]:
     """Evaluate a single assertion against a Terraform block.
 
@@ -342,7 +347,7 @@ class SkipAssertion(Exception):
     """Raised when an assertion should be skipped (unsupported operator)."""
 
 
-def _find_matching_blocks(scope: Scope, tf: TerraformState) -> list[TerraformBlock]:
+def _find_matching_blocks(scope: Scope, tf: IaCState) -> list[IaCBlock]:
     """Return Terraform blocks matching the check scope."""
     block_type = scope.block_type
 
@@ -360,7 +365,7 @@ def _find_matching_blocks(scope: Scope, tf: TerraformState) -> list[TerraformBlo
         return list(tf.variables)
 
     if block_type == "terraform":
-        return list(tf.terraform_blocks)
+        return list(tf.config_blocks)
 
     if block_type == "module":
         return list(tf.modules)
@@ -370,7 +375,7 @@ def _find_matching_blocks(scope: Scope, tf: TerraformState) -> list[TerraformBlo
 
 
 def _run_check(
-    check: Check, control: Control, tf: TerraformState
+    check: Check, control: Control, tf: IaCState
 ) -> list[CheckResult]:
     """Run a single check against all matching Terraform blocks."""
     results: list[CheckResult] = []
@@ -448,15 +453,22 @@ def _run_check(
     return results
 
 
-def run_controls(controls: list[Control], tf: TerraformState) -> list[ControlResult]:
-    """Run all controls against the parsed Terraform state.
+def run_controls(
+    controls: list[Control],
+    tf: IaCState,
+    engine_name: str | None = None,
+) -> list[ControlResult]:
+    """Run all controls against the parsed IaC state.
 
     Args:
         controls: List of controls with automated checks.
-        tf: Parsed Terraform state.
+        tf: Parsed IaC state (from any plugin).
+        engine_name: When set, only checks whose ``engine`` field matches this
+            value are evaluated.  Checks for other engines are silently skipped.
+            Pass ``None`` (default) to run all checks regardless of engine.
 
     Returns:
-        List of ControlResult objects.
+        List of :class:`ControlResult` objects.
     """
     control_results: list[ControlResult] = []
 
@@ -464,6 +476,9 @@ def run_controls(controls: list[Control], tf: TerraformState) -> list[ControlRes
         all_check_results: list[CheckResult] = []
 
         for check in control.checks:
+            if engine_name is not None and check.engine != engine_name:
+                # Skip checks that target a different IaC engine.
+                continue
             check_results = _run_check(check, control, tf)
             all_check_results.extend(check_results)
 

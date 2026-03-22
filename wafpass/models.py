@@ -56,6 +56,8 @@ class Control:
     category: str
     description: str
     checks: list[Check]
+    regulatory_mapping: list[dict] = field(default_factory=list)
+    # Each entry: {"framework": str, "controls": list[str]}
 
 
 @dataclass
@@ -78,10 +80,14 @@ class ControlResult:
 
     control: Control
     results: list[CheckResult] = field(default_factory=list)
+    waived_reason: str | None = None
+    # Set by the waiver system; non-None means the control is intentionally waived.
 
     @property
     def status(self) -> str:
-        """PASS if all results pass, FAIL if any fail, SKIP otherwise."""
+        """WAIVED if explicitly waived; otherwise PASS/FAIL/SKIP from check results."""
+        if self.waived_reason is not None:
+            return "WAIVED"
         if not self.results:
             return "SKIP"
         statuses = {r.status for r in self.results}
@@ -94,12 +100,16 @@ class ControlResult:
 
 @dataclass
 class Report:
-    """Top-level report aggregating all control results for a Terraform path."""
+    """Top-level report aggregating all control results for one or more Terraform paths."""
 
-    path: str
+    path: str  # Display string; for multi-path scans this is all paths joined with " | "
     controls_loaded: int
     controls_run: int
     results: list[ControlResult] = field(default_factory=list)
+    detected_regions: list[tuple[str, str]] = field(default_factory=list)
+    # Each entry: (region_name, provider) e.g. ("eu-central-1", "aws")
+    source_paths: list[str] = field(default_factory=list)
+    # Individual paths scanned (mirrors path when single; populated for multi-path runs)
 
     @property
     def total_pass(self) -> int:
@@ -112,6 +122,10 @@ class Report:
     @property
     def total_skip(self) -> int:
         return sum(1 for r in self.results if r.status == "SKIP")
+
+    @property
+    def total_waived(self) -> int:
+        return sum(1 for r in self.results if r.status == "WAIVED")
 
     @property
     def check_pass(self) -> int:

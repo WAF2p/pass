@@ -69,3 +69,9 @@ pyrightconfig.json
 controls/*.yml
 controls/*.yaml
 !controls/.gitkeep
+/.wafpass-export.yml
+/assets/regulatory/bsi_c5_2020.png
+/assets/regulatory/gdpr.png
+/.wafpass-state/index.json
+/.wafpass-state/runs/
+/tf_report.pdf

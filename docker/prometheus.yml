@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s       # how often Prometheus polls for new metrics
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  # ── Prometheus Pushgateway ─────────────────────────────────────────────────
+  # WAF++ PASS pushes metrics here after every `wafpass check --export grafana`.
+  #
+  # honor_labels: true is critical — it preserves the job/instance labels that
+  # WAF++ wrote to the Pushgateway rather than overwriting them with Prometheus'
+  # own scrape job label. Without this, label_values() queries in Grafana
+  # variables (iac_plugin, source) will not populate correctly.
+  - job_name: wafpass
+    honor_labels: true
+    static_configs:
+      - targets:
+          - pushgateway:9091   # resolves inside Docker network; use localhost:9091 if running Prometheus outside Docker
+
+  # ── Prometheus self-monitoring (optional) ────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
