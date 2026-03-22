@@ -75,3 +75,4 @@ controls/*.yaml
 /.wafpass-state/index.json
 /.wafpass-state/runs/
 /tf_report.pdf
+/blast_radius.md
