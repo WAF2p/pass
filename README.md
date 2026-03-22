@@ -981,6 +981,47 @@ wafpass-cdk:
     - wafpass check . --iac cdk --fail-on fail --summary
 ```
 
+## Releases & versioning
+
+Releases are published automatically on every merge to `main` via the GitHub Actions workflow at `.github/workflows/release.yml`.
+
+### How the version number works
+
+The `VERSION` file in the repository root controls the **major.minor** part:
+
+```
+0.1
+```
+
+The pipeline reads this file, finds the highest existing git tag matching `vMAJOR.MINOR.*`, and increments the patch number automatically. The first release for a given major.minor is always patch `0`.
+
+| Merge content | Result |
+|---|---|
+| Any code change | `v0.1.0` → `v0.1.1` → `v0.1.2` … |
+| Edit `VERSION`: `0.1` → `0.2` | Next release becomes `v0.2.0` |
+| Edit `VERSION`: `0.1` → `1.0` | Next release becomes `v1.0.0` |
+
+### What each release does
+
+1. Reads `VERSION` and computes the next `vMAJOR.MINOR.PATCH`
+2. Updates `pyproject.toml` and `wafpass/__init__.py` with the new version
+3. Builds a Python wheel (`.whl`) and source distribution (`.tar.gz`)
+4. Commits the version bump back to `main` with `[skip ci]` to prevent a loop
+5. Creates a git tag and a GitHub release with auto-generated notes and both dist files attached
+
+### Bumping the major or minor version
+
+Edit `VERSION` and merge to `main` — no other file needs changing:
+
+```bash
+# bump minor
+echo "0.2" > VERSION
+git commit -am "chore: start 0.2 release series"
+git push
+```
+
+The patch counter resets to `0` automatically because no tags exist yet for the new major.minor.
+
 ## Running tests
 
 ```bash
