@@ -95,12 +95,31 @@ wafpass check ./infra/ --controls-dir /path/to/controls
 # Show only the summary table
 wafpass check ./infra/ --summary
 
-# Generate a PDF report from multiple cloud folders
+# Generate a PDF report (includes carbon footprint automatically)
 wafpass check ./aws ./azure --output pdf --pdf-out report.pdf
+
+# PDF + blast radius + secret scan
+wafpass check ./infra/ --output pdf --pdf-out report.pdf --blast-radius
+
+# Disable hardcoded-secret scanning
+wafpass check ./infra/ --no-secrets
 
 # Print version
 wafpass --version
 ```
+
+### PDF report structure
+
+The PDF report is divided into five parts plus an appendix, each introduced by a coloured divider page that identifies the intended audience:
+
+| Part | Title | Audience | Sections |
+|------|-------|----------|----------|
+| **I** | Security Alerts | DevSecOps · Engineering Leads | Hardcoded Secrets (if any) |
+| **II** | Executive Briefing | C-Suite · Board · Sponsors | Decision Brief, Change Tracking |
+| **III** | Risk & Sustainability | CISO · CTO · CFO · ESG Team | Risk Dashboard, Carbon Footprint, Data Geography |
+| **IV** | Technical Deep Dive | Architects · Senior Engineers | Root Cause, Blast Radius, Summary, Regulatory Alignment |
+| **V** | Remediation | Engineering · DevOps | Roadmap, Detailed Findings |
+| **APP** | Appendix | Auditors · GRC · Legal | Controls Inventory, Passed & Skipped |
 
 ### Multi-cloud / multi-path scanning
 
@@ -452,7 +471,7 @@ Values are always **masked** in output (`Wafp********`) — the raw secret is ne
 
 ### PDF report
 
-Secret findings appear as the **first section** of the PDF report (immediately after the table of contents), with:
+Secret findings appear in **Part I — Security Alerts** of the PDF report (first section after the table of contents), with:
 - A severity KPI strip (Critical / High / Medium / Suppressed counts)
 - A findings table with file path, line number, matched attribute, and masked value
 - Inline remediation guidance for AWS, Azure, GCP, and HashiCorp Vault
@@ -1023,6 +1042,63 @@ When `--blast-radius` is combined with `--output pdf`, the PDF report includes a
 - KPI strip: root-cause resource count, downstream affected count, total impacted
 - Root-cause resources table (with failed control IDs and severity)
 - Downstream affected resources table (with hop distance and parent resources)
+
+---
+
+## Carbon footprint & sustainability
+
+WAF++ PASS automatically estimates the monthly carbon footprint of your cloud infrastructure whenever a PDF report is generated (`--output pdf`). No extra flag is needed.
+
+### How the estimate is calculated
+
+1. **Resource inventory** — counts every resource type in the parsed IaC state (EC2, RDS, Lambda, S3, EKS, etc.).
+2. **Power lookup** — maps each resource type to an estimated watt draw based on SPECpower benchmarks and the [Cloud Carbon Footprint](https://www.cloudcarbonfootprint.org/) project.
+3. **Grid emission factor** — multiplies energy (kWh/month) by the carbon intensity of the detected deployment region (kgCO₂e/kWh).
+4. **Waste multiplier** — if WAF-COST controls for rightsizing, lifecycle, or FinOps review are **FAIL**, an additional 25% is added to reflect over-provisioned, unoptimised workloads.
+
+> All figures are **directional estimates**. Actual cloud emissions depend on real workload utilisation and provider renewable-energy purchases (RECs).
+
+### What the PDF report shows
+
+The **Carbon Footprint & Sustainability** section (Part III) includes:
+
+| Element | Description |
+|---|---|
+| Monthly CO₂e | Estimated kilograms of CO₂ equivalent per month |
+| Annual CO₂e | 12-month projection in metric tonnes |
+| Monthly energy | Total kWh/month across all resources |
+| Region intensity | Grid emission factor (kgCO₂e/kWh) for the detected region |
+| Real-world equivalences | Car miles, trees needed to offset, phone charges, flight hours |
+| Over-provisioning alert | Extra CO₂e from failing WAF-COST controls (waste) |
+| Region comparison | How much CO₂e would be saved by deploying to the greenest available region |
+| Breakdown by type | Per-resource-type table sorted by CO₂ contribution with % bar |
+
+### Region carbon intensities
+
+Some regions are dramatically cleaner than others:
+
+| Region | Provider | Intensity (kgCO₂e/kWh) | Grid mix |
+|---|---|---|---|
+| `eu-north-1` (Sweden) | AWS | 0.008 | Hydro + nuclear |
+| `eu-central-2` (Switzerland) | AWS | 0.029 | Hydro |
+| `eu-west-3` (France) | AWS | 0.052 | Nuclear |
+| `sa-east-1` (Brazil) | AWS | 0.074 | Hydro |
+| `us-west-2` (Oregon) | AWS | 0.136 | Hydro |
+| `eu-west-1` (Ireland) | AWS | 0.316 | Wind + gas |
+| `eu-central-1` (Germany) | AWS | 0.338 | Mixed |
+| `us-east-1` (Virginia) | AWS | 0.415 | Mixed |
+| `ap-south-1` (Mumbai) | AWS | 0.708 | Coal-heavy |
+| `af-south-1` (Cape Town) | AWS | 0.900 | Coal |
+
+Moving from `eu-central-1` to `eu-north-1` reduces compute emissions by ~**98%**.
+
+### Sustainability recommendations
+
+- **Choose low-carbon regions** — `eu-north-1`, `eu-west-3`, `sa-east-1`, `us-west-2`
+- **Fix WAF-COST controls** — each rightsizing/lifecycle failure adds ~25% to your estimated footprint
+- **Use managed / serverless** — Lambda and DynamoDB have much lower per-unit power draw than EC2/RDS equivalents
+- **Enable instance scheduling** — stopping non-production workloads nights/weekends cuts footprint by up to 70%
+- **Tag for lifecycle** — resources without lifecycle tags cannot be automatically shut down or right-sized
 
 ---
 

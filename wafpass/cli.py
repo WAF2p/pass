@@ -402,6 +402,15 @@ def check(
         graph = build_dependency_graph(merged_state)
         _br_result = compute_blast_radius(report, merged_state, graph)
 
+    # ── Carbon footprint (always computed for PDF; skipped for console-only) ──
+    _carbon_result = None
+    if output == "pdf":
+        try:
+            from wafpass.carbon import compute_carbon
+            _carbon_result = compute_carbon(merged_state, report, unique_regions)
+        except Exception as exc:
+            typer.echo(f"WARNING: Could not compute carbon footprint: {exc}", err=True)
+
     # ── Output ─────────────────────────────────────────────────────────────────
     if output == "console":
         if summary_only:
@@ -430,7 +439,8 @@ def check(
 
         generate_pdf(report, dest, baseline=baseline_data, diff=run_diff,
                      blast_radius_result=_br_result,
-                     secret_findings=_secret_findings or None)
+                     secret_findings=_secret_findings or None,
+                     carbon_result=_carbon_result)
         typer.echo(f"PDF report written to: {dest}")
 
         if save_baseline_path:
