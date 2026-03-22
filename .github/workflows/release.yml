@@ -88,14 +88,20 @@ jobs:
 
       # ── Commit version bump back to main ──────────────────────────────────────
       # [skip ci] prevents this commit from triggering another release run.
+      # We skip the commit entirely when the files already contain the target
+      # version (e.g. the very first release where v0.1.0 == the existing value).
       - name: Commit & push version bump
         if: steps.skip.outputs.skip == 'false'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml wafpass/__init__.py
-          git commit -m "chore: bump version to ${{ steps.ver.outputs.full }} [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "Version files already at ${{ steps.ver.outputs.full }} — nothing to commit."
+          else
+            git commit -m "chore: bump version to ${{ steps.ver.outputs.full }} [skip ci]"
+            git push
+          fi
 
       # ── Tag & publish GitHub release ──────────────────────────────────────────
       - name: Create GitHub release
