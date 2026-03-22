@@ -175,6 +175,11 @@ def check(
         "--blast-radius-out",
         help="Destination for the Mermaid blast radius diagram (default: blast_radius.md).",
     ),
+    no_secrets: bool = typer.Option(
+        False,
+        "--no-secrets",
+        help="Disable the hardcoded-secret scanner (enabled by default).",
+    ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
 
@@ -193,6 +198,58 @@ def check(
         if not p.exists():
             typer.echo(f"ERROR: Path does not exist: {p}", err=True)
             raise typer.Exit(code=2)
+
+    # ── Secret scanner (runs before controls, prints prominently) ─────────────
+    _secret_findings: list = []
+    if not no_secrets:
+        from wafpass.secret_scanner import scan_secrets, REMEDIATION_GUIDANCE
+        from rich.console import Console as _RichConsole
+        from rich.panel import Panel as _Panel
+        from rich.table import Table as _Table
+        from rich.text import Text as _Text
+
+        _secret_findings = [f for f in scan_secrets(list(paths)) if not f.suppressed]
+        _suppressed_count = sum(1 for f in scan_secrets(list(paths)) if f.suppressed)
+
+        if _secret_findings:
+            _rc = _RichConsole(stderr=True)
+            _sev_style = {"critical": "bold red", "high": "red", "medium": "yellow"}
+
+            _tbl = _Table(show_header=True, header_style="bold white on dark_red",
+                          show_lines=True, expand=True)
+            _tbl.add_column("Severity", style="bold", width=10)
+            _tbl.add_column("File : Line", style="cyan", no_wrap=True)
+            _tbl.add_column("Finding", style="white")
+            _tbl.add_column("Attribute", style="dim")
+            _tbl.add_column("Value (masked)", style="dim")
+
+            for _f in _secret_findings:
+                _style = _sev_style.get(_f.severity, "white")
+                _tbl.add_row(
+                    _Text(_f.severity.upper(), style=_style),
+                    f"{_f.file}:{_f.line_no}",
+                    _f.pattern_name,
+                    _f.matched_key or "—",
+                    _f.masked_value,
+                )
+
+            _rc.print()
+            _rc.print(_Panel(
+                _tbl,
+                title="[bold white on dark_red] ⚠  HARDCODED SECRETS DETECTED [/bold white on dark_red]",
+                border_style="red",
+                padding=(0, 1),
+            ))
+            _rc.print()
+            _rc.print(f"[bold red]{len(_secret_findings)} hardcoded secret(s) found.[/bold red] "
+                      f"These must be remediated before deployment.")
+            if _suppressed_count:
+                _rc.print(f"[dim]{_suppressed_count} finding(s) suppressed via wafpass:ignore-secret.[/dim]")
+            _rc.print()
+            _rc.print("[bold]How to fix:[/bold]")
+            for _line in REMEDIATION_GUIDANCE.splitlines():
+                _rc.print(f"  [dim]{_line}[/dim]" if _line.startswith(" ") else f"  {_line}")
+            _rc.print()
 
     # Parse control ID list
     ids: list[str] | None = None
@@ -371,7 +428,9 @@ def check(
             except Exception as exc:
                 typer.echo(f"WARNING: Could not load baseline '{baseline_path}': {exc}", err=True)
 
-        generate_pdf(report, dest, baseline=baseline_data, diff=run_diff, blast_radius_result=_br_result)
+        generate_pdf(report, dest, baseline=baseline_data, diff=run_diff,
+                     blast_radius_result=_br_result,
+                     secret_findings=_secret_findings or None)
         typer.echo(f"PDF report written to: {dest}")
 
         if save_baseline_path:

@@ -3402,6 +3402,142 @@ def _blast_radius_section(br_result: "BlastResult", S: dict) -> list:
     return elems
 
 
+# ── Hardcoded Secrets section ─────────────────────────────────────────────────
+
+_SECRET_SEV_COLORS: dict[str, tuple] = {
+    "critical": (C_RED,    C_RED_LT),
+    "high":     (C_ORANGE, C_ORANGE_LT),
+    "medium":   (C_YELLOW, C_YELLOW_LT),
+}
+
+
+def _secrets_section(findings: list, S: dict) -> list:
+    """Build the Hardcoded Secrets section for the PDF report."""
+    active = [f for f in findings if not f.suppressed]
+    suppressed = [f for f in findings if f.suppressed]
+
+    if not active and not suppressed:
+        return []
+
+    elems: list = [
+        *_section_header("Hardcoded Secrets", S),
+        Paragraph(
+            "The following IaC source files contain hardcoded credential material "
+            "(passwords, API keys, tokens, private keys, or connection strings). "
+            "Hardcoded secrets committed to version control persist in git history "
+            "indefinitely and represent a critical attack surface. "
+            "All findings must be remediated before deployment.",
+            S["muted"],
+        ),
+        Spacer(1, 3 * mm),
+    ]
+
+    # ── KPI strip ─────────────────────────────────────────────────────────────
+    n_crit = sum(1 for f in active if f.severity == "critical")
+    n_high = sum(1 for f in active if f.severity == "high")
+    n_med  = sum(1 for f in active if f.severity == "medium")
+    kpi_data = [
+        [
+            Paragraph("Critical", S["tbl_header"]),
+            Paragraph("High", S["tbl_header"]),
+            Paragraph("Medium", S["tbl_header"]),
+            Paragraph("Suppressed", S["tbl_header"]),
+        ],
+        [
+            Paragraph(str(n_crit), ParagraphStyle("sec_k1", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_RED, alignment=TA_CENTER)),
+            Paragraph(str(n_high), ParagraphStyle("sec_k2", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_ORANGE, alignment=TA_CENTER)),
+            Paragraph(str(n_med), ParagraphStyle("sec_k3", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_YELLOW, alignment=TA_CENTER)),
+            Paragraph(str(len(suppressed)), ParagraphStyle("sec_k4", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_GREY, alignment=TA_CENTER)),
+        ],
+    ]
+    kpi_col_w = CONTENT_W / 4
+    kpi_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("BACKGROUND",    (0, 1), (-1, 1),  C_GREY_LT),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    elems.append(Table(kpi_data, colWidths=[kpi_col_w] * 4, style=kpi_ts))
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Findings table ────────────────────────────────────────────────────────
+    if active:
+        hdr = ["Severity", "File : Line", "Finding", "Attribute", "Value (masked)"]
+        col_ws = [
+            CONTENT_W * 0.09,
+            CONTENT_W * 0.28,
+            CONTENT_W * 0.22,
+            CONTENT_W * 0.17,
+            CONTENT_W * 0.24,
+        ]
+        rows: list[list] = [
+            [Paragraph(h, S["tbl_header_left"] if i == 1 else S["tbl_header"])
+             for i, h in enumerate(hdr)]
+        ]
+
+        for f in active:
+            fg, bg = _SECRET_SEV_COLORS.get(f.severity, (C_GREY, C_GREY_LT))
+            sev_style = ParagraphStyle(
+                f"sec_{f.severity}", fontName="Helvetica-Bold", fontSize=8,
+                leading=11, textColor=fg, alignment=TA_CENTER)
+            rows.append([
+                Paragraph(f.severity.upper(), sev_style),
+                Paragraph(f'<font size="7">{f.file}:{f.line_no}</font>', S["code"]),
+                Paragraph(f.pattern_name, S["body_sm"]),
+                Paragraph(f.matched_key or "—", S["body_sm"]),
+                Paragraph(f'<font name="Courier">{f.masked_value}</font>', S["body_sm"]),
+            ])
+
+        ts = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",         (0, 1), (0, -1),  "CENTER"),
+        ])
+        elems.append(Table(rows, colWidths=col_ws, style=ts))
+        elems.append(Spacer(1, 5 * mm))
+
+    # ── Remediation guidance box ───────────────────────────────────────────────
+    from wafpass.secret_scanner import REMEDIATION_GUIDANCE
+    guide_rows = []
+    for line in REMEDIATION_GUIDANCE.splitlines():
+        guide_rows.append(Paragraph(
+            line if line.strip() else "&nbsp;",
+            S["code"] if line.startswith("  ") else S["body_sm"],
+        ))
+    elems.append(Table(
+        [[col] for col in guide_rows],
+        colWidths=[CONTENT_W],
+        style=TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("BOX",           (0, 0), (-1, -1), 0.5, C_ORANGE),
+        ]),
+    ))
+
+    return elems
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_pdf(
@@ -3410,6 +3546,7 @@ def generate_pdf(
     baseline: dict | None = None,
     diff: dict | None = None,
     blast_radius_result: "BlastResult | None" = None,
+    secret_findings: list | None = None,
 ) -> None:
     """Generate a fully structured PDF report with TOC, risk scoring, and financial impact."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -3452,61 +3589,68 @@ def generate_pdf(
     story += [NextPageTemplate("normal"), PageBreak()]
     story += _toc_section(S)
 
-    # ── 3. Executive Decision Brief ────────────────────────────────────────────
+    # ── 3. Hardcoded Secrets (shown first — critical pre-deployment gate) ────────
+    if secret_findings:
+        sec_elems = _secrets_section(secret_findings, S)
+        if sec_elems:
+            story += [PageBreak()]
+            story += sec_elems
+
+    # ── 4. Executive Decision Brief ────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_decision_brief(report, S, baseline=baseline)
 
-    # ── 4. Run Change Tracking (only when a previous run exists) ───────────────
+    # ── 5. Run Change Tracking (only when a previous run exists) ───────────────
     if diff is not None:
         story += [PageBreak()]
         story += _changes_section(diff, S)
 
-    # ── 5. Executive Risk Dashboard ────────────────────────────────────────────
+    # ── 6. Executive Risk Dashboard ────────────────────────────────────────────
     story += [PageBreak()]
     story += _risk_financial_section(report, S, baseline=baseline)
 
-    # ── 6. Remediation Roadmap ─────────────────────────────────────────────────
+    # ── 7. Remediation Roadmap ─────────────────────────────────────────────────
     roadmap_elems = _remediation_roadmap_section(report, S)
     if roadmap_elems:
         story += [PageBreak()]
         story += roadmap_elems
 
-    # ── 7. Root Cause Analysis ─────────────────────────────────────────────────
+    # ── 8. Root Cause Analysis ─────────────────────────────────────────────────
     root_cause_elems = _root_cause_section(report, S)
     if root_cause_elems:
         story += [PageBreak()]
         story += root_cause_elems
 
-    # ── 8. Blast Radius Analysis ────────────────────────────────────────────────
+    # ── 9. Blast Radius Analysis ────────────────────────────────────────────────
     if blast_radius_result is not None:
         br_elems = _blast_radius_section(blast_radius_result, S)
         if br_elems:
             story += [PageBreak()]
             story += br_elems
 
-    # ── 9. Data Geography & Sovereignty ───────────────────────────────────────
+    # ── 10. Data Geography & Sovereignty ──────────────────────────────────────
     story += [PageBreak()]
     story += _data_geography_section(report, S)
 
-    # ── 10. Executive Summary ───────────────────────────────────────────────────
+    # ── 11. Executive Summary ──────────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_summary(report, S)
 
-    # ── 11. Controls Overview ──────────────────────────────────────────────────
+    # ── 12. Controls Overview ─────────────────────────────────────────────────
     story += [PageBreak()]
     story += _controls_overview(report, S)
 
-    # ── 12. Regulatory Alignment ────────────────────────────────────────────────
+    # ── 13. Regulatory Alignment ───────────────────────────────────────────────
     reg_elems = _regulatory_alignment(report, S)
     if reg_elems:
         story += [PageBreak()]
         story += reg_elems
 
-    # ── 13. Detailed Findings ───────────────────────────────────────────────────
+    # ── 14. Detailed Findings ─────────────────────────────────────────────────
     story += [PageBreak()]
     story += _findings_section(report, S)
 
-    # ── 14. Appendix: Passed & Skipped Controls ─────────────────────────────────
+    # ── 15. Appendix: Passed & Skipped Controls ───────────────────────────────
     story += [PageBreak()]
     story += _passed_section(report, S)
 
