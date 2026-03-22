@@ -18,17 +18,49 @@ pip install -e ".[dev]"
 uv pip install -e ".[dev]"
 ```
 
-## Controls directory setup
+### macOS (Apple M-series)
 
-PASS reads controls from a local `controls/` directory (gitignored by default — controls are synced from the framework repo, not committed here).
-
-Copy controls from the WAF++ framework repository:
+Homebrew, Git, Python and uv are the only prerequisites. Run the following once in Terminal:
 
 ```bash
-cp /path/to/waf++/framework/modules/controls/controls/*.yml controls/
+# Prerequisites
+brew install git python uv
+
+# Clone and install
+git clone https://github.com/WAF2p/pass.git
+cd pass
+uv pip install -e .   # recommended
+# or: pip install -e .
+
+# Verify
+wafpass -V
 ```
 
-Or use a symlink / sync script appropriate for your workflow.
+> **Rosetta not required.** WAF++ PASS is pure Python and runs natively on arm64 — no x86 emulation needed.
+
+## Controls directory setup
+
+PASS reads controls from a local `controls/` directory. Controls are **not bundled** with the tool — they are published separately by the WAF++ framework and must be downloaded once before the first run.
+
+If you run `wafpass check` without controls present, the tool will print step-by-step download instructions and exit with a helpful error.
+
+**Option A — Download from the WAF++ website (no Git required):**
+
+1. Visit **https://waf2p.dev/wafpass/** and click **"Download Controls"**
+2. Unzip the archive and copy the YAML files into your controls directory:
+
+```bash
+cp /path/to/download/*.yml controls/
+```
+
+**Option B — Clone the framework repository:**
+
+```bash
+git clone https://github.com/WAF2p/framework.git
+cp framework/modules/controls/controls/*.yml controls/
+```
+
+Then run `wafpass check` as normal. Use `--controls-dir /path/to/controls` if your controls live outside the project root.
 
 ## Usage
 

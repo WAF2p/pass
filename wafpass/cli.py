@@ -193,12 +193,21 @@ def check(
         raise typer.Exit(code=2) from exc
 
     if not controls:
-        typer.echo(
-            f"No controls found in '{controls_dir}'"
-            + (f" (pillar={pillar})" if pillar else "")
-            + (f" (ids={ids})" if ids else ""),
-            err=True,
-        )
+        _hint = (f" (pillar={pillar})" if pillar else "") + (f" (ids={ids})" if ids else "")
+        typer.echo(f"No controls found in '{controls_dir}'{_hint}", err=True)
+        typer.echo("", err=True)
+        typer.echo("Controls are not bundled with WAF++ PASS — they must be obtained separately.", err=True)
+        typer.echo("", err=True)
+        typer.echo("Option A — Download from the WAF++ website:", err=True)
+        typer.echo("  1. Visit https://waf2p.dev/wafpass/ and click \"Download Controls\"", err=True)
+        typer.echo("  2. Unzip the archive and copy the *.yml files into your controls directory:", err=True)
+        typer.echo(f"       cp /path/to/download/*.yml {controls_dir}/", err=True)
+        typer.echo("", err=True)
+        typer.echo("Option B — Clone the WAF++ framework repository:", err=True)
+        typer.echo("  git clone https://github.com/WAF2p/framework.git", err=True)
+        typer.echo(f"  cp framework/modules/controls/controls/*.yml {controls_dir}/", err=True)
+        typer.echo("", err=True)
+        typer.echo("Then re-run your wafpass command.", err=True)
         raise typer.Exit(code=2)
 
     # ── Parse IaC files (merge across all paths) ───────────────────────────────
