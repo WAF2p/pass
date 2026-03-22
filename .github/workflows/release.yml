@@ -1,0 +1,110 @@
+name: Release
+
+# Triggers on every merge (push) to main.
+# Version bump commits from this workflow carry "[skip ci]" and are ignored.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: ubuntu-latest
+    # Needed to push the version-bump commit, create tags, and publish the release.
+    permissions:
+      contents: write
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history so git tag -l works correctly
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Skip if this is a version-bump commit from a previous run ─────────────
+      - name: Check for [skip ci]
+        id: skip
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          if echo "$MSG" | grep -q "\[skip ci\]"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Compute the next version ───────────────────────────────────────────────
+      # VERSION file contains MAJOR.MINOR (e.g. "0.1").
+      # Patch is derived from the highest existing git tag for that MAJOR.MINOR
+      # and incremented by 1.  If no tags exist yet, patch starts at 0.
+      - name: Compute version
+        if: steps.skip.outputs.skip == 'false'
+        id: ver
+        run: |
+          BASE=$(cat VERSION | tr -d '[:space:]')
+          echo "Base version: $BASE"
+
+          LATEST=$(git tag -l "v${BASE}.*" | sort -V | tail -1)
+          echo "Latest matching tag: ${LATEST:-none}"
+
+          if [ -z "$LATEST" ]; then
+            PATCH=0
+          else
+            PATCH=$(echo "$LATEST" | sed "s/v${BASE}\.//")
+            PATCH=$((PATCH + 1))
+          fi
+
+          FULL="${BASE}.${PATCH}"
+          TAG="v${FULL}"
+          echo "New version: $TAG"
+
+          echo "full=${FULL}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}"   >> $GITHUB_OUTPUT
+
+      # ── Bump version in source files ───────────────────────────────────────────
+      - name: Bump version in pyproject.toml and __init__.py
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          VER="${{ steps.ver.outputs.full }}"
+          # pyproject.toml  →  version = "X.Y.Z"
+          sed -i "s/^version = \".*\"/version = \"${VER}\"/" pyproject.toml
+          # wafpass/__init__.py  →  __version__ = "X.Y.Z"
+          sed -i "s/^__version__ = \".*\"/__version__ = \"${VER}\"/" wafpass/__init__.py
+
+      # ── Build wheel + sdist ────────────────────────────────────────────────────
+      - name: Set up Python
+        if: steps.skip.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        if: steps.skip.outputs.skip == 'false'
+        run: pip install build
+
+      - name: Build
+        if: steps.skip.outputs.skip == 'false'
+        run: python -m build
+
+      # ── Commit version bump back to main ──────────────────────────────────────
+      # [skip ci] prevents this commit from triggering another release run.
+      - name: Commit & push version bump
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml wafpass/__init__.py
+          git commit -m "chore: bump version to ${{ steps.ver.outputs.full }} [skip ci]"
+          git push
+
+      # ── Tag & publish GitHub release ──────────────────────────────────────────
+      - name: Create GitHub release
+        if: steps.skip.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:              ${{ steps.ver.outputs.tag }}
+          name:                  WAF++ PASS ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
