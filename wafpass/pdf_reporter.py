@@ -3233,6 +3233,175 @@ def _changes_section(diff: dict, S: dict) -> list:
     return elems
 
 
+# ── Blast Radius section ──────────────────────────────────────────────────────
+
+_BR_IMPACT_COLORS: dict[str, tuple] = {
+    "CRITICAL": (C_RED,    C_RED_LT),
+    "HIGH":     (C_ORANGE, C_ORANGE_LT),
+    "MEDIUM":   (C_YELLOW, C_YELLOW_LT),
+    "LOW":      (C_GREY,   C_GREY_LT),
+}
+
+
+def _blast_radius_section(br_result: "BlastResult", S: dict) -> list:
+    """Build the Blast Radius Analysis section for the PDF report."""
+    from wafpass.blast_radius import BlastResult  # local import – optional feature
+
+    if not br_result.roots:
+        return []
+
+    elems: list = [
+        *_section_header("Blast Radius Analysis", S),
+        Paragraph(
+            "Resources that failed one or more controls and the downstream resources "
+            "that reference them and are therefore indirectly exposed. "
+            "Hop 0 = root cause; Hop 1 = directly dependent (HIGH); "
+            "Hop 2 = secondary (MEDIUM); Hop 3+ = residual (LOW).",
+            S["muted"],
+        ),
+        Spacer(1, 3 * mm),
+    ]
+
+    # ── Summary KPI strip ─────────────────────────────────────────────────────
+    kpi_data = [
+        [
+            Paragraph("Root-cause resources", S["tbl_header"]),
+            Paragraph("Downstream affected", S["tbl_header"]),
+            Paragraph("Total impacted", S["tbl_header"]),
+        ],
+        [
+            Paragraph(str(len(br_result.roots)), ParagraphStyle(
+                "br_kpi", fontName="Helvetica-Bold", fontSize=20,
+                leading=24, textColor=C_RED, alignment=TA_CENTER)),
+            Paragraph(str(len(br_result.affected)), ParagraphStyle(
+                "br_kpi2", fontName="Helvetica-Bold", fontSize=20,
+                leading=24, textColor=C_ORANGE, alignment=TA_CENTER)),
+            Paragraph(str(br_result.total_affected), ParagraphStyle(
+                "br_kpi3", fontName="Helvetica-Bold", fontSize=20,
+                leading=24, textColor=C_NAVY, alignment=TA_CENTER)),
+        ],
+    ]
+    kpi_col_w = CONTENT_W / 3
+    kpi_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("BACKGROUND",    (0, 1), (-1, 1),  C_GREY_LT),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    elems.append(Table(kpi_data, colWidths=[kpi_col_w] * 3, style=kpi_ts))
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Root cause table ──────────────────────────────────────────────────────
+    elems.append(Paragraph("Root-cause resources (Hop 0)", S["h3"]))
+    elems.append(Spacer(1, 2 * mm))
+
+    root_hdr = ["Resource", "Severity", "Impact", "Failed Controls"]
+    root_col_ws = [
+        CONTENT_W * 0.35,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.45,
+    ]
+    root_rows: list[list] = [
+        [Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"])
+         for i, h in enumerate(root_hdr)]
+    ]
+
+    for node in sorted(br_result.roots, key=lambda n: (
+            -{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(n.impact_label, 0),
+            n.address)):
+        sev = (node.failed_severity or "low").lower()
+        fg, bg = _BR_IMPACT_COLORS.get(node.impact_label, (C_GREY, C_GREY_LT))
+        sev_style = ParagraphStyle(
+            f"br_sev_{sev}", fontName="Helvetica-Bold", fontSize=8,
+            leading=11, textColor=fg, alignment=TA_CENTER)
+        impact_style = ParagraphStyle(
+            f"br_imp_{node.impact_label}", fontName="Helvetica-Bold", fontSize=8,
+            leading=11, textColor=fg, alignment=TA_CENTER)
+        ctrls = ", ".join(node.failed_controls) if node.failed_controls else "—"
+        root_rows.append([
+            Paragraph(f'<font size="8">{node.address}</font>', S["code"]),
+            Paragraph(sev.upper(), sev_style),
+            Paragraph(node.impact_label, impact_style),
+            Paragraph(f'<font size="8">{ctrls}</font>', S["body_sm"]),
+        ])
+
+    root_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("LEADING",       (0, 0), (-1, -1), 11),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("ALIGN",         (1, 0), (-1, 0),  "CENTER"),
+        ("ALIGN",         (1, 1), (-1, -1), "CENTER"),
+        ("ALIGN",         (0, 0), (0, -1),  "LEFT"),
+    ])
+    elems.append(Table(root_rows, colWidths=root_col_ws, style=root_ts))
+
+    # ── Downstream affected table ─────────────────────────────────────────────
+    if br_result.affected:
+        elems.append(Spacer(1, 5 * mm))
+        elems.append(Paragraph("Downstream affected resources", S["h3"]))
+        elems.append(Spacer(1, 2 * mm))
+
+        aff_hdr = ["Resource", "Hop", "Impact", "Depends on"]
+        aff_col_ws = [
+            CONTENT_W * 0.35,
+            CONTENT_W * 0.06,
+            CONTENT_W * 0.10,
+            CONTENT_W * 0.49,
+        ]
+        aff_rows: list[list] = [
+            [Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"])
+             for i, h in enumerate(aff_hdr)]
+        ]
+
+        for node in br_result.affected:
+            fg, _bg = _BR_IMPACT_COLORS.get(node.impact_label, (C_GREY, C_GREY_LT))
+            impact_style = ParagraphStyle(
+                f"br_aff_{node.impact_label}_{node.address[:8]}", fontName="Helvetica-Bold",
+                fontSize=8, leading=11, textColor=fg, alignment=TA_CENTER)
+            parents_str = ", ".join(node.parents) if node.parents else "—"
+            aff_rows.append([
+                Paragraph(f'<font size="8">{node.address}</font>', S["code"]),
+                Paragraph(str(node.hop), S["body_sm"]),
+                Paragraph(node.impact_label, impact_style),
+                Paragraph(f'<font size="8">{parents_str}</font>', S["body_sm"]),
+            ])
+
+        aff_ts = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",         (1, 0), (-1, 0),  "CENTER"),
+            ("ALIGN",         (1, 1), (-1, -1), "CENTER"),
+            ("ALIGN",         (0, 0), (0, -1),  "LEFT"),
+            ("ALIGN",         (3, 1), (3, -1),  "LEFT"),
+        ])
+        elems.append(Table(aff_rows, colWidths=aff_col_ws, style=aff_ts))
+
+    return elems
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_pdf(
@@ -3240,6 +3409,7 @@ def generate_pdf(
     output_path: Path,
     baseline: dict | None = None,
     diff: dict | None = None,
+    blast_radius_result: "BlastResult | None" = None,
 ) -> None:
     """Generate a fully structured PDF report with TOC, risk scoring, and financial impact."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -3307,29 +3477,36 @@ def generate_pdf(
         story += [PageBreak()]
         story += root_cause_elems
 
-    # ── 8. Data Geography & Sovereignty ───────────────────────────────────────
+    # ── 8. Blast Radius Analysis ────────────────────────────────────────────────
+    if blast_radius_result is not None:
+        br_elems = _blast_radius_section(blast_radius_result, S)
+        if br_elems:
+            story += [PageBreak()]
+            story += br_elems
+
+    # ── 9. Data Geography & Sovereignty ───────────────────────────────────────
     story += [PageBreak()]
     story += _data_geography_section(report, S)
 
-    # ── 9. Executive Summary ───────────────────────────────────────────────────
+    # ── 10. Executive Summary ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_summary(report, S)
 
-    # ── 10. Controls Overview ──────────────────────────────────────────────────
+    # ── 11. Controls Overview ──────────────────────────────────────────────────
     story += [PageBreak()]
     story += _controls_overview(report, S)
 
-    # ── 11. Regulatory Alignment ────────────────────────────────────────────────
+    # ── 12. Regulatory Alignment ────────────────────────────────────────────────
     reg_elems = _regulatory_alignment(report, S)
     if reg_elems:
         story += [PageBreak()]
         story += reg_elems
 
-    # ── 12. Detailed Findings ───────────────────────────────────────────────────
+    # ── 13. Detailed Findings ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _findings_section(report, S)
 
-    # ── 13. Appendix: Passed & Skipped Controls ─────────────────────────────────
+    # ── 14. Appendix: Passed & Skipped Controls ─────────────────────────────────
     story += [PageBreak()]
     story += _passed_section(report, S)
 
