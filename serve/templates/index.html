@@ -96,13 +96,31 @@
     .tab-active { border-bottom: 2px solid var(--waf-brand); color: var(--waf-brand); }
 
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* Mobile sidebar */
+    .waf-sidebar { transition: transform 0.25s cubic-bezier(0.4,0,0.2,1); }
+    .sidebar-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45); z-index: 39;
+    }
+    @media (max-width: 767px) {
+      .waf-sidebar { transform: translateX(-100%); z-index: 40; }
+      .waf-sidebar.open { transform: translateX(0); }
+      .sidebar-backdrop.open { display: block; }
+      #hamburger-btn { display: flex !important; align-items: center; justify-content: center; }
+      #hamburger-btn:hover { background: rgba(0,148,255,0.1); color: var(--waf-brand); }
+      .waf-main-content { margin-left: 0 !important; }
+    }
   </style>
 </head>
 
 <body class="h-full font-sans" style="background:var(--bg);" x-data="wafpass()" x-cloak>
 
 <!-- ═══ SIDEBAR ═══════════════════════════════════════════════════════════ -->
-<aside class="waf-sidebar fixed left-0 top-0 h-screen w-64 flex flex-col z-30">
+<!-- Mobile sidebar backdrop -->
+<div class="sidebar-backdrop" :class="sidebarOpen ? 'open' : ''" @click="sidebarOpen=false"></div>
+<aside class="waf-sidebar fixed left-0 top-0 h-screen w-64 flex flex-col z-30"
+  :class="sidebarOpen ? 'open' : ''">
     <!-- Logo -->
   <div class="px-5 py-4 waf-sidebar-border" style="border-bottom:1px solid var(--sidebar-border);">
     <div class="flex items-center gap-2">
@@ -125,31 +143,31 @@
 
   <!-- Navigation -->
   <nav class="flex-1 px-3 py-4 overflow-y-auto" style="display:flex;flex-direction:column;gap:2px;">
-    <button @click="page='dashboard'" :class="page==='dashboard' ? 'active' : ''" class="sidebar-link w-full">
+    <button @click="navTo('dashboard')" :class="page==='dashboard' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
       Dashboard
     </button>
-    <button @click="page='controls'" :class="page==='controls' ? 'active' : ''" class="sidebar-link w-full">
+    <button @click="navTo('controls')" :class="page==='controls' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
       Controls Library
       <span class="ml-auto sidebar-count" x-text="controls.length"></span>
     </button>
-    <button @click="page='findings'" :class="page==='findings' ? 'active' : ''" class="sidebar-link w-full">
+    <button @click="navTo('findings')" :class="page==='findings' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
       Findings
       <span x-show="results && results.total_fail > 0" class="ml-auto sidebar-count sidebar-count-fail" x-text="results ? results.total_fail : ''"></span>
     </button>
-    <button @click="page='compliance'" :class="page==='compliance' ? 'active' : ''" class="sidebar-link w-full">
+    <button @click="navTo('compliance')" :class="page==='compliance' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Compliance Matrix
     </button>
-    <button @click="page='waivers'" :class="page==='waivers' ? 'active' : ''" class="sidebar-link w-full">
+    <button @click="navTo('waivers')" :class="page==='waivers' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
       Waivers
       <span x-show="Object.keys(waivers).length > 0" class="ml-auto sidebar-count sidebar-count-waiver" x-text="Object.keys(waivers).length"></span>
     </button>
     <div style="border-top:1px solid var(--sidebar-border);margin:0.5rem 0;"></div>
-    <button @click="page='scan'" :class="page==='scan' ? 'active' : ''" class="sidebar-link w-full">
+    <button @click="navTo('scan')" :class="page==='scan' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Run Scan
     </button>
@@ -162,11 +180,15 @@
 </aside>
 
 <!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
-<main class="ml-64 min-h-screen">
+<main class="ml-64 min-h-screen waf-main-content">
 
   <!-- Top header -->
   <header class="waf-header sticky top-0 z-20 px-6 py-3 flex items-center justify-between">
-    <div>
+    <div class="flex items-center gap-3">
+      <button id="hamburger-btn" @click="sidebarOpen = !sidebarOpen" style="display:none;padding:0.375rem;border-radius:8px;background:transparent;border:none;cursor:pointer;color:#475569;flex-shrink:0;" aria-label="Toggle menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div>
       <h1 class="text-lg font-bold text-slate-900" x-text="{
         dashboard: 'Executive Dashboard',
         controls: 'Controls Library',
@@ -183,6 +205,7 @@
         waivers: 'Manage intentional risk acceptances and export to .wafpass-skip.yml',
         scan: 'Execute a WAF++ PASS scan against your IaC directory'
       }[page]"></p>
+      </div>
     </div>
     <div class="flex items-center gap-3">
       <span x-show="results" class="text-xs text-slate-400" x-text="results ? 'Last scan: ' + new Date(results.timestamp).toLocaleString() : ''"></span>
@@ -781,6 +804,7 @@ function wafpass() {
   return {
     // ── State ──────────────────────────────────────────────────────────
     page: 'dashboard',
+    sidebarOpen: false,
     controls: window.__INITIAL_CONTROLS__ || [],
     waivers: window.__INITIAL_WAIVERS__ || {},
     results: window.__INITIAL_RESULTS__ || null,
@@ -1015,6 +1039,8 @@ function wafpass() {
       const ctrl = this.controls.find(c => c.id === id);
       return ctrl ? ctrl.title : id;
     },
+
+    navTo(p) { this.page = p; this.sidebarOpen = false; },
 
     pillarColor(pillar) {
       const map = {
