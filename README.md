@@ -1262,6 +1262,53 @@ git push
 
 The patch counter resets to `0` automatically because no tags exist yet for the new major.minor.
 
+## Web UI
+
+WAF++ PASS ships with a browser-based dashboard that lets CISOs and security teams interact with controls, manage waivers, and view findings — **no YAML knowledge required**.
+
+### Internal serve (production)
+
+A **FastAPI** web server that connects directly to the WAF++ PASS engine. Reads real controls from `controls/`, runs live scans, and persists waivers to disk.
+
+```bash
+# Install web dependencies
+pip install -e ".[web]"
+
+# Start the server (from the pass/ directory)
+uvicorn serve.app:app --reload --port 8080
+```
+
+Then open **http://localhost:8080**.
+
+| Feature | Details |
+|---------|---------|
+| Dashboard | Score gauge, pillar breakdown, severity chart, top failures |
+| Controls Library | Browse/search all 70+ controls, filter by pillar/severity |
+| Waiver Manager | Add waivers with reason + expiry, export `.wafpass-skip.yml` |
+| Findings | Per-check breakdown with remediation guidance |
+| Compliance Matrix | GDPR, ISO 27001:2022, BSI C5:2020, EUCS, CSRD mapping |
+| Run Scan | Trigger scans from the browser, results update in real-time |
+
+See [`serve/README.md`](serve/README.md) for the full API reference and deployment guide.
+
+### Demo (standalone)
+
+A **self-contained, no-server** interactive demo with embedded sample data. Open in any browser — no Python, no install.
+
+```bash
+# From the repository root
+open ../web-ui/index.html
+
+# Or serve locally
+python3 -m http.server 3000 --directory ../web-ui
+```
+
+The demo (`../web-ui/index.html`) has the **same UI/UX** as the internal serve but uses embedded JavaScript data instead of a live backend. It includes 17 representative controls, pre-loaded scan results with 7 failures, and fully working waiver management with YAML export.
+
+See [`../web-ui/README.md`](../web-ui/README.md) for more details.
+
+---
+
 ## Running tests
 
 ```bash

@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WAF++ PASS — Controls Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+    // Server-injected initial data
+    window.__INITIAL_CONTROLS__ = __CONTROLS_JSON__;
+    window.__INITIAL_WAIVERS__  = __WAIVERS_JSON__;
+    window.__INITIAL_RESULTS__  = __RESULTS_JSON__;
+    window.__MODE__ = "__MODE__";
+  </script>
+  
+  
+  <style>
+    /* ── WAF++ PASS — Brand theme ─────────────────────────────────────── */
+    :root {
+      --waf-brand:       #0094FF;
+      --waf-brand-h:     #21A5FF;
+      --waf-accent:      #FFCF63;
+      --waf-danger:      #DA2C38;
+      --sidebar-bg:      #070a12;
+      --sidebar-surf:    #0f1630;
+      --sidebar-border:  rgba(238,242,255,.10);
+      --sidebar-text:    #b4c0d6;
+      --sidebar-muted:   #64748b;
+      --bg:              #f7f8fb;
+      --surface:         #ffffff;
+      --border:          rgba(15,23,42,.09);
+      --text:            #0b1220;
+      --muted:           #5b6474;
+      --shadow-sm:       0 1px 3px rgba(15,23,42,.06);
+      --shadow-md:       0 4px 24px rgba(15,23,42,.09);
+    }
+    [x-cloak] { display: none !important; }
+
+    body { background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+    /* Sidebar */
+    .waf-sidebar { background: var(--sidebar-bg); }
+    .sidebar-link {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 0.5rem 0.875rem; border-radius: 10px;
+      color: var(--sidebar-text); font-size: 0.875rem; font-weight: 500;
+      transition: all 0.15s; cursor: pointer; width: 100%; border: none;
+      background: transparent;
+    }
+    .sidebar-link:hover { color: #eef2ff; background: rgba(0,148,255,.14); }
+    .sidebar-link.active { color: #fff; background: var(--waf-brand); box-shadow: 0 4px 16px rgba(0,148,255,.30); }
+
+    /* Cards */
+    .card {
+      background: var(--surface); border-radius: 20px;
+      border: 1px solid var(--border); padding: 1.25rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Pills */
+    .pill { display: inline-flex; align-items: center; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 10px; font-size: 0.875rem; font-weight: 600; transition: all 0.15s; cursor: pointer; border: none; }
+    .btn-primary { background: var(--waf-brand); color: #fff; box-shadow: 0 4px 16px rgba(0,148,255,.25); }
+    .btn-primary:hover:not(:disabled) { background: var(--waf-brand-h); }
+    .btn-outline { background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
+    .btn-outline:hover { background: var(--bg); border-color: rgba(0,148,255,.30); color: var(--waf-brand); }
+    .btn-danger { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .btn-danger:hover { background: #fee2e2; }
+
+    /* Inputs */
+    .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 10px; font-size: 0.875rem; outline: none; background: var(--surface); color: var(--text); transition: border-color 0.15s; }
+    .input:focus { border-color: var(--waf-brand); box-shadow: 0 0 0 3px rgba(0,148,255,.12); }
+
+    /* Table */
+    .table-th { padding: 0.75rem 1rem; text-align: left; font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg); }
+    .table-td { padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--text); }
+
+    /* Top header */
+    .waf-header { background: rgba(247,248,251,.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+
+    /* Score colors */
+    .score-glow-green  { color: #059669; }
+    .score-glow-yellow { color: #d97706; }
+    .score-glow-red    { color: var(--waf-danger); }
+
+    /* Sidebar count badges */
+    .sidebar-count       { background: rgba(255,255,255,.08); color: var(--sidebar-text); font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; }
+    .sidebar-count-fail  { background: rgba(218,44,56,.25); color: #fca5a5; }
+    .sidebar-count-waiver{ background: rgba(124,58,237,.25); color: #c4b5fd; }
+
+    /* Accent line under active tab in modals */
+    .tab-active { border-bottom: 2px solid var(--waf-brand); color: var(--waf-brand); }
+
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  </style>
+</head>
+
+<body class="h-full font-sans" style="background:var(--bg);" x-data="wafpass()" x-cloak>
+
+<!-- ═══ SIDEBAR ═══════════════════════════════════════════════════════════ -->
+<aside class="waf-sidebar fixed left-0 top-0 h-screen w-64 flex flex-col z-30">
+    <!-- Logo -->
+  <div class="px-5 py-4 waf-sidebar-border" style="border-bottom:1px solid var(--sidebar-border);">
+    <div class="flex items-center gap-2">
+      <img src="/static/logo.png" alt="WAF++ Logo" style="height:32px;width:auto;object-fit:contain;filter:brightness(1.05);" />
+    </div>
+    <div style="margin-top:0.375rem;font-size:0.7rem;color:var(--sidebar-muted);letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">Controls Dashboard</div>
+  </div>
+</div>
+
+  <!-- Score badge -->
+  <div class="px-5 py-4" style="border-bottom:1px solid var(--sidebar-border);" x-show="results">
+    <div style="color:var(--sidebar-text);font-size:0.75rem;margin-bottom:0.25rem;">Overall Score</div>
+    <div class="flex items-baseline gap-2">
+      <span class="text-3xl font-bold"
+        :class="results && results.score >= 80 ? 'score-glow-green' : results && results.score >= 60 ? 'score-glow-yellow' : 'score-glow-red'"
+        x-text="results ? results.score + '/100' : '—'"></span>
+    </div>
+    <div style="color:var(--sidebar-muted);font-size:0.7rem;margin-top:0.25rem;" x-text="results ? results.path : ''"></div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="flex-1 px-3 py-4 overflow-y-auto" style="display:flex;flex-direction:column;gap:2px;">
+    <button @click="page='dashboard'" :class="page==='dashboard' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      Dashboard
+    </button>
+    <button @click="page='controls'" :class="page==='controls' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      Controls Library
+      <span class="ml-auto sidebar-count" x-text="controls.length"></span>
+    </button>
+    <button @click="page='findings'" :class="page==='findings' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      Findings
+      <span x-show="results && results.total_fail > 0" class="ml-auto sidebar-count sidebar-count-fail" x-text="results ? results.total_fail : ''"></span>
+    </button>
+    <button @click="page='compliance'" :class="page==='compliance' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Compliance Matrix
+    </button>
+    <button @click="page='waivers'" :class="page==='waivers' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      Waivers
+      <span x-show="Object.keys(waivers).length > 0" class="ml-auto sidebar-count sidebar-count-waiver" x-text="Object.keys(waivers).length"></span>
+    </button>
+    <div style="border-top:1px solid var(--sidebar-border);margin:0.5rem 0;"></div>
+    <button @click="page='scan'" :class="page==='scan' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Run Scan
+    </button>
+  </nav>
+
+  <!-- Footer -->
+  <div style="padding:0.75rem 1.25rem;border-top:1px solid var(--sidebar-border);font-size:0.7rem;color:var(--sidebar-muted);">
+    WAF++ PASS v0.1.0
+  </div>
+</aside>
+
+<!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
+<main class="ml-64 min-h-screen">
+
+  <!-- Top header -->
+  <header class="waf-header sticky top-0 z-20 px-6 py-3 flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-bold text-slate-900" x-text="{
+        dashboard: 'Executive Dashboard',
+        controls: 'Controls Library',
+        findings: 'Scan Findings',
+        compliance: 'Compliance Matrix',
+        waivers: 'Waivers Manager',
+        scan: 'Run Scan'
+      }[page]"></h1>
+      <p class="text-xs text-slate-500" x-text="{
+        dashboard: 'Risk posture overview across all WAF++ pillars',
+        controls: 'Browse, filter and manage all WAF++ controls — no YAML required',
+        findings: 'Detailed results from the last scan',
+        compliance: 'Regulatory framework coverage (GDPR, ISO 27001, BSI C5, EUCS)',
+        waivers: 'Manage intentional risk acceptances and export to .wafpass-skip.yml',
+        scan: 'Execute a WAF++ PASS scan against your IaC directory'
+      }[page]"></p>
+    </div>
+    <div class="flex items-center gap-3">
+      <span x-show="results" class="text-xs text-slate-400" x-text="results ? 'Last scan: ' + new Date(results.timestamp).toLocaleString() : ''"></span>
+      <button @click="page='scan'" class="btn btn-primary" style="font-size:0.75rem;">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+        Run Scan
+      </button>
+    </div>
+  </header>
+
+  <div class="p-6">
+
+    <!-- ══ DASHBOARD ══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'dashboard'" x-transition>
+
+      <!-- KPI strip -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" x-show="results">
+        <template x-for="kpi in [
+          { label:'Passed', value: results ? results.total_pass : 0, color:'text-green-600', bg:'bg-green-50', border:'border-green-200' },
+          { label:'Failed', value: results ? results.total_fail : 0, color:'text-red-600', bg:'bg-red-50', border:'border-red-200' },
+          { label:'Skipped', value: results ? results.total_skip : 0, color:'text-slate-500', bg:'bg-[#f7f8fb]', border:'border-slate-200' },
+          { label:'Waived', value: results ? results.total_waived : 0, color:'text-purple-600', bg:'bg-purple-50', border:'border-purple-200' }
+        ]">
+          <div class="card flex flex-col items-center" :class="[kpi.bg, kpi.border]">
+            <div class="text-3xl font-bold" :class="kpi.color" x-text="kpi.value"></div>
+            <div class="text-xs font-medium text-slate-500 mt-1" x-text="kpi.label + ' Controls'"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- No results state -->
+      <div x-show="!results" class="card" style="text-align:center;padding-top:4rem;padding-bottom:4rem;">
+        <svg class="w-16 h-16 text-slate-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <h2 class="text-lg font-semibold text-slate-700 mb-2">No scan results yet</h2>
+        <p class="text-slate-400 text-sm mb-4">Run a scan against your IaC directory to see your security posture.</p>
+        <button @click="page='scan'" class="btn btn-primary" style="font-size:0.8rem;padding:0.4rem 0.875rem;">Run your first scan</button>
+      </div>
+
+      <!-- Charts row -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6" x-show="results">
+        <!-- Score gauge -->
+        <div class="card flex flex-col items-center justify-center">
+          <div class="text-sm font-semibold text-slate-500 mb-2 uppercase tracking-wide">WAF++ Score</div>
+          <div class="relative w-36 h-36">
+            <canvas id="scoreChart"></canvas>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span class="text-3xl font-bold" :class="results && results.score >= 80 ? 'text-green-600' : results && results.score >= 60 ? 'text-yellow-600' : 'text-red-600'" x-text="results ? results.score : '—'"></span>
+              <span class="text-xs text-slate-400">/100</span>
+            </div>
+          </div>
+          <div class="text-xs text-slate-400 mt-2" x-text="results && results.score >= 80 ? 'Good posture' : results && results.score >= 60 ? 'Needs attention' : 'High risk'"></div>
+        </div>
+
+        <!-- Pillar scores -->
+        <div class="card lg:col-span-2">
+          <div class="text-sm font-semibold text-slate-600 mb-3">Score by Pillar</div>
+          <canvas id="pillarChart" height="180"></canvas>
+        </div>
+      </div>
+
+      <!-- Severity breakdown + top fails -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4" x-show="results">
+        <!-- Severity distribution -->
+        <div class="card">
+          <div class="text-sm font-semibold text-slate-600 mb-3">Failed Controls by Severity</div>
+          <canvas id="severityChart" height="200"></canvas>
+        </div>
+
+        <!-- Top failing controls -->
+        <div class="card overflow-hidden">
+          <div class="text-sm font-semibold text-slate-600 mb-3">Critical & High Failures</div>
+          <div class="space-y-2">
+            <template x-for="r in (results ? results.results.filter(r => r.status === 'FAIL' && ['critical','high'].includes(r.severity)).slice(0,6) : [])">
+              <div class="flex items-start gap-3 p-3 rounded-lg bg-red-50 border border-red-100">
+                <div class="flex-shrink-0 mt-0.5">
+                  <span class="pill" :class="r.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'" x-text="r.severity.toUpperCase()"></span>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-xs font-mono text-slate-500" x-text="r.control_id"></div>
+                  <div class="text-sm font-medium text-slate-800 truncate" x-text="r.control_title"></div>
+                </div>
+              </div>
+            </template>
+            <div x-show="!results || results.results.filter(r=>r.status==='FAIL' && ['critical','high'].includes(r.severity)).length === 0" class="text-center py-6 text-slate-400 text-sm">
+              No critical or high failures — great work!
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ══ CONTROLS LIBRARY ═══════════════════════════════════════════════ -->
+    <section x-show="page === 'controls'" x-transition>
+
+      <!-- Filter bar -->
+      <div class="card mb-4 flex flex-wrap items-center gap-3">
+        <!-- Search -->
+        <div class="relative flex-1 min-w-48">
+          <svg class="absolute left-3 top-2.5 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input x-model="searchQuery" type="text" placeholder="Search controls…" class="input pl-9" />
+        </div>
+        <!-- Pillar filter -->
+        <select x-model="filterPillar" class="input w-auto">
+          <option value="">All pillars</option>
+          <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+            <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+          </template>
+        </select>
+        <!-- Severity filter -->
+        <select x-model="filterSeverity" class="input w-auto">
+          <option value="">All severities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <!-- Waiver filter -->
+        <label class="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+          <input type="checkbox" x-model="filterWaived" class="rounded border-slate-300 text-blue-600" />
+          Waived only
+        </label>
+        <!-- Count -->
+        <span class="text-xs text-slate-400 ml-auto" x-text="filteredControls.length + ' / ' + controls.length + ' controls'"></span>
+      </div>
+
+      <!-- Controls grid -->
+      <div class="space-y-3">
+        <template x-for="ctrl in filteredControls" :key="ctrl.id">
+          <div class="bg-white rounded-xl border shadow-sm overflow-hidden"
+            :class="{
+              'border-l-4 border-l-red-500': ctrl.severity === 'critical',
+              'border-l-4 border-l-orange-500': ctrl.severity === 'high',
+              'border-l-4 border-l-yellow-400': ctrl.severity === 'medium',
+              'border-l-4 border-l-blue-400': ctrl.severity === 'low'
+            }">
+            <div class="p-4">
+              <div class="flex items-start gap-3">
+                <!-- Status indicator -->
+                <div class="flex-shrink-0 mt-0.5">
+                  <span class="pill text-xs"
+                    :class="waivers[ctrl.id] ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'"
+                    x-text="waivers[ctrl.id] ? 'WAIVED' : 'ACTIVE'"></span>
+                </div>
+
+                <!-- Main content -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap mb-1">
+                    <span class="font-mono text-xs font-semibold text-slate-500" x-text="ctrl.id"></span>
+                    <span class="pill text-xs" :class="pillarColor(ctrl.pillar)" x-text="ctrl.pillar"></span>
+                    <span class="pill text-xs" :class="severityColor(ctrl.severity)" x-text="ctrl.severity"></span>
+                  </div>
+                  <h3 class="font-semibold text-slate-800 text-sm" x-text="ctrl.title"></h3>
+                  <p class="text-xs text-slate-500 mt-1 line-clamp-2" x-text="ctrl.description"></p>
+
+                  <!-- Regulatory tags -->
+                  <div class="flex flex-wrap gap-1 mt-2" x-show="ctrl.regulatory_mapping && ctrl.regulatory_mapping.length > 0">
+                    <template x-for="mapping in ctrl.regulatory_mapping.slice(0,4)">
+                      <span class="pill bg-slate-100 text-slate-600" x-text="mapping.framework"></span>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex-shrink-0 flex items-center gap-2">
+                  <button @click="openControl(ctrl)" class="btn-outline text-xs">
+                    Details
+                  </button>
+                  <button @click="toggleWaiver(ctrl)" class="btn text-xs"
+                    :class="waivers[ctrl.id] ? 'btn-danger' : 'border border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100'"
+                    x-text="waivers[ctrl.id] ? 'Remove Waiver' : 'Add Waiver'">
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Waiver reason strip -->
+            <div x-show="waivers[ctrl.id]" class="px-4 py-2 bg-purple-50 border-t border-purple-100 text-xs text-purple-700 flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span x-text="'Waiver: ' + (waivers[ctrl.id] ? waivers[ctrl.id].reason : '')"></span>
+              <span x-show="waivers[ctrl.id] && waivers[ctrl.id].expires" class="ml-1 text-purple-500" x-text="'(expires ' + (waivers[ctrl.id] ? waivers[ctrl.id].expires : '') + ')'"></span>
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty state -->
+        <div x-show="filteredControls.length === 0" class="card" style="text-align:center;padding-top:3rem;padding-bottom:3rem;color:var(--muted);">
+          <svg class="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          No controls match your filters.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ══ FINDINGS ═══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'findings'" x-transition>
+
+      <div x-show="!results" class="card" style="text-align:center;padding-top:4rem;padding-bottom:4rem;">
+        <p class="text-slate-400 mb-4">No scan results yet. Run a scan first.</p>
+        <button @click="page='scan'" class="btn btn-primary" style="font-size:0.8rem;padding:0.4rem 0.875rem;">Run Scan</button>
+      </div>
+
+      <div x-show="results">
+        <!-- Filter -->
+        <div class="card mb-4 flex flex-wrap gap-3 items-center">
+          <select x-model="findingFilter" class="input w-auto">
+            <option value="">All statuses</option>
+            <option value="FAIL">Failed</option>
+            <option value="PASS">Passed</option>
+            <option value="SKIP">Skipped</option>
+            <option value="WAIVED">Waived</option>
+          </select>
+          <select x-model="findingPillar" class="input w-auto">
+            <option value="">All pillars</option>
+            <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+              <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+            </template>
+          </select>
+          <span class="text-xs text-slate-400 ml-auto" x-text="filteredFindings.length + ' results'"></span>
+        </div>
+
+        <!-- Results table -->
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <table class="w-full">
+            <thead>
+              <tr>
+                <th class="table-th">Control</th>
+                <th class="table-th">Pillar</th>
+                <th class="table-th">Severity</th>
+                <th class="table-th">Status</th>
+                <th class="table-th">Checks</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="r in filteredFindings" :key="r.control_id">
+                <tr class="hover:bg-[#f7f8fb] cursor-pointer" @click="openFinding(r)">
+                  <td class="table-td">
+                    <div class="font-mono text-xs text-slate-400" x-text="r.control_id"></div>
+                    <div class="font-medium text-slate-800 text-sm" x-text="r.control_title"></div>
+                  </td>
+                  <td class="table-td">
+                    <span class="pill" :class="pillarColor(r.pillar)" x-text="r.pillar"></span>
+                  </td>
+                  <td class="table-td">
+                    <span class="pill" :class="severityColor(r.severity)" x-text="r.severity"></span>
+                  </td>
+                  <td class="table-td">
+                    <span class="pill" :class="statusColor(r.status)" x-text="r.status"></span>
+                  </td>
+                  <td class="table-td text-slate-500" x-text="r.check_results.length + ' checks'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ══ COMPLIANCE MATRIX ══════════════════════════════════════════════ -->
+    <section x-show="page === 'compliance'" x-transition>
+      <div class="space-y-4">
+        <template x-for="fw in complianceFrameworks" :key="fw.name">
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h3 class="font-bold text-slate-800" x-text="fw.name"></h3>
+                <p class="text-xs text-slate-500" x-text="fw.description"></p>
+              </div>
+              <div class="text-right">
+                <div class="text-2xl font-bold text-slate-800" x-text="fw.controls.length + ' controls'"></div>
+                <div class="text-xs text-slate-500">mapped</div>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="ctrl in fw.controls.slice(0,12)">
+                <div class="px-2.5 py-1.5 bg-[#f7f8fb] rounded-lg border border-slate-200 text-xs">
+                  <div class="font-mono font-semibold text-slate-600" x-text="ctrl.id"></div>
+                  <div class="text-slate-400 truncate max-w-32" x-text="ctrl.title"></div>
+                </div>
+              </template>
+              <div x-show="fw.controls.length > 12" class="px-2.5 py-1.5 bg-[#f7f8fb] rounded-lg border border-slate-200 text-xs text-slate-400 flex items-center" x-text="'+' + (fw.controls.length - 12) + ' more'"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+
+    <!-- ══ WAIVERS ════════════════════════════════════════════════════════ -->
+    <section x-show="page === 'waivers'" x-transition>
+
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-sm text-slate-500">Waivers allow you to intentionally accept risk for specific controls. They are exported as <code class="bg-slate-100 px-1 rounded">.wafpass-skip.yml</code>.</p>
+        <button @click="exportWaivers()" class="btn-outline">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Export .wafpass-skip.yml
+        </button>
+      </div>
+
+      <!-- Waiver list -->
+      <div x-show="Object.keys(waivers).length === 0" class="card" style="text-align:center;padding-top:3rem;padding-bottom:3rem;color:var(--muted);">
+        No waivers configured. Add waivers from the Controls Library.
+      </div>
+
+      <div class="space-y-3">
+        <template x-for="(waiver, controlId) in waivers" :key="controlId">
+          <div class="card border-l-4 border-l-purple-400">
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-mono text-sm font-bold text-purple-700" x-text="controlId"></span>
+                  <span x-show="waiver.expires" class="pill bg-orange-100 text-orange-700 text-xs" x-text="'expires ' + waiver.expires"></span>
+                </div>
+                <p class="text-sm text-slate-700 font-medium" x-text="controlTitle(controlId)"></p>
+                <p class="text-sm text-slate-500 mt-1" x-text="waiver.reason"></p>
+                <p x-show="waiver.owner" class="text-xs text-slate-400 mt-1" x-text="'Owner: ' + waiver.owner"></p>
+              </div>
+              <div class="flex gap-2 flex-shrink-0">
+                <button @click="editWaiver(controlId)" class="btn-outline text-xs">Edit</button>
+                <button @click="removeWaiver(controlId)" class="btn-danger text-xs">Remove</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+
+    <!-- ══ RUN SCAN ═══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'scan'" x-transition>
+      <div class="max-w-xl">
+        <div class="card">
+          <h2 class="font-bold text-slate-800 mb-4">Scan Configuration</h2>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">IaC Directory Path</label>
+              <input x-model="scanPath" type="text" placeholder="/path/to/terraform" class="input" />
+              <p class="text-xs text-slate-400 mt-1">Absolute or relative path to your Terraform (or other IaC) files.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">IaC Framework</label>
+              <select x-model="scanIac" class="input">
+                <option value="terraform">Terraform</option>
+                <option value="cdk">AWS CDK (CloudFormation)</option>
+                <option value="bicep">Azure Bicep</option>
+                <option value="pulumi">Pulumi</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Pillar Filter <span class="text-slate-400 font-normal">(optional)</span></label>
+              <select x-model="scanPillar" class="input">
+                <option value="">All pillars</option>
+                <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+                  <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+                </template>
+              </select>
+            </div>
+          </div>
+
+          <!-- Waiver notice -->
+          <div x-show="Object.keys(waivers).length > 0" class="mt-4 p-3 bg-purple-50 rounded-lg border border-purple-200 text-xs text-purple-700">
+            <span x-text="Object.keys(waivers).length + ' waiver(s) will be applied during this scan.'"></span>
+          </div>
+
+          <div class="mt-5">
+            <button @click="runScan()" :disabled="scanning || !scanPath" class="btn-primary w-full justify-center" :class="scanning || !scanPath ? 'opacity-60 cursor-not-allowed' : ''">
+              <span x-show="!scanning">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+              </span>
+              <span x-show="scanning" class="animate-spin">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              </span>
+              <span x-text="scanning ? 'Scanning…' : 'Start Scan'"></span>
+            </button>
+          </div>
+
+          <div x-show="scanError" class="mt-3 p-3 bg-red-50 rounded-lg border border-red-200 text-sm text-red-700" x-text="scanError"></div>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /p-6 -->
+</main>
+
+
+<!-- ═══ CONTROL DETAIL MODAL ═══════════════════════════════════════════════ -->
+<div x-show="selectedControl" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" @click.self="selectedControl = null">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8" @click.stop>
+    <template x-if="selectedControl">
+      <div>
+        <!-- Modal header -->
+        <div class="flex items-start justify-between p-6 border-b">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-mono text-xs font-bold text-slate-500" x-text="selectedControl.id"></span>
+              <span class="pill text-xs" :class="pillarColor(selectedControl.pillar)" x-text="selectedControl.pillar"></span>
+              <span class="pill text-xs" :class="severityColor(selectedControl.severity)" x-text="selectedControl.severity"></span>
+            </div>
+            <h2 class="text-lg font-bold text-slate-900" x-text="selectedControl.title"></h2>
+          </div>
+          <button @click="selectedControl = null" class="text-slate-400 hover:text-slate-600 p-1">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b px-6">
+          <template x-for="tab in ['overview','regulatory','checks','waiver']">
+            <button @click="modalTab = tab" class="px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors"
+              :class="modalTab === tab ? 'border-[#0094FF] text-[#0094FF]' : 'border-transparent text-slate-500 hover:text-slate-700'">
+              <span x-text="tab.charAt(0).toUpperCase() + tab.slice(1)"></span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Tab content -->
+        <div class="p-6 overflow-y-auto max-h-96">
+          <!-- Overview -->
+          <div x-show="modalTab === 'overview'">
+            <p class="text-sm text-slate-700 leading-relaxed" x-text="selectedControl.description"></p>
+            <div class="mt-4">
+              <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Category</div>
+              <span class="pill bg-slate-100 text-slate-700" x-text="selectedControl.category"></span>
+            </div>
+            <div class="mt-4">
+              <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Automated Checks</div>
+              <div class="text-sm text-slate-700" x-text="selectedControl.checks_count + ' automated check(s)'"></div>
+            </div>
+          </div>
+
+          <!-- Regulatory -->
+          <div x-show="modalTab === 'regulatory'">
+            <div x-show="!selectedControl.regulatory_mapping || selectedControl.regulatory_mapping.length === 0" class="text-slate-400 text-sm">No regulatory mappings defined.</div>
+            <div class="space-y-4">
+              <template x-for="mapping in (selectedControl.regulatory_mapping || [])">
+                <div>
+                  <div class="text-sm font-bold text-slate-800 mb-1" x-text="mapping.framework"></div>
+                  <div class="flex flex-wrap gap-1">
+                    <template x-for="ctrl in (mapping.controls || [])">
+                      <span class="pill bg-blue-50 text-blue-700 text-xs" x-text="ctrl"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Checks -->
+          <div x-show="modalTab === 'checks'">
+            <div class="space-y-3">
+              <template x-for="check in (selectedControl.automated_checks || [])">
+                <div class="p-3 bg-[#f7f8fb] rounded-lg border">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-mono text-xs text-slate-500" x-text="check.id"></span>
+                    <span class="pill text-xs" :class="severityColor(check.severity)" x-text="check.severity"></span>
+                  </div>
+                  <div class="text-sm font-medium text-slate-700" x-text="check.title"></div>
+                </div>
+              </template>
+              <div x-show="!selectedControl.automated_checks || selectedControl.automated_checks.length === 0" class="text-slate-400 text-sm">No automated checks available.</div>
+            </div>
+          </div>
+
+          <!-- Waiver form -->
+          <div x-show="modalTab === 'waiver'">
+            <div x-show="waivers[selectedControl.id]" class="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200 text-sm text-purple-700">
+              This control is currently waived.
+            </div>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Reason <span class="text-red-500">*</span></label>
+                <textarea x-model="waiverForm.reason" rows="3" class="input resize-none" placeholder="Describe why this control is intentionally waived…"></textarea>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Owner</label>
+                  <input x-model="waiverForm.owner" type="text" class="input" placeholder="team@example.com" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Expires</label>
+                  <input x-model="waiverForm.expires" type="date" class="input" />
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button @click="saveWaiver(selectedControl.id)" :disabled="!waiverForm.reason" class="btn-primary flex-1 justify-center" :class="!waiverForm.reason ? 'opacity-60 cursor-not-allowed' : ''">
+                  Save Waiver
+                </button>
+                <button x-show="waivers[selectedControl.id]" @click="removeWaiver(selectedControl.id)" class="btn-danger">
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+
+<!-- ═══ FINDING DETAIL MODAL ══════════════════════════════════════════════ -->
+<div x-show="selectedFinding" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" @click.self="selectedFinding = null">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8" @click.stop>
+    <template x-if="selectedFinding">
+      <div>
+        <div class="flex items-start justify-between p-6 border-b">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-mono text-xs font-bold text-slate-500" x-text="selectedFinding.control_id"></span>
+              <span class="pill text-xs" :class="statusColor(selectedFinding.status)" x-text="selectedFinding.status"></span>
+              <span class="pill text-xs" :class="severityColor(selectedFinding.severity)" x-text="selectedFinding.severity"></span>
+            </div>
+            <h2 class="text-lg font-bold text-slate-900" x-text="selectedFinding.control_title"></h2>
+          </div>
+          <button @click="selectedFinding = null" class="text-slate-400 hover:text-slate-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="p-6 space-y-4 max-h-96 overflow-y-auto">
+          <div>
+            <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Description</div>
+            <p class="text-sm text-slate-700" x-text="selectedFinding.description"></p>
+          </div>
+          <div x-show="selectedFinding.waived_reason">
+            <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Waiver Reason</div>
+            <p class="text-sm text-purple-700 bg-purple-50 p-3 rounded-lg" x-text="selectedFinding.waived_reason"></p>
+          </div>
+          <div x-show="selectedFinding.check_results && selectedFinding.check_results.length > 0">
+            <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Check Results</div>
+            <div class="space-y-2">
+              <template x-for="cr in selectedFinding.check_results">
+                <div class="p-3 rounded-lg border" :class="cr.status === 'FAIL' ? 'bg-red-50 border-red-200' : cr.status === 'PASS' ? 'bg-green-50 border-green-200' : 'bg-[#f7f8fb] border-slate-200'">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-mono text-xs text-slate-500" x-text="cr.check_id"></span>
+                    <span class="pill text-xs" :class="statusColor(cr.status)" x-text="cr.status"></span>
+                  </div>
+                  <div class="text-sm font-medium text-slate-700" x-text="cr.check_title"></div>
+                  <div x-show="cr.resource" class="text-xs text-slate-500 mt-1" x-text="'Resource: ' + cr.resource"></div>
+                  <div x-show="cr.message" class="text-xs text-slate-600 mt-1" x-text="cr.message"></div>
+                  <div x-show="cr.remediation && cr.status === 'FAIL'" class="text-xs text-blue-600 mt-2 bg-blue-50 p-2 rounded" x-text="'Remediation: ' + cr.remediation"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+
+<!-- ═══ WAIVER EDIT MODAL ══════════════════════════════════════════════════ -->
+<div x-show="editingWaiver" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="editingWaiver = null">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" @click.stop>
+    <h2 class="text-lg font-bold text-slate-800 mb-4">Edit Waiver — <span class="font-mono text-blue-600" x-text="editingWaiver"></span></h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Reason <span class="text-red-500">*</span></label>
+        <textarea x-model="editWaiverForm.reason" rows="3" class="input resize-none"></textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Owner</label>
+          <input x-model="editWaiverForm.owner" type="text" class="input" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Expires</label>
+          <input x-model="editWaiverForm.expires" type="date" class="input" />
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button @click="saveEditedWaiver()" class="btn-primary flex-1 justify-center">Save</button>
+        <button @click="editingWaiver = null" class="btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══ NOTIFICATION TOAST ════════════════════════════════════════════════ -->
+<div x-show="notification" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0" class="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium flex items-center gap-2 max-w-xs"
+  :class="notification && notification.type === 'error' ? 'bg-red-600' : 'bg-[#070a12]'">
+  <svg x-show="notification && notification.type !== 'error'" class="w-4 h-4 flex-shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+  <svg x-show="notification && notification.type === 'error'" class="w-4 h-4 flex-shrink-0 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+  <span x-text="notification ? notification.message : ''"></span>
+</div>
+
+
+<!-- ═══ ALPINE.JS APPLICATION ═════════════════════════════════════════════ -->
+<script>
+function wafpass() {
+  return {
+    // ── State ──────────────────────────────────────────────────────────
+    page: 'dashboard',
+    controls: window.__INITIAL_CONTROLS__ || [],
+    waivers: window.__INITIAL_WAIVERS__ || {},
+    results: window.__INITIAL_RESULTS__ || null,
+
+    // Controls filters
+    searchQuery: '',
+    filterPillar: '',
+    filterSeverity: '',
+    filterWaived: false,
+
+    // Findings filters
+    findingFilter: '',
+    findingPillar: '',
+
+    // Modals
+    selectedControl: null,
+    selectedFinding: null,
+    editingWaiver: null,
+    editWaiverForm: { reason: '', owner: '', expires: '' },
+    modalTab: 'overview',
+    waiverForm: { reason: '', owner: '', expires: '' },
+
+    // Scan
+    scanPath: '',
+    scanIac: 'terraform',
+    scanPillar: '',
+    scanning: false,
+    scanError: null,
+
+    // Notifications
+    notification: null,
+    _notifTimer: null,
+
+    // Charts
+    _charts: {},
+
+    // ── Init ───────────────────────────────────────────────────────────
+    init() {
+      this.$watch('results', () => {
+        this.$nextTick(() => this.initCharts());
+      });
+      if (this.results) {
+        this.$nextTick(() => this.initCharts());
+      }
+    },
+
+    // ── Computed ───────────────────────────────────────────────────────
+    get filteredControls() {
+      return this.controls.filter(c => {
+        if (this.filterPillar && c.pillar !== this.filterPillar) return false;
+        if (this.filterSeverity && c.severity !== this.filterSeverity) return false;
+        if (this.filterWaived && !this.waivers[c.id]) return false;
+        if (this.searchQuery) {
+          const q = this.searchQuery.toLowerCase();
+          return c.id.toLowerCase().includes(q) ||
+                 c.title.toLowerCase().includes(q) ||
+                 (c.description || '').toLowerCase().includes(q);
+        }
+        return true;
+      });
+    },
+
+    get filteredFindings() {
+      if (!this.results) return [];
+      return this.results.results.filter(r => {
+        if (this.findingFilter && r.status !== this.findingFilter) return false;
+        if (this.findingPillar && r.pillar !== this.findingPillar) return false;
+        return true;
+      });
+    },
+
+    get complianceFrameworks() {
+      const fwMap = {};
+      const fwDesc = {
+        'GDPR': 'General Data Protection Regulation (EU) 2016/679',
+        'ISO 27001:2022': 'Information Security Management Systems',
+        'BSI C5:2020': 'Cloud Computing Compliance Criteria Catalogue',
+        'EUCS (ENISA)': 'EU Cybersecurity Certification Scheme for Cloud',
+        'CSRD': 'Corporate Sustainability Reporting Directive',
+      };
+      this.controls.forEach(ctrl => {
+        (ctrl.regulatory_mapping || []).forEach(m => {
+          if (!fwMap[m.framework]) {
+            fwMap[m.framework] = { name: m.framework, description: fwDesc[m.framework] || '', controls: [] };
+          }
+          fwMap[m.framework].controls.push({ id: ctrl.id, title: ctrl.title });
+        });
+      });
+      return Object.values(fwMap).sort((a,b) => b.controls.length - a.controls.length);
+    },
+
+    // ── Waivers ────────────────────────────────────────────────────────
+    toggleWaiver(ctrl) {
+      if (this.waivers[ctrl.id]) {
+        this.removeWaiver(ctrl.id);
+      } else {
+        this.selectedControl = ctrl;
+        this.modalTab = 'waiver';
+        this.waiverForm = { reason: '', owner: '', expires: '' };
+      }
+    },
+
+    async saveWaiver(controlId) {
+      if (!this.waiverForm.reason) return;
+      this.waivers = {
+        ...this.waivers,
+        [controlId]: {
+          id: controlId,
+          reason: this.waiverForm.reason,
+          owner: this.waiverForm.owner,
+          expires: this.waiverForm.expires,
+        }
+      };
+      await this._persistWaivers();
+      this.selectedControl = null;
+      this.notify('Waiver saved for ' + controlId);
+    },
+
+    async removeWaiver(controlId) {
+      const w = { ...this.waivers };
+      delete w[controlId];
+      this.waivers = w;
+      await this._persistWaivers();
+      if (this.selectedControl && this.selectedControl.id === controlId) this.selectedControl = null;
+      if (this.editingWaiver === controlId) this.editingWaiver = null;
+      this.notify('Waiver removed for ' + controlId);
+    },
+
+    editWaiver(controlId) {
+      const w = this.waivers[controlId] || {};
+      this.editWaiverForm = { reason: w.reason || '', owner: w.owner || '', expires: w.expires || '' };
+      this.editingWaiver = controlId;
+    },
+
+    async saveEditedWaiver() {
+      if (!this.editingWaiver) return;
+      this.waivers = {
+        ...this.waivers,
+        [this.editingWaiver]: {
+          id: this.editingWaiver,
+          ...this.editWaiverForm,
+        }
+      };
+      await this._persistWaivers();
+      this.editingWaiver = null;
+      this.notify('Waiver updated');
+    },
+
+    async _persistWaivers() {
+      if (window.__MODE__ !== 'internal') return; // demo: only in-memory
+      try {
+        const payload = { waivers: Object.values(this.waivers) };
+        await fetch('/api/waivers', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch(e) {
+        console.warn('Could not persist waivers:', e);
+      }
+    },
+
+    exportWaivers() {
+      if (window.__MODE__ === 'internal') {
+        window.location.href = '/api/waivers/export';
+        return;
+      }
+      // Demo: generate YAML client-side
+      const entries = Object.values(this.waivers);
+      let yaml = 'version: "1"\nwaivers:\n';
+      entries.forEach(w => {
+        yaml += `  - id: ${w.id}\n    reason: "${w.reason}"`;
+        if (w.owner) yaml += `\n    owner: "${w.owner}"`;
+        if (w.expires) yaml += `\n    expires: "${w.expires}"`;
+        yaml += '\n';
+      });
+      const blob = new Blob([yaml], { type: 'text/yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = '.wafpass-skip.yml'; a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    // ── Scan ───────────────────────────────────────────────────────────
+    async runScan() {
+      if (!this.scanPath) return;
+      this.scanning = true;
+      this.scanError = null;
+      try {
+        if (window.__MODE__ === 'internal') {
+          const resp = await fetch('/api/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: this.scanPath, iac: this.scanIac, pillar: this.scanPillar || null }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || 'Scan failed');
+          }
+          this.results = await resp.json();
+          this.page = 'dashboard';
+          this.notify('Scan complete — ' + this.results.total_fail + ' failure(s)');
+        } else {
+          // Demo mode: simulate scan
+          await new Promise(r => setTimeout(r, 1500));
+          this.results = window.__DEMO_RESULTS__;
+          this.page = 'dashboard';
+          this.notify('Demo scan complete');
+        }
+      } catch(e) {
+        this.scanError = e.message;
+      } finally {
+        this.scanning = false;
+      }
+    },
+
+    // ── Modals ─────────────────────────────────────────────────────────
+    openControl(ctrl) {
+      this.selectedControl = ctrl;
+      this.modalTab = 'overview';
+      this.waiverForm = this.waivers[ctrl.id]
+        ? { ...this.waivers[ctrl.id] }
+        : { reason: '', owner: '', expires: '' };
+    },
+
+    openFinding(r) {
+      this.selectedFinding = r;
+    },
+
+    // ── Helpers ────────────────────────────────────────────────────────
+    controlTitle(id) {
+      const ctrl = this.controls.find(c => c.id === id);
+      return ctrl ? ctrl.title : id;
+    },
+
+    pillarColor(pillar) {
+      const map = {
+        security: 'bg-red-100 text-red-700',
+        cost: 'bg-green-100 text-green-700',
+        reliability: 'bg-blue-100 text-blue-700',
+        operations: 'bg-orange-100 text-orange-700',
+        sovereignty: 'bg-purple-100 text-purple-700',
+        sustainable: 'bg-teal-100 text-teal-700',
+        sustainability: 'bg-teal-100 text-teal-700',
+        performance: 'bg-indigo-100 text-indigo-700',
+      };
+      return map[pillar] || 'bg-slate-100 text-slate-600';
+    },
+
+    severityColor(sev) {
+      const map = {
+        critical: 'bg-red-100 text-red-800',
+        high: 'bg-orange-100 text-orange-800',
+        medium: 'bg-yellow-100 text-yellow-800',
+        low: 'bg-blue-100 text-blue-800',
+      };
+      return map[sev] || 'bg-slate-100 text-slate-600';
+    },
+
+    statusColor(status) {
+      const map = {
+        PASS: 'bg-green-100 text-green-800',
+        FAIL: 'bg-red-100 text-red-800',
+        SKIP: 'bg-slate-100 text-slate-600',
+        WAIVED: 'bg-purple-100 text-purple-700',
+        ERROR: 'bg-orange-100 text-orange-700',
+      };
+      return map[status] || 'bg-slate-100 text-slate-600';
+    },
+
+    notify(message, type = 'success') {
+      if (this._notifTimer) clearTimeout(this._notifTimer);
+      this.notification = { message, type };
+      this._notifTimer = setTimeout(() => { this.notification = null; }, 3000);
+    },
+
+    // ── Charts ─────────────────────────────────────────────────────────
+    initCharts() {
+      if (!this.results) return;
+
+      const destroy = id => { if (this._charts[id]) { this._charts[id].destroy(); delete this._charts[id]; } };
+
+      // Score donut
+      const scoreEl = document.getElementById('scoreChart');
+      if (scoreEl) {
+        destroy('score');
+        const s = this.results.score;
+        this._charts['score'] = new Chart(scoreEl, {
+          type: 'doughnut',
+          data: {
+            datasets: [{
+              data: [s, 100 - s],
+              backgroundColor: [s >= 80 ? '#16a34a' : s >= 60 ? '#ca8a04' : '#dc2626', '#e2e8f0'],
+              borderWidth: 0,
+            }]
+          },
+          options: { cutout: '78%', plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+        });
+      }
+
+      // Pillar bar chart
+      const pillarEl = document.getElementById('pillarChart');
+      if (pillarEl && this.results.pillar_scores) {
+        destroy('pillar');
+        const ps = this.results.pillar_scores;
+        const labels = Object.keys(ps).map(p => p.charAt(0).toUpperCase() + p.slice(1));
+        const values = Object.values(ps);
+        const colors = values.map(v => v >= 80 ? '#16a34a' : v >= 60 ? '#ca8a04' : '#dc2626');
+        this._charts['pillar'] = new Chart(pillarEl, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{ data: values, backgroundColor: colors, borderRadius: 4 }]
+          },
+          options: {
+            indexAxis: 'y',
+            scales: {
+              x: { min: 0, max: 100, grid: { color: '#f1f5f9' }, ticks: { callback: v => v + '%', font: { size: 11 } } },
+              y: { grid: { display: false }, ticks: { font: { size: 11 } } }
+            },
+            plugins: { legend: { display: false } },
+          }
+        });
+      }
+
+      // Severity distribution of FAIL
+      const sevEl = document.getElementById('severityChart');
+      if (sevEl && this.results.results) {
+        destroy('severity');
+        const fails = this.results.results.filter(r => r.status === 'FAIL');
+        const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+        fails.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++; });
+        this._charts['severity'] = new Chart(sevEl, {
+          type: 'doughnut',
+          data: {
+            labels: ['Critical', 'High', 'Medium', 'Low'],
+            datasets: [{
+              data: [counts.critical, counts.high, counts.medium, counts.low],
+              backgroundColor: ['#dc2626', '#ea580c', '#ca8a04', '#3b82f6'],
+              borderWidth: 2,
+              borderColor: '#fff',
+            }]
+          },
+          options: {
+            plugins: {
+              legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12 } }
+            }
+          }
+        });
+      }
+    },
+  };
+}
+</script>
+
+</body>
+</html>
