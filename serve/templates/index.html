@@ -7,6 +7,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
   <script>
     // Server-injected initial data
     window.__INITIAL_CONTROLS__ = __CONTROLS_JSON__;
@@ -171,6 +173,10 @@
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Run Scan
     </button>
+    <button @click="navTo('regions')" :class="page==='regions' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Deployed Regions
+    </button>
   </nav>
 
   <!-- Footer -->
@@ -195,7 +201,8 @@
         findings: 'Scan Findings',
         compliance: 'Compliance Matrix',
         waivers: 'Waivers Manager',
-        scan: 'Run Scan'
+        scan: 'Run Scan',
+        regions: 'Deployed Regions'
       }[page]"></h1>
       <p class="text-xs text-slate-500" x-text="{
         dashboard: 'Risk posture overview across all WAF++ pillars',
@@ -297,6 +304,8 @@
           </div>
         </div>
       </div>
+
+
     </section>
 
 
@@ -800,7 +809,107 @@
 
 <!-- ═══ ALPINE.JS APPLICATION ═════════════════════════════════════════════ -->
 <script>
-function wafpass() {
+
+    // ── World-map region coordinates ──────────────────────────────────────
+    const _REGION_COORDS = {
+      // AWS
+      "us-east-1":[37.77,-77.42],"us-east-2":[40.42,-82.88],"us-west-1":[37.35,-121.96],
+      "us-west-2":[45.52,-122.68],"af-south-1":[-33.87,18.43],"ap-east-1":[22.32,114.17],
+      "ap-south-1":[19.08,72.88],"ap-south-2":[17.38,78.47],"ap-northeast-1":[35.68,139.65],
+      "ap-northeast-2":[37.57,126.98],"ap-northeast-3":[34.69,135.50],"ap-southeast-1":[1.35,103.82],
+      "ap-southeast-2":[-33.87,151.21],"ap-southeast-3":[-6.21,106.85],"ap-southeast-4":[-37.81,144.96],
+      "ca-central-1":[43.65,-79.38],"ca-west-1":[51.05,-114.07],"eu-central-1":[50.11,8.68],
+      "eu-central-2":[47.38,8.54],"eu-west-1":[53.33,-6.25],"eu-west-2":[51.51,-0.13],
+      "eu-west-3":[48.86,2.35],"eu-north-1":[59.33,18.07],"eu-south-1":[45.46,9.19],
+      "eu-south-2":[40.42,-3.70],"me-south-1":[26.07,50.55],"me-central-1":[24.47,54.37],
+      "il-central-1":[32.09,34.78],"sa-east-1":[-23.55,-46.63],
+      // Azure
+      "eastus":[37.77,-77.42],"eastus2":[36.65,-78.37],"westus":[37.78,-122.40],
+      "westus2":[47.61,-122.33],"westus3":[33.45,-112.07],"centralus":[41.88,-87.63],
+      "northcentralus":[41.88,-87.63],"southcentralus":[29.76,-95.37],"westcentralus":[40.90,-110.26],
+      "canadacentral":[43.65,-79.38],"canadaeast":[46.82,-71.21],"brazilsouth":[-23.55,-46.63],
+      "northeurope":[53.33,-6.25],"westeurope":[52.37,4.90],"uksouth":[51.51,-0.13],
+      "ukwest":[51.48,-3.18],"francecentral":[48.86,2.35],"francesouth":[43.30,5.38],
+      "germanywestcentral":[50.11,8.68],"germanynorth":[53.07,8.80],"norwayeast":[59.91,10.75],
+      "norwaywest":[58.97,5.73],"switzerlandnorth":[47.38,8.54],"switzerlandwest":[46.20,6.14],
+      "eastasia":[22.32,114.17],"southeastasia":[1.35,103.82],"australiaeast":[-33.87,151.21],
+      "australiasoutheast":[-37.81,144.96],"japaneast":[35.68,139.65],"japanwest":[34.69,135.50],
+      "koreacentral":[37.57,126.98],"koreasouth":[35.18,129.08],"centralindia":[18.52,73.86],
+      "southindia":[12.98,80.25],"westindia":[19.08,72.88],"uaenorth":[25.21,55.27],
+      "uaecentral":[24.47,54.37],"southafricanorth":[-25.73,28.22],"southafricawest":[-33.93,18.42],
+      "qatarcentral":[25.28,51.56],"polandcentral":[52.23,21.01],"swedencentral":[60.67,17.14],
+      "italynorth":[45.47,9.19],"israelcentral":[32.09,34.78],
+      // GCP
+      "us-central1":[41.26,-95.86],"us-east1":[33.20,-80.00],"us-east4":[39.03,-77.47],
+      "us-east5":[40.00,-83.00],"us-south1":[32.78,-96.80],"us-west1":[45.59,-122.06],
+      "us-west2":[34.05,-118.24],"us-west3":[40.77,-111.89],"us-west4":[36.17,-115.14],
+      "northamerica-northeast1":[45.51,-73.55],"northamerica-northeast2":[43.65,-79.38],
+      "southamerica-east1":[-23.55,-46.63],"southamerica-west1":[-33.46,-70.65],
+      "europe-west1":[50.45,3.81],"europe-west2":[51.51,-0.13],"europe-west3":[50.11,8.68],
+      "europe-west4":[52.37,4.90],"europe-west6":[47.38,8.54],"europe-west8":[45.46,9.19],
+      "europe-west9":[48.86,2.35],"europe-west10":[52.52,13.40],"europe-west12":[45.07,7.69],
+      "europe-north1":[60.57,27.19],"europe-central2":[52.23,21.01],"europe-southwest1":[38.72,-9.14],
+      "asia-east1":[24.05,120.52],"asia-east2":[22.32,114.17],"asia-northeast1":[35.68,139.65],
+      "asia-northeast2":[34.69,135.50],"asia-northeast3":[37.57,126.98],"asia-south1":[19.08,72.88],
+      "asia-south2":[28.61,77.21],"asia-southeast1":[1.35,103.82],"asia-southeast2":[-6.21,106.85],
+      "australia-southeast1":[-33.87,151.21],"australia-southeast2":[-37.81,144.96],
+      "me-west1":[32.09,34.78],"me-central1":[24.47,54.37],"me-central2":[25.28,51.56],
+      "africa-south1":[-33.87,18.43],
+      // Alibaba
+      "cn-hangzhou":[30.25,120.16],"cn-shanghai":[31.23,121.47],"cn-beijing":[39.91,116.39],
+      "cn-shenzhen":[22.54,114.06],"cn-hongkong":[22.32,114.17],"ap-southeast-1-ali":[1.35,103.82],
+      // OCI
+      "us-phoenix-1":[33.45,-112.07],"us-ashburn-1":[39.03,-77.47],"eu-frankfurt-1":[50.11,8.68],
+      "uk-london-1":[51.51,-0.13],"ap-tokyo-1":[35.68,139.65],"ap-sydney-1":[-33.87,151.21],
+      "ap-mumbai-1":[19.08,72.88],"sa-saopaulo-1":[-23.55,-46.63],"ca-toronto-1":[43.65,-79.38],
+    };
+
+    const _REGION_LABELS = {
+      "us-east-1":"N. Virginia, USA","us-east-2":"Ohio, USA","us-west-1":"N. California, USA",
+      "us-west-2":"Oregon, USA","af-south-1":"Cape Town, South Africa","ap-east-1":"Hong Kong",
+      "ap-south-1":"Mumbai, India","ap-south-2":"Hyderabad, India","ap-northeast-1":"Tokyo, Japan",
+      "ap-northeast-2":"Seoul, South Korea","ap-northeast-3":"Osaka, Japan","ap-southeast-1":"Singapore",
+      "ap-southeast-2":"Sydney, Australia","ap-southeast-3":"Jakarta, Indonesia","ap-southeast-4":"Melbourne, Australia",
+      "ca-central-1":"Montreal, Canada","ca-west-1":"Calgary, Canada","eu-central-1":"Frankfurt, Germany",
+      "eu-central-2":"Zurich, Switzerland","eu-west-1":"Dublin, Ireland","eu-west-2":"London, UK",
+      "eu-west-3":"Paris, France","eu-north-1":"Stockholm, Sweden","eu-south-1":"Milan, Italy",
+      "eu-south-2":"Madrid, Spain","me-south-1":"Bahrain","me-central-1":"UAE","il-central-1":"Tel Aviv, Israel",
+      "sa-east-1":"São Paulo, Brazil",
+      "eastus":"Virginia, USA","eastus2":"Virginia, USA","westus":"California, USA","westus2":"Washington, USA",
+      "westus3":"Arizona, USA","centralus":"Iowa, USA","northcentralus":"Illinois, USA",
+      "southcentralus":"Texas, USA","westcentralus":"Wyoming, USA","canadacentral":"Toronto, Canada",
+      "canadaeast":"Quebec, Canada","brazilsouth":"São Paulo, Brazil","northeurope":"Dublin, Ireland",
+      "westeurope":"Amsterdam, Netherlands","uksouth":"London, UK","ukwest":"Cardiff, UK",
+      "francecentral":"Paris, France","francesouth":"Marseille, France","germanywestcentral":"Frankfurt, Germany",
+      "germanynorth":"Berlin, Germany","norwayeast":"Oslo, Norway","norwaywest":"Stavanger, Norway",
+      "switzerlandnorth":"Zurich, Switzerland","switzerlandwest":"Geneva, Switzerland",
+      "eastasia":"Hong Kong","southeastasia":"Singapore","australiaeast":"Sydney, Australia",
+      "australiasoutheast":"Melbourne, Australia","japaneast":"Tokyo, Japan","japanwest":"Osaka, Japan",
+      "koreacentral":"Seoul, South Korea","koreasouth":"Busan, South Korea","centralindia":"Pune, India",
+      "southindia":"Chennai, India","westindia":"Mumbai, India","uaenorth":"Dubai, UAE",
+      "uaecentral":"Abu Dhabi, UAE","southafricanorth":"Johannesburg, South Africa",
+      "southafricawest":"Cape Town, South Africa","qatarcentral":"Doha, Qatar",
+      "polandcentral":"Warsaw, Poland","swedencentral":"Gävle, Sweden","italynorth":"Milan, Italy",
+      "israelcentral":"Tel Aviv, Israel",
+      "us-central1":"Iowa, USA","us-east1":"South Carolina, USA","us-east4":"N. Virginia, USA",
+      "us-west1":"Oregon, USA","europe-west1":"Belgium","europe-west2":"London, UK",
+      "europe-west3":"Frankfurt, Germany","europe-west4":"Netherlands","europe-west6":"Zurich, Switzerland",
+      "asia-east1":"Taiwan","asia-east2":"Hong Kong","asia-northeast1":"Tokyo, Japan",
+      "asia-northeast2":"Osaka, Japan","asia-northeast3":"Seoul, South Korea","asia-south1":"Mumbai, India",
+      "asia-southeast1":"Singapore","asia-southeast2":"Jakarta, Indonesia",
+      "australia-southeast1":"Sydney, Australia","me-west1":"Tel Aviv, Israel",
+      "africa-south1":"Cape Town, South Africa",
+    };
+
+    window._REGION_COORDS = _REGION_COORDS;
+    window._PROVIDER_COLORS = _PROVIDER_COLORS;
+    window._REGION_LABELS = _REGION_LABELS;
+    const _PROVIDER_COLORS = {
+      aws:'#f97316', azure:'#2b7fff', gcp:'#22c55e',
+      alicloud:'#ff6a00', yandex:'#fcdb03', oci:'#c74634'
+    };
+
+    function wafpass() {
   return {
     // ── State ──────────────────────────────────────────────────────────
     page: 'dashboard',
@@ -1040,7 +1149,7 @@ function wafpass() {
       return ctrl ? ctrl.title : id;
     },
 
-    navTo(p) { this.page = p; this.sidebarOpen = false; },
+    navTo(p) { this.page = p; this.sidebarOpen = false; if (p === 'regions') this.$nextTick(() => this.renderWorldMap()); },
 
     pillarColor(pillar) {
       const map = {
@@ -1084,6 +1193,78 @@ function wafpass() {
     },
 
     // ── Charts ─────────────────────────────────────────────────────────
+
+    async renderWorldMap() {
+      const el = document.getElementById('worldmap');
+      const legendEl = document.getElementById('worldmap-legend');
+      if (!el || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
+      const regions = (this.results && this.results.detected_regions) || [];
+      if (!regions.length) return;
+
+      // Resolve coordinates, skip unknowns
+      const pts = regions.map(([r,p]) => ({region:r, provider:p, coords:_REGION_COORDS[r]})).filter(d=>d.coords);
+      if (!pts.length) return;
+
+      let world;
+      try { world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'); }
+      catch(e) { el.innerHTML='<div style="color:#64748b;padding:1rem;font-size:0.75rem;">Map unavailable</div>'; return; }
+
+      el.innerHTML = '';
+      const W = el.clientWidth || 640, H = el.clientHeight || 220;
+      const svg = d3.select(el).append('svg').attr('width',W).attr('height',H);
+
+      // Ocean background
+      svg.append('rect').attr('width',W).attr('height',H).attr('fill','#0a162e');
+
+      const proj = d3.geoNaturalEarth1().scale(W/6.4).translate([W/2, H/2]);
+      const path = d3.geoPath().projection(proj);
+
+      // Graticule
+      svg.append('path').datum(d3.geoGraticule()()).attr('d',path)
+        .attr('fill','none').attr('stroke','#102037').attr('stroke-width','0.3');
+
+      // Land
+      svg.append('g').selectAll('path')
+        .data(topojson.feature(world, world.objects.countries).features)
+        .join('path').attr('d',path).attr('fill','#26355f').attr('stroke','#3a5c84').attr('stroke-width','0.4');
+
+      // Glow filters
+      const defs = svg.append('defs');
+      Object.entries(_PROVIDER_COLORS).forEach(([p,c]) => {
+        const f = defs.append('filter').attr('id','glow-'+p).attr('x','-80%').attr('y','-80%').attr('width','260%').attr('height','260%');
+        f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation','4').attr('result','blur');
+        const m = f.append('feMerge');
+        m.append('feMergeNode').attr('in','blur');
+        m.append('feMergeNode').attr('in','SourceGraphic');
+      });
+
+      // Markers
+      pts.forEach(({provider, coords}) => {
+        const [lat,lng] = coords;
+        const xy = proj([lng,lat]);
+        if (!xy) return;
+        const [x,y] = xy;
+        const c = _PROVIDER_COLORS[provider] || '#fff';
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',14)
+          .attr('fill',c).attr('opacity',0.18).attr('filter','url(#glow-'+provider+')');
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',5)
+          .attr('fill','#fff').attr('opacity',0.85);
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',4).attr('fill',c);
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',1.5).attr('fill','#fff');
+      });
+
+      // Legend
+      if (legendEl) {
+        const provs = [...new Set(pts.map(d=>d.provider))];
+        legendEl.innerHTML = provs.map(p =>
+          `<span style="display:inline-flex;align-items:center;gap:5px;font-size:0.7rem;color:#64748b;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${_PROVIDER_COLORS[p]||'#888'};display:inline-block;"></span>
+            ${p.toUpperCase()}
+          </span>`
+        ).join('');
+      }
+    },
+
     initCharts() {
       if (!this.results) return;
 
