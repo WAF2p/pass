@@ -186,7 +186,7 @@
 </aside>
 
 <!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
-<main class="ml-64 min-h-screen waf-main-content">
+<main class="ml-64 waf-main-content">
 
   <!-- Top header -->
   <header class="waf-header sticky top-0 z-20 px-6 py-3 flex items-center justify-between">
@@ -271,7 +271,31 @@
         <!-- Pillar scores -->
         <div class="card lg:col-span-2">
           <div class="text-sm font-semibold text-slate-600 mb-3">Score by Pillar</div>
-          <canvas id="pillarChart" height="180"></canvas>
+          <div style="height:200px;position:relative;"><canvas id="pillarChart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Cloud Footprint -->
+      <div class="card mb-4" x-show="results && results.detected_regions && results.detected_regions.length">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold text-slate-600 flex items-center gap-2">
+            <svg class="w-4 h-4 text-[#0094FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 004 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg>
+            Cloud Footprint
+          </div>
+          <button @click="navTo('regions')" class="text-xs text-[#0094FF] hover:underline font-medium">View full map →</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-4">
+          <div class="flex flex-col items-center px-4 py-2 rounded-xl" style="background:rgba(0,148,255,.07);border:1px solid rgba(0,148,255,.18);">
+            <span class="text-2xl font-bold text-[#0094FF]" x-text="(results.detected_regions || []).length"></span>
+            <span class="text-xs text-slate-500 mt-0.5">Regions</span>
+          </div>
+          <template x-for="[prov, cnt] in Object.entries((results.detected_regions||[]).reduce((acc,[r,p])=>{acc[p]=(acc[p]||0)+1;return acc},{}))" :key="prov">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
+              <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="'background:'+({'aws':'#f97316','azure':'#2b7fff','gcp':'#22c55e','oci':'#c74634','alicloud':'#ff6a00','yandex':'#fcdb03'}[prov]||'#888')"></span>
+              <span class="text-xs font-semibold text-slate-700 uppercase" x-text="prov"></span>
+              <span class="text-xs text-slate-400 font-medium" x-text="cnt + ' region' + (cnt>1?'s':'')"></span>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -280,7 +304,7 @@
         <!-- Severity distribution -->
         <div class="card">
           <div class="text-sm font-semibold text-slate-600 mb-3">Failed Controls by Severity</div>
-          <canvas id="severityChart" height="200"></canvas>
+          <div style="height:220px;position:relative;"><canvas id="severityChart"></canvas></div>
         </div>
 
         <!-- Top failing controls -->
@@ -545,6 +569,28 @@
       </div>
     </section>
 
+
+    <!-- ══ DEPLOYED REGIONS ════════════════════════════════════════════════ -->
+    <section x-show="page === 'regions'" x-transition>
+      <h2 class="text-xl font-bold text-slate-800 mb-4">Deployed Regions</h2>
+      <div x-show="results && results.detected_regions && results.detected_regions.length">
+        <div class="card mb-4">
+          <div id="worldmap" style="width:100%;height:clamp(320px,45vw,540px);border-radius:12px;overflow:hidden;background:#0a162e;"></div>
+          <div id="worldmap-legend" class="flex flex-wrap gap-3 mt-3 px-1"></div>
+        </div>
+        <div class="card">
+          <h3 class="font-semibold text-slate-700 mb-3">Region List</h3>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="[r,p] in (results.detected_regions || [])" :key="r">
+              <span class="pill text-xs font-mono" x-text="r + ' (' + p + ')'"></span>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div x-show="!results || !results.detected_regions || !results.detected_regions.length" class="card text-slate-500 text-sm">
+        No deployed regions detected. Run a scan first to see cloud region data.
+      </div>
+    </section>
 
     <!-- ══ RUN SCAN ═══════════════════════════════════════════════════════ -->
     <section x-show="page === 'scan'" x-transition>
@@ -1216,7 +1262,7 @@
       // Ocean background
       svg.append('rect').attr('width',W).attr('height',H).attr('fill','#0a162e');
 
-      const proj = d3.geoNaturalEarth1().scale(W/6.4).translate([W/2, H/2]);
+      const proj = d3.geoNaturalEarth1().fitSize([W, H], {type:'Sphere'});
       const path = d3.geoPath().projection(proj);
 
       // Graticule
@@ -1303,6 +1349,7 @@
             datasets: [{ data: values, backgroundColor: colors, borderRadius: 4 }]
           },
           options: {
+            maintainAspectRatio: false,
             indexAxis: 'y',
             scales: {
               x: { min: 0, max: 100, grid: { color: '#f1f5f9' }, ticks: { callback: v => v + '%', font: { size: 11 } } },
@@ -1332,6 +1379,7 @@
             }]
           },
           options: {
+            maintainAspectRatio: false,
             plugins: {
               legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12 } }
             }
