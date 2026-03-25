@@ -13,7 +13,9 @@ Requires:
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,9 @@ CONTROLS_DIR = BASE_DIR.parent / "controls"
 TEMPLATES_DIR = BASE_DIR / "templates"
 WAIVERS_FILE = BASE_DIR / "waivers.yml"
 LAST_RESULTS_FILE = BASE_DIR / "last_results.json"
+
+# ── In-memory cache for the last Report object (needed for PDF export) ────────
+_last_report: Any = None
 
 # ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -78,9 +83,18 @@ def _controls_as_dicts() -> list[dict]:
             "severity": c.severity,
             "category": c.category,
             "description": c.description,
+            "rationale": c.rationale,
+            "threat": c.threat,
             "checks_count": len(c.checks),
             "automated_checks": [
-                {"id": ch.id, "title": ch.title, "severity": ch.severity}
+                {
+                    "id": ch.id,
+                    "title": ch.title,
+                    "severity": ch.severity,
+                    "remediation": ch.remediation,
+                    "example": ch.example,
+                    "resource_types": ch.scope.resource_types,
+                }
                 for ch in c.checks
             ],
             "regulatory_mapping": c.regulatory_mapping,
@@ -162,6 +176,7 @@ def _report_to_dict(report: Any) -> dict:
                     "resource": r.resource,
                     "message": r.message,
                     "remediation": r.remediation,
+                    "example": r.example,
                 }
                 for r in cr.results
             ],
@@ -315,7 +330,9 @@ async def api_run_scan(req: ScanRequest):
         )
         data = _report_to_dict(report)
 
-        # Persist for next page load
+        # Cache report object for PDF export and persist JSON for next page load
+        global _last_report
+        _last_report = report
         with LAST_RESULTS_FILE.open("w") as fh:
             json.dump(data, fh, indent=2)
 
@@ -333,6 +350,35 @@ async def api_get_results():
         return None
     with LAST_RESULTS_FILE.open() as fh:
         return json.load(fh)
+
+
+@app.get("/api/export/pdf")
+async def api_export_pdf():
+    """Export the last scan results as a PDF report."""
+    if _last_report is None:
+        raise HTTPException(status_code=400, detail="No scan results available. Run a scan first.")
+    try:
+        from wafpass.pdf_reporter import generate_pdf
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="PDF export requires reportlab. Install with: pip install wafpass[pdf]",
+        )
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        generate_pdf(_last_report, tmp_path)
+        pdf_bytes = tmp_path.read_bytes()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="wafpass-report.pdf"'},
+    )
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

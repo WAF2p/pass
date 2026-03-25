@@ -86,6 +86,7 @@ def _parse_check(raw: dict) -> Check | None:
         assertions=[_parse_assertion(a) for a in assertions_raw],
         on_fail=raw.get("on_fail", "violation"),
         remediation=str(raw.get("remediation", "")).strip(),
+        example=raw.get("example"),
     )
 
 
@@ -122,6 +123,8 @@ def _parse_control(raw: dict) -> Control | None:
         description=str(raw.get("description", "")).strip(),
         checks=checks,
         regulatory_mapping=regulatory_mapping,
+        rationale=str(raw.get("rationale", "")).strip(),
+        threat=[str(t) for t in raw.get("threat", [])],
     )
 
 

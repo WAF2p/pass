@@ -43,6 +43,7 @@ class Check:
     assertions: list[Assertion]
     on_fail: str
     remediation: str
+    example: dict | None = None
 
 
 @dataclass
@@ -58,6 +59,8 @@ class Control:
     checks: list[Check]
     regulatory_mapping: list[dict] = field(default_factory=list)
     # Each entry: {"framework": str, "controls": list[str]}
+    rationale: str = ""
+    threat: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -72,6 +75,7 @@ class CheckResult:
     resource: str        # e.g. "aws_s3_bucket.example"
     message: str
     remediation: str
+    example: dict | None = None
 
 
 @dataclass

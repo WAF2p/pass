@@ -392,6 +392,7 @@ def _run_check(
                 resource="(none)",
                 message="No matching resources found in Terraform configuration.",
                 remediation=check.remediation,
+                example=check.example,
             )
         )
         return results
@@ -447,6 +448,7 @@ def _run_check(
                 resource=block.address,
                 message=message,
                 remediation=check.remediation,
+                example=check.example,
             )
         )
 

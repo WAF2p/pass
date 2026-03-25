@@ -216,6 +216,10 @@
     </div>
     <div class="flex items-center gap-3">
       <span x-show="results" class="text-xs text-slate-400" x-text="results ? 'Last scan: ' + new Date(results.timestamp).toLocaleString() : ''"></span>
+      <a x-show="results" href="/api/export/pdf" target="_blank" class="btn btn-outline flex items-center gap-1.5" style="font-size:0.75rem;">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Export PDF
+      </a>
       <button @click="page='scan'" class="btn btn-primary" style="font-size:0.75rem;">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
         Run Scan
@@ -312,20 +316,119 @@
           <div class="text-sm font-semibold text-slate-600 mb-3">Critical & High Failures</div>
           <div class="space-y-2">
             <template x-for="r in (results ? results.results.filter(r => r.status === 'FAIL' && ['critical','high'].includes(r.severity)).slice(0,6) : [])">
-              <div class="flex items-start gap-3 p-3 rounded-lg bg-red-50 border border-red-100">
+              <div class="flex items-start gap-3 p-3 rounded-lg bg-red-50 border border-red-100 cursor-pointer hover:bg-red-100 transition-colors" @click="openControl(controls.find(c=>c.id===r.control_id) || r)">
                 <div class="flex-shrink-0 mt-0.5">
                   <span class="pill" :class="r.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'" x-text="r.severity.toUpperCase()"></span>
                 </div>
-                <div class="min-w-0">
+                <div class="min-w-0 flex-1">
                   <div class="text-xs font-mono text-slate-500" x-text="r.control_id"></div>
                   <div class="text-sm font-medium text-slate-800 truncate" x-text="r.control_title"></div>
+                  <div class="text-xs text-slate-400 mt-0.5" x-text="(r.check_results||[]).filter(c=>c.status==='FAIL').length + ' check(s) failing'"></div>
                 </div>
+                <svg class="w-4 h-4 text-slate-300 flex-shrink-0 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
               </div>
             </template>
             <div x-show="!results || results.results.filter(r=>r.status==='FAIL' && ['critical','high'].includes(r.severity)).length === 0" class="text-center py-6 text-slate-400 text-sm">
               No critical or high failures — great work!
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Check-level KPIs -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4" x-show="results && checkStats">
+        <template x-for="stat in checkStats ? [
+          { label:'Checks Run', value: checkStats.total, sub: 'individual automated checks', icon:'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', color:'text-slate-700', ic:'text-slate-400' },
+          { label:'Check Pass Rate', value: checkStats.passRate + '%', sub: checkStats.pass + ' of ' + checkStats.total + ' passed', icon:'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', color: checkStats.passRate >= 80 ? 'text-green-600' : checkStats.passRate >= 60 ? 'text-yellow-600' : 'text-red-600', ic: checkStats.passRate >= 80 ? 'text-green-400' : checkStats.passRate >= 60 ? 'text-yellow-400' : 'text-red-400' },
+          { label:'Resources Scanned', value: checkStats.resources, sub: 'unique Terraform resources', icon:'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10', color:'text-[#0094FF]', ic:'text-[#0094FF]' },
+          { label:'Resources Failing', value: checkStats.failResources, sub: 'resources with ≥1 failure', icon:'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', color: checkStats.failResources > 0 ? 'text-red-600' : 'text-green-600', ic: checkStats.failResources > 0 ? 'text-red-400' : 'text-green-400' }
+        ] : []" :key="stat.label">
+          <div class="card border border-slate-200 flex items-start gap-3">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5" style="background:#f7f8fb;">
+              <svg class="w-4 h-4" :class="stat.ic" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="stat.icon"/></svg>
+            </div>
+            <div>
+              <div class="text-2xl font-bold leading-tight" :class="stat.color" x-text="stat.value"></div>
+              <div class="text-xs font-semibold text-slate-600 mt-0.5" x-text="stat.label"></div>
+              <div class="text-xs text-slate-400" x-text="stat.sub"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Category breakdown + Regulatory readiness -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4" x-show="results">
+        <!-- Category breakdown -->
+        <div class="card">
+          <div class="text-sm font-semibold text-slate-600 mb-4">Pass Rate by Category</div>
+          <div class="space-y-3" x-show="categoryBreakdown.length > 0">
+            <template x-for="item in categoryBreakdown" :key="item.cat">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-medium text-slate-700 capitalize" x-text="item.cat.replace(/_/g,' ')"></span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400" x-text="item.pass + '/' + item.total"></span>
+                    <span class="text-xs font-bold w-9 text-right" :class="item.pct >= 80 ? 'text-green-600' : item.pct >= 60 ? 'text-yellow-600' : 'text-red-600'" x-text="item.pct + '%'"></span>
+                  </div>
+                </div>
+                <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500" :class="item.pct >= 80 ? 'bg-green-500' : item.pct >= 60 ? 'bg-yellow-400' : 'bg-red-500'" :style="'width:' + item.pct + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div x-show="categoryBreakdown.length === 0" class="text-slate-400 text-sm text-center py-4">Run a scan to see category breakdown.</div>
+        </div>
+
+        <!-- Regulatory readiness -->
+        <div class="card">
+          <div class="text-sm font-semibold text-slate-600 mb-4">Regulatory Readiness</div>
+          <div class="space-y-3" x-show="regulatoryReadiness.length > 0">
+            <template x-for="fw in regulatoryReadiness" :key="fw.framework">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-semibold text-slate-700" x-text="fw.framework"></span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400" x-text="fw.pass + '/' + fw.total + ' controls'"></span>
+                    <span class="pill text-xs font-bold" :class="fw.pct >= 80 ? 'bg-green-100 text-green-700' : fw.pct >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'" x-text="fw.pct + '%'"></span>
+                  </div>
+                </div>
+                <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500" :class="fw.pct >= 80 ? 'bg-green-500' : fw.pct >= 60 ? 'bg-yellow-400' : 'bg-red-500'" :style="'width:' + fw.pct + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div x-show="regulatoryReadiness.length === 0" class="text-slate-400 text-sm text-center py-4">No regulatory mappings found in scan results.</div>
+        </div>
+      </div>
+
+      <!-- Quick Wins -->
+      <div class="card mt-4" x-show="results && quickWins.length > 0">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(34,197,94,.12);">
+            <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <div>
+            <div class="text-sm font-semibold text-slate-800">Quick Wins</div>
+            <div class="text-xs text-slate-400">Medium &amp; low severity failures — lower effort to remediate</div>
+          </div>
+          <span class="ml-auto text-xs text-slate-400" x-text="quickWins.length + ' control(s)'"></span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <template x-for="r in quickWins" :key="r.control_id">
+            <div class="p-3 rounded-xl border border-slate-200 hover:border-[#0094FF] hover:shadow-sm cursor-pointer transition-all" @click="openControl(controls.find(c=>c.id===r.control_id) || r)">
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="font-mono text-xs text-slate-400" x-text="r.control_id"></span>
+                <span class="pill text-xs" :class="severityColor(r.severity)" x-text="r.severity"></span>
+              </div>
+              <div class="text-sm font-medium text-slate-700 leading-snug mb-2" x-text="r.control_title"></div>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="pill text-xs" :class="pillarColor(r.pillar)" x-text="r.pillar"></span>
+                <span class="text-xs text-slate-400" x-text="(r.check_results||[]).filter(c=>c.status==='FAIL').length + ' check(s) failing'"></span>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -672,16 +775,16 @@
 
         <!-- Tabs -->
         <div class="flex border-b px-6">
-          <template x-for="tab in ['overview','regulatory','checks','waiver']">
-            <button @click="modalTab = tab" class="px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors"
+          <template x-for="tab in ['overview','why','regulatory','checks','fix','waiver']">
+            <button @click="modalTab = tab" class="px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap"
               :class="modalTab === tab ? 'border-[#0094FF] text-[#0094FF]' : 'border-transparent text-slate-500 hover:text-slate-700'">
-              <span x-text="tab.charAt(0).toUpperCase() + tab.slice(1)"></span>
+              <span x-text="({'overview':'Overview','why':'Why it Matters','regulatory':'Regulatory','checks':'Checks','fix':'How to Fix','waiver':'Waiver'})[tab]"></span>
             </button>
           </template>
         </div>
 
         <!-- Tab content -->
-        <div class="p-6 overflow-y-auto max-h-96">
+        <div class="p-6">
           <!-- Overview -->
           <div x-show="modalTab === 'overview'">
             <p class="text-sm text-slate-700 leading-relaxed" x-text="selectedControl.description"></p>
@@ -692,6 +795,39 @@
             <div class="mt-4">
               <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Automated Checks</div>
               <div class="text-sm text-slate-700" x-text="selectedControl.checks_count + ' automated check(s)'"></div>
+            </div>
+          </div>
+
+          <!-- Why it Matters -->
+          <div x-show="modalTab === 'why'">
+            <!-- Business Impact -->
+            <div class="mb-5">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(0,148,255,.1);">
+                  <svg class="w-4 h-4" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                </div>
+                <span class="text-sm font-semibold text-slate-800">Business Impact</span>
+              </div>
+              <div x-show="selectedControl.rationale" class="p-4 rounded-xl text-sm text-slate-700 leading-relaxed" style="background:rgba(0,148,255,.05);border:1px solid rgba(0,148,255,.15);" x-text="selectedControl.rationale"></div>
+              <div x-show="!selectedControl.rationale" class="text-sm text-slate-400 italic">No business rationale defined for this control.</div>
+            </div>
+            <!-- Technical Impact -->
+            <div>
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(239,68,68,.1);">
+                  <svg class="w-4 h-4" style="color:#ef4444;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                </div>
+                <span class="text-sm font-semibold text-slate-800">Technical Impact</span>
+              </div>
+              <div x-show="selectedControl.threat && selectedControl.threat.length" class="space-y-2">
+                <template x-for="t in (selectedControl.threat || [])">
+                  <div class="flex items-start gap-2 p-3 rounded-xl text-sm text-slate-700 leading-relaxed" style="background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.12);">
+                    <svg class="w-4 h-4 mt-0.5 flex-shrink-0" style="color:#ef4444;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                    <span x-text="t"></span>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!selectedControl.threat || !selectedControl.threat.length" class="text-sm text-slate-400 italic">No threat information defined for this control.</div>
             </div>
           </div>
 
@@ -725,6 +861,40 @@
                 </div>
               </template>
               <div x-show="!selectedControl.automated_checks || selectedControl.automated_checks.length === 0" class="text-slate-400 text-sm">No automated checks available.</div>
+            </div>
+          </div>
+
+          <!-- How to Fix -->
+          <div x-show="modalTab === 'fix'">
+            <div x-show="!selectedControl.automated_checks || selectedControl.automated_checks.length === 0" class="text-slate-400 text-sm">No automated checks available.</div>
+            <div class="space-y-4">
+              <template x-for="check in (selectedControl.automated_checks || [])">
+                <div class="rounded-xl border border-slate-200 overflow-hidden">
+                  <!-- Check header -->
+                  <div class="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-200">
+                    <span class="font-mono text-xs text-slate-500" x-text="check.id"></span>
+                    <span class="pill text-xs" :class="severityColor(check.severity)" x-text="check.severity"></span>
+                  </div>
+                  <!-- Remediation -->
+                  <div x-show="check.remediation" class="px-3 py-2 text-sm text-slate-700 leading-relaxed border-b border-slate-100" x-text="check.remediation"></div>
+                  <!-- Compliant snippet -->
+                  <div x-show="check.example && check.example.compliant">
+                    <div class="flex items-center justify-between px-3 py-1.5" style="background:#1e293b;">
+                      <span style="color:#64748b;font-size:0.65rem;font-family:monospace;letter-spacing:.04em;">COMPLIANT TERRAFORM</span>
+                      <button @click="copyFix(check.example && check.example.compliant)" class="flex items-center gap-1 text-xs px-2 py-0.5 rounded" style="background:rgba(255,255,255,.08);color:#94a3b8;border:1px solid rgba(255,255,255,.12);" :style="copiedFix === (check.example && check.example.compliant) ? 'color:#4ade80;border-color:#4ade80;' : ''">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        <span x-text="copiedFix === (check.example && check.example.compliant) ? 'Copied!' : 'Copy'"></span>
+                      </button>
+                    </div>
+                    <pre class="px-3 py-2 text-xs overflow-x-auto" style="background:#0f172a;color:#e2e8f0;font-family:monospace;margin:0;line-height:1.55;max-height:240px;" x-text="check.example && check.example.compliant"></pre>
+                  </div>
+                  <!-- Terraform Registry link -->
+                  <div x-show="check.resource_types && check.resource_types.length" class="flex items-center gap-1.5 px-3 py-2 border-t border-slate-100">
+                    <svg class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    <a :href="tfDocUrl(check.resource_types && check.resource_types[0])" target="_blank" rel="noopener" class="text-xs text-[#0094FF] hover:underline" x-text="'registry.terraform.io → ' + (check.resource_types && check.resource_types[0])"></a>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
 
@@ -996,6 +1166,9 @@
     // Charts
     _charts: {},
 
+    // How to Fix
+    copiedFix: null,
+
     // ── Init ───────────────────────────────────────────────────────────
     init() {
       this.$watch('results', () => {
@@ -1049,6 +1222,54 @@
         });
       });
       return Object.values(fwMap).sort((a,b) => b.controls.length - a.controls.length);
+    },
+
+    get checkStats() {
+      if (!this.results) return null;
+      const allChecks = this.results.results.flatMap(r => r.check_results || []);
+      const pass = allChecks.filter(c => c.status === 'PASS').length;
+      const fail = allChecks.filter(c => c.status === 'FAIL').length;
+      const total = pass + fail;
+      const resources = new Set(allChecks.map(c => c.resource).filter(Boolean));
+      const failResources = new Set(allChecks.filter(c => c.status === 'FAIL').map(c => c.resource).filter(Boolean));
+      return { total, pass, fail, passRate: total ? Math.round(pass / total * 100) : 100, resources: resources.size, failResources: failResources.size };
+    },
+
+    get categoryBreakdown() {
+      if (!this.results) return [];
+      const cats = {};
+      this.results.results.forEach(r => {
+        if (r.status === 'SKIP' || r.status === 'WAIVED') return;
+        const cat = r.category || 'other';
+        if (!cats[cat]) cats[cat] = { pass: 0, fail: 0 };
+        if (r.status === 'PASS') cats[cat].pass++; else cats[cat].fail++;
+      });
+      return Object.entries(cats)
+        .map(([cat, { pass, fail }]) => ({ cat, pass, fail, total: pass + fail, pct: Math.round(pass / (pass + fail) * 100) }))
+        .sort((a, b) => b.fail - a.fail);
+    },
+
+    get regulatoryReadiness() {
+      if (!this.results) return [];
+      const fw = {};
+      this.results.results.forEach(r => {
+        if (r.status === 'SKIP' || r.status === 'WAIVED') return;
+        (r.regulatory_mapping || []).forEach(m => {
+          if (!fw[m.framework]) fw[m.framework] = { pass: 0, total: 0 };
+          fw[m.framework].total++;
+          if (r.status === 'PASS') fw[m.framework].pass++;
+        });
+      });
+      return Object.entries(fw)
+        .map(([framework, { pass, total }]) => ({ framework, pass, total, pct: Math.round(pass / total * 100) }))
+        .sort((a, b) => b.total - a.total);
+    },
+
+    get quickWins() {
+      if (!this.results) return [];
+      return this.results.results
+        .filter(r => r.status === 'FAIL' && ['medium', 'low'].includes(r.severity))
+        .slice(0, 6);
     },
 
     // ── Waivers ────────────────────────────────────────────────────────
@@ -1178,6 +1399,7 @@
 
     // ── Modals ─────────────────────────────────────────────────────────
     openControl(ctrl) {
+      if (!ctrl) return;
       this.selectedControl = ctrl;
       this.modalTab = 'overview';
       this.waiverForm = this.waivers[ctrl.id]
@@ -1230,6 +1452,23 @@
         ERROR: 'bg-orange-100 text-orange-700',
       };
       return map[status] || 'bg-slate-100 text-slate-600';
+    },
+
+    copyFix(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        this.copiedFix = text;
+        setTimeout(() => { this.copiedFix = null; }, 2000);
+      });
+    },
+
+    tfDocUrl(resourceType) {
+      if (!resourceType) return '#';
+      const parts = resourceType.split('_');
+      const provider = parts[0];
+      const name = parts.slice(1).join('_');
+      const p = {aws:'hashicorp/aws', azurerm:'hashicorp/azurerm', google:'hashicorp/google', oci:'oracle/oci'}[provider] || `hashicorp/${provider}`;
+      return `https://registry.terraform.io/providers/${p}/latest/docs/resources/${name}`;
     },
 
     notify(message, type = 'success') {
