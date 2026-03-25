@@ -219,6 +219,12 @@ class WaiversPayload(BaseModel):
     waivers: list[WaiverEntry]
 
 
+class SandboxRequest(BaseModel):
+    content: str
+    iac: str = "terraform"
+    pillar: str | None = None
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -350,6 +356,53 @@ async def api_get_results():
         return None
     with LAST_RESULTS_FILE.open() as fh:
         return json.load(fh)
+
+
+@app.post("/api/scan/sandbox")
+async def api_sandbox_scan(req: SandboxRequest):
+    """Scan raw IaC content provided as a string (writes to a temp file, never persisted)."""
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="Content cannot be empty.")
+    try:
+        from wafpass.engine import run_controls
+        from wafpass.iac import registry
+        from wafpass.loader import load_controls
+        from wafpass.models import Report
+        from wafpass.waivers import apply_waivers, load_waivers
+
+        controls = load_controls(CONTROLS_DIR, pillar=req.pillar)
+        if not controls:
+            raise HTTPException(status_code=422, detail="No controls loaded from controls directory.")
+
+        plugin = registry.get(req.iac.lower())
+        if plugin is None:
+            raise HTTPException(status_code=422, detail=f"Unknown IaC plugin: {req.iac}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tf_file = Path(tmpdir) / "sandbox.tf"
+            tf_file.write_text(req.content, encoding="utf-8")
+            state = plugin.parse(Path(tmpdir))
+            results = run_controls(controls, state)
+
+        waivers_data = []
+        if WAIVERS_FILE.exists():
+            waivers_data = load_waivers(WAIVERS_FILE)
+        apply_waivers(results, waivers_data)
+
+        report = Report(
+            path="sandbox",
+            controls_loaded=len(controls),
+            controls_run=len([r for r in results if r.results]),
+            results=results,
+            detected_regions=[],
+            source_paths=["sandbox.tf"],
+        )
+        return _report_to_dict(report)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/export/pdf")

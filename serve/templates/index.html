@@ -173,6 +173,10 @@
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Run Scan
     </button>
+    <button @click="navTo('sandbox')" :class="page==='sandbox' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+      Architect Sandbox
+    </button>
     <button @click="navTo('regions')" :class="page==='regions' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Deployed Regions
@@ -202,6 +206,7 @@
         compliance: 'Compliance Matrix',
         waivers: 'Waivers Manager',
         scan: 'Run Scan',
+        sandbox: 'Architect Sandbox',
         regions: 'Deployed Regions'
       }[page]"></h1>
       <p class="text-xs text-slate-500" x-text="{
@@ -210,7 +215,8 @@
         findings: 'Detailed results from the last scan',
         compliance: 'Regulatory framework coverage (GDPR, ISO 27001, BSI C5, EUCS)',
         waivers: 'Manage intentional risk acceptances and export to .wafpass-skip.yml',
-        scan: 'Execute a WAF++ PASS scan against your IaC directory'
+        scan: 'Execute a WAF++ PASS scan against your IaC directory',
+        sandbox: 'Write Terraform and instantly evaluate it against all WAF++ controls'
       }[page]"></p>
       </div>
     </div>
@@ -404,6 +410,50 @@
       </div>
 
       <!-- Quick Wins -->
+      <!-- Architectural Debt Heatmap -->
+      <div class="card mt-4">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(239,68,68,.1);">
+            <svg class="w-4 h-4" style="color:#dc2626;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z"/></svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-slate-800">Architectural Debt Heatmap</div>
+            <div class="text-xs text-slate-400" x-text="debtHeatmap.hasResults ? 'Failing controls by pillar × severity' : 'Control coverage by pillar × severity (no scan results yet)'"></div>
+          </div>
+          <div class="flex items-center gap-1.5 text-slate-400" style="font-size:0.65rem;">
+            <span>Low</span>
+            <div class="w-3 h-3 rounded" style="background:#fee2e2;border:1px solid #fecaca;"></div>
+            <div class="w-3 h-3 rounded" style="background:#fca5a5;"></div>
+            <div class="w-3 h-3 rounded" style="background:#f87171;"></div>
+            <div class="w-3 h-3 rounded" style="background:#dc2626;"></div>
+            <span>High</span>
+          </div>
+        </div>
+        <!-- Header row -->
+        <div style="display:grid;grid-template-columns:6.5rem repeat(4,1fr);gap:0.25rem;margin-bottom:0.25rem;">
+          <div></div>
+          <template x-for="s in debtHeatmap.sevs" :key="s">
+            <div class="text-center uppercase font-semibold text-slate-400 pb-1" style="font-size:0.65rem;" x-text="s"></div>
+          </template>
+        </div>
+        <!-- Data rows -->
+        <template x-for="row in debtHeatmap.rows" :key="row.pillar">
+          <div style="display:grid;grid-template-columns:6.5rem repeat(4,1fr);gap:0.25rem;margin-bottom:0.25rem;align-items:center;">
+            <div class="text-right pr-2 capitalize font-medium text-slate-600" style="font-size:0.75rem;" x-text="row.pillar"></div>
+            <template x-for="cell in row.cells" :key="cell.sev">
+              <div
+                class="flex items-center justify-center rounded-md text-xs font-bold transition-transform"
+                style="height:2.25rem;"
+                :style="'background:' + heatColor(cell.count, debtHeatmap.max) + ';color:' + (cell.count > debtHeatmap.max * 0.5 ? '#7f1d1d' : cell.count > 0 ? '#991b1b' : '#cbd5e1')"
+                :title="row.pillar + ' / ' + cell.sev + ': ' + cell.count + (debtHeatmap.hasResults ? ' failing' : ' controls')"
+                @mouseenter="$el.style.transform='scale(1.08)'" @mouseleave="$el.style.transform=''"
+                x-text="cell.count || ''">
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
       <div class="card mt-4" x-show="results && quickWins.length > 0">
         <div class="flex items-center gap-2 mb-4">
           <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(34,197,94,.12);">
@@ -547,6 +597,25 @@
       </div>
 
       <div x-show="results">
+        <!-- IDE deep links -->
+        <div x-show="results && results.path && results.path !== 'sandbox'" class="mb-4 flex flex-wrap items-center gap-2">
+          <span class="text-xs font-medium text-slate-500 mr-1">Open in IDE:</span>
+          <template x-for="ide in [
+            {label:'VS Code', href:'vscode://file/', dot:'#007ACC'},
+            {label:'Cursor',  href:'cursor://file/', dot:'#000000'},
+            {label:'JetBrains', href:'idea://open?file=', dot:'#FE315D'},
+            {label:'Zed',     href:'zed://file/', dot:'#084CCF'}
+          ]" :key="ide.label">
+            <a :href="ide.href + results.path" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 bg-white hover:border-[#0094FF] hover:text-[#0094FF] text-slate-600 transition-colors">
+              <span class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:' + ide.dot"></span>
+              <span x-text="ide.label"></span>
+            </a>
+          </template>
+          <button @click="navigator.clipboard.writeText(results.path); notify('Path copied')" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 bg-white hover:border-slate-400 text-slate-500 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            Copy path
+          </button>
+        </div>
         <!-- Filter -->
         <div class="card mb-4 flex flex-wrap gap-3 items-center">
           <select x-model="findingFilter" class="input w-auto">
@@ -692,6 +761,185 @@
       </div>
       <div x-show="!results || !results.detected_regions || !results.detected_regions.length" class="card text-slate-500 text-sm">
         No deployed regions detected. Run a scan first to see cloud region data.
+      </div>
+    </section>
+
+    <!-- ══ RUN SCAN ═══════════════════════════════════════════════════════ -->
+    <!-- ══ ARCHITECT SANDBOX ════════════════════════════════════════════ -->
+    <section x-show="page === 'sandbox'" x-transition>
+
+      <!-- Toolbar -->
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        <select @change="loadSandboxTemplate($event.target.value); $event.target.value=''" class="input w-auto text-sm">
+          <option value="">Load template…</option>
+          <option value="weak_iam">⚠ Weak IAM Password Policy</option>
+          <option value="open_storage">⚠ Unencrypted Storage (S3 + RDS)</option>
+          <option value="open_sg">⚠ Open Security Group (SSH/RDP)</option>
+          <option value="compliant_s3">✓ Compliant S3 Bucket</option>
+          <option value="compliant_rds">✓ Hardened RDS Instance</option>
+        </select>
+        <select x-model="sandboxPillar" class="input w-auto text-sm">
+          <option value="">All pillars</option>
+          <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+            <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+          </template>
+        </select>
+        <button @click="sandboxContent = ''; sandboxResults = null; sandboxError = null;" class="btn btn-outline text-xs">Clear</button>
+        <button @click="shareSandbox()" :disabled="!sandboxContent.trim()" class="btn btn-outline text-xs" title="Copy shareable link to clipboard">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+          Share
+        </button>
+        <button @click="runSandboxScan()" :disabled="sandboxScanning || !sandboxContent.trim()" class="btn btn-primary ml-auto" style="font-size:0.8rem;" :class="sandboxScanning || !sandboxContent.trim() ? 'opacity-60 cursor-not-allowed' : ''">
+          <svg x-show="!sandboxScanning" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+          <svg x-show="sandboxScanning" class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span x-text="sandboxScanning ? 'Scanning…' : 'Run Sandbox Scan'"></span>
+        </button>
+      </div>
+
+      <!-- Editor + Results split -->
+      <div style="display:grid;grid-template-columns:3fr 2fr;gap:1.5rem;align-items:start;">
+
+        <!-- Code editor (left) -->
+        <div class="flex flex-col">
+          <div class="rounded-xl overflow-hidden flex-1" style="border:1px solid #334155;display:flex;flex-direction:column;">
+            <!-- macOS-style title bar -->
+            <div class="flex items-center justify-between px-4 py-2.5 flex-shrink-0" style="background:#1e293b;">
+              <div class="flex items-center gap-3">
+                <div class="flex gap-1.5">
+                  <div class="w-3 h-3 rounded-full" style="background:#ef4444;"></div>
+                  <div class="w-3 h-3 rounded-full" style="background:#f97316;"></div>
+                  <div class="w-3 h-3 rounded-full" style="background:#22c55e;"></div>
+                </div>
+                <span style="color:#64748b;font-family:monospace;font-size:0.7rem;">sandbox.tf</span>
+              </div>
+              <span style="color:#475569;font-size:0.65rem;font-family:monospace;" x-text="sandboxContent.split('\n').length + ' lines · ' + sandboxContent.length + ' chars'"></span>
+            </div>
+            <!-- Textarea -->
+            <textarea
+              x-model="sandboxContent"
+              @keydown.tab.prevent="sandboxHandleTab($event)"
+              rows="26"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              placeholder="# Paste or write Terraform here, then click Run Sandbox Scan&#10;&#10;resource &quot;aws_s3_bucket&quot; &quot;example&quot; {&#10;  bucket = &quot;my-bucket&quot;&#10;}"
+              style="flex:1;width:100%;background:#0f172a;color:#e2e8f0;font-family:'Fira Code',ui-monospace,monospace;font-size:0.8rem;line-height:1.65;padding:1rem 1.25rem;border:none;resize:none;outline:none;tab-size:2;"></textarea>
+            <!-- Status bar -->
+            <div class="flex items-center justify-between px-4 py-1.5 flex-shrink-0" style="background:#1e293b;border-top:1px solid #334155;">
+              <span style="color:#475569;font-size:0.65rem;font-family:monospace;">HCL · Terraform</span>
+              <div class="flex items-center gap-3" style="color:#475569;font-size:0.65rem;font-family:monospace;">
+                <span x-show="sandboxPillar" style="color:#0094FF;" x-text="'pillar: ' + sandboxPillar"></span>
+                <span>UTF-8</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Results panel (right) -->
+        <div>
+
+          <!-- Placeholder -->
+          <div x-show="!sandboxResults && !sandboxScanning && !sandboxError" class="card flex flex-col items-center justify-center text-center" style="min-height:280px;">
+            <svg class="w-14 h-14 mb-3" style="color:#e2e8f0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+            <p class="text-sm text-slate-400 leading-relaxed">Load a template or paste your Terraform,<br>then click <strong class="text-slate-600">Run Sandbox Scan</strong>.</p>
+          </div>
+
+          <!-- Scanning spinner -->
+          <div x-show="sandboxScanning" class="card flex flex-col items-center justify-center gap-3" style="min-height:280px;">
+            <svg class="w-8 h-8 animate-spin" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            <p class="text-slate-500 text-sm">Evaluating controls…</p>
+          </div>
+
+          <!-- Error -->
+          <div x-show="sandboxError" class="card border-red-200 bg-red-50">
+            <div class="flex items-start gap-2">
+              <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              <p class="text-sm text-red-700" x-text="sandboxError"></p>
+            </div>
+          </div>
+
+          <!-- Results -->
+          <div x-show="sandboxResults">
+            <!-- ROI Live Counter -->
+            <div class="mb-3 rounded-xl overflow-hidden" style="border:1px solid #334155;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);">
+              <div class="flex items-center gap-2 px-3.5 py-2.5" style="border-bottom:1px solid #1e293b;">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-wide text-slate-400">Remediation ROI</span>
+                <span class="ml-auto text-slate-600" style="font-size:0.6rem;">industry benchmarks</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#1e293b;">
+                <div class="px-3.5 py-3" style="background:#0f172a;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Est. Annual Risk</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#f87171;font-variant-numeric:tabular-nums;" x-text="'$' + _roi.risk.toLocaleString()"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">if left unaddressed</div>
+                </div>
+                <div class="px-3.5 py-3" style="background:#0f172a;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Savings if Fixed</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#4ade80;font-variant-numeric:tabular-nums;" x-text="'$' + _roi.savings.toLocaleString()"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">estimated risk reduction</div>
+                </div>
+                <div class="px-3.5 py-3" style="background:#0f172a;border-top:1px solid #1e293b;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Fix Effort</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#94a3b8;font-variant-numeric:tabular-nums;" x-text="_roi.effort + 'h'"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">engineering hours est.</div>
+                </div>
+                <div class="px-3.5 py-3" style="background:#0f172a;border-top:1px solid #1e293b;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Controls to Fix</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#fbbf24;font-variant-numeric:tabular-nums;" x-text="_roi.fail"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">failing controls</div>
+                </div>
+              </div>
+            </div>
+            <!-- Score strip -->
+            <div class="card mb-3">
+              <div class="flex items-center gap-4 mb-3">
+                <div class="text-center flex-shrink-0">
+                  <div class="text-4xl font-bold" :class="sandboxResults && sandboxResults.score >= 80 ? 'text-green-600' : sandboxResults && sandboxResults.score >= 60 ? 'text-yellow-600' : 'text-red-600'" x-text="sandboxResults ? sandboxResults.score : 0"></div>
+                  <div class="text-xs text-slate-400">/100</div>
+                </div>
+                <div class="flex gap-3 flex-wrap">
+                  <div class="text-center"><div class="text-xl font-bold text-green-600" x-text="sandboxResults ? sandboxResults.total_pass : 0"></div><div class="text-xs text-slate-400">Pass</div></div>
+                  <div class="text-center"><div class="text-xl font-bold text-red-600" x-text="sandboxResults ? sandboxResults.total_fail : 0"></div><div class="text-xs text-slate-400">Fail</div></div>
+                  <div class="text-center"><div class="text-xl font-bold text-slate-400" x-text="sandboxResults ? sandboxResults.total_skip : 0"></div><div class="text-xs text-slate-400">Skip</div></div>
+                </div>
+              </div>
+              <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-700" :class="sandboxResults && sandboxResults.score >= 80 ? 'bg-green-500' : sandboxResults && sandboxResults.score >= 60 ? 'bg-yellow-400' : 'bg-red-500'" :style="'width:' + (sandboxResults ? sandboxResults.score : 0) + '%'"></div>
+              </div>
+            </div>
+            <!-- Control results -->
+            <div class="space-y-2">
+              <template x-for="r in (sandboxResults ? sandboxResults.results.filter(r => r.status !== 'SKIP') : [])" :key="r.control_id">
+                <div class="rounded-xl border overflow-hidden" :class="r.status === 'PASS' ? 'border-green-200' : 'border-red-200'">
+                  <div class="flex items-center justify-between px-3 py-2" :class="r.status === 'PASS' ? 'bg-green-50' : 'bg-red-50'">
+                    <span class="font-mono text-xs text-slate-500" x-text="r.control_id"></span>
+                    <span class="pill text-xs" :class="r.status === 'PASS' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'" x-text="r.status"></span>
+                  </div>
+                  <div class="px-3 py-2 bg-white">
+                    <div class="text-sm font-medium text-slate-700 mb-1" x-text="r.control_title"></div>
+                    <template x-for="cr in (r.check_results || []).filter(c => c.status === 'FAIL')" :key="cr.check_id">
+                      <div class="mt-1.5 p-2 rounded-lg" style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);">
+                        <div class="flex items-center gap-1.5 mb-0.5">
+                          <span class="font-mono text-xs" style="color:#ef4444;" x-text="cr.resource"></span>
+                          <button @click="navigator.clipboard.writeText(cr.resource); notify('Copied')" class="text-slate-300 hover:text-slate-500">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                          </button>
+                        </div>
+                        <div class="text-xs text-red-700" x-text="cr.message"></div>
+                        <div x-show="cr.remediation" class="text-xs text-slate-500 mt-1 italic" x-text="cr.remediation"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <div x-show="sandboxResults && sandboxResults.results.filter(r=>r.status!=='SKIP').length === 0" class="text-center py-6 text-slate-400 text-sm">
+                No controls matched the code. Try a different template or pillar filter.
+              </div>
+            </div>
+          </div>
+
+        </div>
       </div>
     </section>
 
@@ -972,7 +1220,15 @@
                     <span class="pill text-xs" :class="statusColor(cr.status)" x-text="cr.status"></span>
                   </div>
                   <div class="text-sm font-medium text-slate-700" x-text="cr.check_title"></div>
-                  <div x-show="cr.resource" class="text-xs text-slate-500 mt-1" x-text="'Resource: ' + cr.resource"></div>
+                  <div x-show="cr.resource" class="flex items-center gap-1.5 mt-1">
+                    <span class="text-xs text-slate-500 font-mono" x-text="cr.resource"></span>
+                    <button @click="navigator.clipboard.writeText(cr.resource); notify('Resource copied')" title="Copy resource address" class="text-slate-300 hover:text-slate-500 transition-colors flex-shrink-0">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    </button>
+                    <a x-show="results && results.path && results.path !== 'sandbox'" :href="'vscode://file/' + (results ? results.path : '')" title="Open project in VS Code" class="text-slate-300 hover:text-[#007ACC] transition-colors flex-shrink-0">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    </a>
+                  </div>
                   <div x-show="cr.message" class="text-xs text-slate-600 mt-1" x-text="cr.message"></div>
                   <div x-show="cr.remediation && cr.status === 'FAIL'" class="text-xs text-blue-600 mt-2 bg-blue-50 p-2 rounded" x-text="'Remediation: ' + cr.remediation"></div>
                 </div>
@@ -1169,6 +1425,14 @@
     // How to Fix
     copiedFix: null,
 
+    // Sandbox
+    sandboxContent: '',
+    sandboxPillar: '',
+    sandboxScanning: false,
+    sandboxResults: null,
+    sandboxError: null,
+    _roi: { risk: 0, effort: 0, fail: 0, savings: 0 },
+
     // ── Init ───────────────────────────────────────────────────────────
     init() {
       this.$watch('results', () => {
@@ -1177,6 +1441,12 @@
       if (this.results) {
         this.$nextTick(() => this.initCharts());
       }
+      this._applyHash(window.location.hash);
+      window.addEventListener('hashchange', () => this._applyHash(window.location.hash));
+      this.$watch('sandboxResults', v => {
+        if (v) { const roi = this.sandboxROI; if (roi) this._animateROI(roi); }
+        else this._roi = { risk: 0, effort: 0, fail: 0, savings: 0 };
+      });
     },
 
     // ── Computed ───────────────────────────────────────────────────────
@@ -1270,6 +1540,65 @@
       return this.results.results
         .filter(r => r.status === 'FAIL' && ['medium', 'low'].includes(r.severity))
         .slice(0, 6);
+    },
+
+    get debtHeatmap() {
+      const PILLARS = ['security','cost','reliability','operations','sovereignty','sustainability','performance'];
+      const SEVS = ['critical','high','medium','low'];
+      const src = this.results ? this.results.results : null;
+      let max = 1;
+      const rows = PILLARS.map(p => {
+        const cells = SEVS.map(s => {
+          const n = src
+            ? src.filter(r => r.pillar === p && r.severity === s && r.status === 'FAIL').length
+            : this.controls.filter(c => c.pillar === p && c.severity === s).length;
+          if (n > max) max = n;
+          return { sev: s, count: n };
+        });
+        return { pillar: p, cells };
+      });
+      return { rows, sevs: SEVS, max, hasResults: !!src };
+    },
+
+    get sandboxROI() {
+      if (!this.sandboxResults) return null;
+      const RISK   = { critical: 50000, high: 15000, medium: 5000, low: 1000 };
+      const EFFORT = { critical: 8,     high: 4,     medium: 2,    low: 0.5 };
+      let risk = 0, effort = 0, fail = 0;
+      for (const r of this.sandboxResults.results) {
+        if (r.status !== 'FAIL') continue;
+        fail++;
+        risk   += RISK[r.severity]   ?? 5000;
+        effort += EFFORT[r.severity] ?? 2;
+      }
+      return { risk, effort: Math.round(effort * 10) / 10, fail, savings: Math.round(risk * 0.9) };
+    },
+
+    heatColor(count, max) {
+      if (!count) return '#f8fafc';
+      const r = Math.min(count / Math.max(max, 1), 1);
+      if (r <= 0.25) return '#fee2e2';
+      if (r <= 0.5)  return '#fca5a5';
+      if (r <= 0.75) return '#f87171';
+      return '#dc2626';
+    },
+
+    _animateROI(target) {
+      const steps = 50, ms = 20;
+      let step = 0;
+      const t0 = { ...this._roi };
+      const iv = setInterval(() => {
+        step++;
+        const p = Math.min(step / steps, 1);
+        const e = p < 0.5 ? 2*p*p : -1+(4-2*p)*p;
+        this._roi = {
+          risk:    Math.round(t0.risk    + (target.risk    - t0.risk)    * e),
+          effort:  Math.round((t0.effort + (target.effort  - t0.effort)  * e) * 10) / 10,
+          fail:    Math.round(t0.fail    + (target.fail    - t0.fail)    * e),
+          savings: Math.round(t0.savings + (target.savings - t0.savings) * e),
+        };
+        if (step >= steps) clearInterval(iv);
+      }, ms);
     },
 
     // ── Waivers ────────────────────────────────────────────────────────
@@ -1417,7 +1746,44 @@
       return ctrl ? ctrl.title : id;
     },
 
-    navTo(p) { this.page = p; this.sidebarOpen = false; if (p === 'regions') this.$nextTick(() => this.renderWorldMap()); },
+    navTo(p) {
+      this.page = p;
+      this.sidebarOpen = false;
+      history.replaceState(null, '', '#' + p);
+      if (p === 'regions') this.$nextTick(() => this.renderWorldMap());
+    },
+
+    _applyHash(hash) {
+      if (!hash || hash === '#') return;
+      const raw = hash.slice(1);
+      const qmark = raw.indexOf('?');
+      const pageName = qmark === -1 ? raw : raw.slice(0, qmark);
+      const validPages = ['dashboard','controls','findings','compliance','waivers','scan','sandbox','regions'];
+      if (!validPages.includes(pageName)) return;
+      this.page = pageName;
+      if (pageName === 'regions') this.$nextTick(() => this.renderWorldMap());
+      if (pageName === 'sandbox' && qmark !== -1) {
+        const params = new URLSearchParams(raw.slice(qmark + 1));
+        const code = params.get('code');
+        const pillar = params.get('pillar');
+        if (code) {
+          try { this.sandboxContent = decodeURIComponent(escape(atob(code))); } catch(e) {}
+        }
+        if (pillar) this.sandboxPillar = pillar;
+      }
+    },
+
+    shareSandbox() {
+      if (!this.sandboxContent.trim()) { this.notify('Nothing to share — write some Terraform first.'); return; }
+      const encoded = btoa(unescape(encodeURIComponent(this.sandboxContent)));
+      let frag = 'sandbox?code=' + encoded;
+      if (this.sandboxPillar) frag += '&pillar=' + encodeURIComponent(this.sandboxPillar);
+      history.replaceState(null, '', '#' + frag);
+      const url = window.location.href;
+      navigator.clipboard.writeText(url).then(() => this.notify('Shareable link copied!')).catch(() => {
+        prompt('Copy this link:', url);
+      });
+    },
 
     pillarColor(pillar) {
       const map = {
@@ -1452,6 +1818,53 @@
         ERROR: 'bg-orange-100 text-orange-700',
       };
       return map[status] || 'bg-slate-100 text-slate-600';
+    },
+
+    // ── Sandbox ────────────────────────────────────────────────────────
+    _sandboxTemplates: {
+      weak_iam: `resource "aws_iam_account_password_policy" "weak" {\n  minimum_password_length        = 6\n  require_symbols                = false\n  require_numbers                = false\n  require_uppercase_characters   = false\n  require_lowercase_characters   = false\n  allow_users_to_change_password = true\n}\n`,
+      open_storage: `resource "aws_s3_bucket" "data" {\n  bucket = "unprotected-data-lake"\n}\n\nresource "aws_db_instance" "database" {\n  identifier        = "prod-db"\n  engine            = "postgres"\n  instance_class    = "db.t3.medium"\n  allocated_storage = 20\n  username          = "admin"\n  password          = "MyPassword123!"\n  skip_final_snapshot = true\n  # Missing: storage_encrypted, backup_retention_period, multi_az\n}\n`,
+      open_sg: `resource "aws_security_group" "open" {\n  name        = "allow-all"\n  description = "Wide-open security group"\n\n  ingress {\n    from_port   = 22\n    to_port     = 22\n    protocol    = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]  # Unrestricted SSH\n  }\n\n  ingress {\n    from_port   = 3389\n    to_port     = 3389\n    protocol    = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]  # Unrestricted RDP\n  }\n\n  egress {\n    from_port   = 0\n    to_port     = 0\n    protocol    = "-1"\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n`,
+      compliant_s3: `resource "aws_s3_bucket" "secure" {\n  bucket = "my-secure-bucket"\n}\n\nresource "aws_s3_bucket_server_side_encryption_configuration" "secure" {\n  bucket = aws_s3_bucket.secure.id\n  rule {\n    apply_server_side_encryption_by_default {\n      sse_algorithm     = "aws:kms"\n      kms_master_key_id = aws_kms_key.bucket.arn\n    }\n    bucket_key_enabled = true\n  }\n}\n\nresource "aws_s3_bucket_versioning" "secure" {\n  bucket = aws_s3_bucket.secure.id\n  versioning_configuration { status = "Enabled" }\n}\n\nresource "aws_s3_bucket_public_access_block" "secure" {\n  bucket                  = aws_s3_bucket.secure.id\n  block_public_acls       = true\n  block_public_policy     = true\n  ignore_public_acls      = true\n  restrict_public_buckets = true\n}\n`,
+      compliant_rds: `resource "aws_db_instance" "secure" {\n  identifier             = "prod-db"\n  engine                 = "postgres"\n  engine_version         = "15.4"\n  instance_class         = "db.t3.medium"\n  allocated_storage      = 20\n  username               = "admin"\n  manage_master_user_password = true  # Use Secrets Manager\n  storage_encrypted      = true\n  kms_key_id             = aws_kms_key.rds.arn\n  multi_az               = true\n  backup_retention_period = 14\n  deletion_protection    = true\n  skip_final_snapshot    = false\n  final_snapshot_identifier = "prod-db-final"\n}\n`,
+    },
+
+    loadSandboxTemplate(tpl) {
+      if (!tpl || !this._sandboxTemplates[tpl]) return;
+      this.sandboxContent = this._sandboxTemplates[tpl];
+      this.sandboxResults = null;
+      this.sandboxError = null;
+    },
+
+    sandboxHandleTab(e) {
+      const ta = e.target;
+      const s = ta.selectionStart;
+      ta.value = ta.value.substring(0, s) + '  ' + ta.value.substring(ta.selectionEnd);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      this.sandboxContent = ta.value;
+    },
+
+    async runSandboxScan() {
+      if (!this.sandboxContent.trim()) return;
+      this.sandboxScanning = true;
+      this.sandboxError = null;
+      this.sandboxResults = null;
+      try {
+        const resp = await fetch('/api/scan/sandbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: this.sandboxContent, pillar: this.sandboxPillar || null }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.detail || 'Sandbox scan failed');
+        }
+        this.sandboxResults = await resp.json();
+      } catch(e) {
+        this.sandboxError = e.message;
+      } finally {
+        this.sandboxScanning = false;
+      }
     },
 
     copyFix(text) {
