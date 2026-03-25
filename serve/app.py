@@ -34,6 +34,7 @@ BASE_DIR = Path(__file__).parent
 CONTROLS_DIR = BASE_DIR.parent / "controls"
 TEMPLATES_DIR = BASE_DIR / "templates"
 WAIVERS_FILE = BASE_DIR / "waivers.yml"
+RISK_ACCEPTANCES_FILE = BASE_DIR / "risk_acceptances.yml"
 LAST_RESULTS_FILE = BASE_DIR / "last_results.json"
 
 # ── In-memory cache for the last Report object (needed for PDF export) ────────
@@ -50,7 +51,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 _TEMPLATE_TEXT: str | None = None
 
-def _render_index(controls_json: str, waivers_json: str, results_json: str) -> str:
+def _render_index(controls_json: str, waivers_json: str, results_json: str, risk_acceptances_json: str = "{}") -> str:
     """Read the HTML template and substitute data placeholders (no Jinja2 required)."""
     global _TEMPLATE_TEXT
     if _TEMPLATE_TEXT is None:
@@ -59,6 +60,7 @@ def _render_index(controls_json: str, waivers_json: str, results_json: str) -> s
     html = html.replace("__CONTROLS_JSON__", controls_json)
     html = html.replace("__WAIVERS_JSON__", waivers_json)
     html = html.replace("__RESULTS_JSON__", results_json)
+    html = html.replace("__RISK_ACCEPTANCES_JSON__", risk_acceptances_json)
     # Replace the mode marker exactly once (the string literal in the script block)
     html = html.replace('window.__MODE__ = "__MODE__";', 'window.__MODE__ = "internal";', 1)
     return html
@@ -124,6 +126,20 @@ def _load_waivers() -> dict[str, dict]:
 def _save_waivers(waivers: dict[str, dict]) -> None:
     with WAIVERS_FILE.open("w") as fh:
         yaml.safe_dump({"waivers": list(waivers.values())}, fh, default_flow_style=False)
+
+
+def _load_risk_acceptances() -> dict[str, dict]:
+    """Load risk_acceptances.yml and return dict keyed by control ID."""
+    if not RISK_ACCEPTANCES_FILE.exists():
+        return {}
+    with RISK_ACCEPTANCES_FILE.open() as fh:
+        data = yaml.safe_load(fh) or {}
+    return {e["id"]: e for e in data.get("risk_acceptances", []) if "id" in e}
+
+
+def _save_risk_acceptances(acceptances: dict[str, dict]) -> None:
+    with RISK_ACCEPTANCES_FILE.open("w") as fh:
+        yaml.safe_dump({"risk_acceptances": list(acceptances.values())}, fh, default_flow_style=False)
 
 
 def _compute_score(results: list[dict]) -> int:
@@ -219,6 +235,24 @@ class WaiversPayload(BaseModel):
     waivers: list[WaiverEntry]
 
 
+class RiskAcceptanceEntry(BaseModel):
+    id: str
+    reason: str
+    approver: str = ""
+    owner: str = ""
+    rfc: str = ""
+    jira_link: str = ""
+    other_link: str = ""
+    notes: str = ""
+    risk_level: str = "accepted"
+    residual_risk: str = "medium"
+    expires: str = ""
+    accepted_at: str = ""
+
+class RiskAcceptancesPayload(BaseModel):
+    acceptances: list[RiskAcceptanceEntry]
+
+
 class SandboxRequest(BaseModel):
     content: str
     iac: str = "terraform"
@@ -236,10 +270,12 @@ async def index():
         with LAST_RESULTS_FILE.open() as fh:
             last_results = json.load(fh)
 
+    risk_acceptances = _load_risk_acceptances()
     html = _render_index(
         controls_json=json.dumps(controls),
         waivers_json=json.dumps(waivers),
         results_json=json.dumps(last_results),
+        risk_acceptances_json=json.dumps(risk_acceptances),
     )
     return HTMLResponse(content=html)
 
@@ -295,6 +331,43 @@ async def api_export_waivers():
     )
 
 
+@app.get("/api/risk-acceptances")
+async def api_get_risk_acceptances():
+    return _load_risk_acceptances()
+
+
+@app.put("/api/risk-acceptances")
+async def api_save_risk_acceptances(payload: RiskAcceptancesPayload):
+    acceptances = {a.id: a.model_dump() for a in payload.acceptances}
+    _save_risk_acceptances(acceptances)
+    return {"saved": len(acceptances)}
+
+
+@app.delete("/api/risk-acceptances/{control_id}")
+async def api_delete_risk_acceptance(control_id: str):
+    acceptances = _load_risk_acceptances()
+    acceptances.pop(control_id, None)
+    _save_risk_acceptances(acceptances)
+    return {"ok": True}
+
+
+@app.get("/api/risk-acceptances/export")
+async def api_export_risk_acceptances():
+    acceptances = _load_risk_acceptances()
+    content = yaml.safe_dump(
+        {"version": "1", "risk_acceptances": [
+            {k: v for k, v in e.items() if v}
+            for e in acceptances.values()
+        ]},
+        default_flow_style=False, sort_keys=False,
+    )
+    return Response(
+        content=content,
+        media_type="text/yaml",
+        headers={"Content-Disposition": 'attachment; filename="risk_acceptances.yml"'},
+    )
+
+
 @app.post("/api/scan")
 async def api_run_scan(req: ScanRequest):
     """Run an in-process WAF++ PASS scan and return results as JSON."""
@@ -325,6 +398,13 @@ async def api_run_scan(req: ScanRequest):
         if WAIVERS_FILE.exists():
             waivers_data = load_waivers(WAIVERS_FILE)
         apply_waivers(results, waivers_data)
+
+        # Apply risk acceptances (treated as waivers with richer metadata)
+        risk_acceptances_data = _load_risk_acceptances()
+        for cr in results:
+            ra = risk_acceptances_data.get(cr.control.id)
+            if ra and cr.waived_reason is None:
+                cr.waived_reason = f"[Risk Accepted by {ra.get('approver', 'N/A')}] {ra.get('reason', '')}"
 
         report = Report(
             path=str(path),
@@ -388,6 +468,13 @@ async def api_sandbox_scan(req: SandboxRequest):
         if WAIVERS_FILE.exists():
             waivers_data = load_waivers(WAIVERS_FILE)
         apply_waivers(results, waivers_data)
+
+        # Apply risk acceptances (treated as waivers with richer metadata)
+        risk_acceptances_data = _load_risk_acceptances()
+        for cr in results:
+            ra = risk_acceptances_data.get(cr.control.id)
+            if ra and cr.waived_reason is None:
+                cr.waived_reason = f"[Risk Accepted by {ra.get('approver', 'N/A')}] {ra.get('reason', '')}"
 
         report = Report(
             path="sandbox",
