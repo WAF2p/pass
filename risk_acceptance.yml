@@ -1,0 +1,49 @@
+# WAF++ PASS — Risk Acceptance Register
+#
+# This file declares WAF++ controls for which the organisation has made a
+# conscious, documented decision to accept residual risk.
+#
+# Each entry MUST include:
+#   id      — the WAF++ control ID (e.g. WAF-SEC-020)
+#   reason  — mandatory written justification; reference a ticket or approval record
+#
+# Optional fields:
+#   expires — ISO-8601 date (YYYY-MM-DD); omit for a permanent waiver.
+#             Expired waivers trigger a CLI warning and are flagged in the PDF report.
+#
+# Placement:
+#   Drop this file in the directory you pass to `wafpass check`, or in the
+#   working directory where you run the command.  WAF++ PASS auto-discovers
+#   risk_acceptance.yml before falling back to .wafpass-skip.yml.
+#
+# Usage:
+#   wafpass check ./terraform               # auto-discovers this file
+#   wafpass check ./terraform --skip-file risk_acceptance.yml  # explicit path
+#
+# The PDF report (--output pdf) includes a dedicated "Risk Acceptance Register"
+# page that renders all entries below, together with a sign-off block.
+# ─────────────────────────────────────────────────────────────────────────────
+
+waivers:
+
+  # ── Example: time-boxed waiver ───────────────────────────────────────────────
+  # - id: WAF-SEC-020
+  #   reason: >
+  #     Covered by external quarterly IAM review — approved via ticket SEC-1234
+  #     on 2026-03-01.  Internal review scheduled for Q3 2026.
+  #   expires: "2026-09-30"
+
+  # ── Example: permanent waiver ────────────────────────────────────────────────
+  # - id: WAF-COST-010
+  #   reason: >
+  #     Cost tagging is enforced at the Terraform module level via a shared
+  #     locals block; individual resource-level tags are therefore redundant.
+  #     Approved by Platform Lead on 2026-01-15 (ticket PLAT-0042).
+
+  # ── Example: operational constraint ─────────────────────────────────────────
+  # - id: WAF-OPS-030
+  #   reason: >
+  #     CloudWatch detailed monitoring incurs cost disproportionate to value
+  #     for non-production accounts.  Risk accepted for dev/test only;
+  #     production accounts are excluded from this waiver.
+  #   expires: "2026-12-31"

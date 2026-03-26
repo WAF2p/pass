@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Optional
 
 
@@ -86,6 +87,8 @@ class ControlResult:
     results: list[CheckResult] = field(default_factory=list)
     waived_reason: str | None = None
     # Set by the waiver system; non-None means the control is intentionally waived.
+    waived_expires: date | None = None
+    # Expiry date of the waiver (None = permanent waiver).
 
     @property
     def status(self) -> str:

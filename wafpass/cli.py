@@ -322,17 +322,22 @@ def check(
 
     # ── Apply waivers ──────────────────────────────────────────────────────────
     def _find_skip_file() -> Path | None:
-        candidates = [Path(DEFAULT_SKIP_FILE)]
-        for p in paths:
-            d = p if p.is_dir() else p.parent
-            candidate = d / DEFAULT_SKIP_FILE
-            if candidate not in candidates:
-                candidates.append(candidate)
+        # Discover both the canonical risk_acceptance.yml and legacy .wafpass-skip.yml
+        _names = ["risk_acceptance.yml", DEFAULT_SKIP_FILE]
+        candidates: list[Path] = []
+        for name in _names:
+            candidates.append(Path(name))
+            for p in paths:
+                d = p if p.is_dir() else p.parent
+                candidate = d / name
+                if candidate not in candidates:
+                    candidates.append(candidate)
         for c in candidates:
             if c.exists():
                 return c
         return None
 
+    _active_waivers: list = []
     resolved_skip_file = skip_file or _find_skip_file()
     if resolved_skip_file:
         try:
@@ -341,6 +346,7 @@ def check(
             typer.echo(f"ERROR in waiver file: {exc}", err=True)
             raise typer.Exit(code=2) from exc
         if waivers:
+            _active_waivers = waivers
             expired = apply_waivers(results, waivers)
             waived_ids = [w.id for w in waivers]
             typer.echo(
@@ -440,7 +446,8 @@ def check(
         generate_pdf(report, dest, baseline=baseline_data, diff=run_diff,
                      blast_radius_result=_br_result,
                      secret_findings=_secret_findings or None,
-                     carbon_result=_carbon_result)
+                     carbon_result=_carbon_result,
+                     waivers=_active_waivers or None)
         typer.echo(f"PDF report written to: {dest}")
 
         if save_baseline_path:
