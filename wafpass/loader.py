@@ -40,9 +40,12 @@ PILLAR_PREFIXES: dict[str, str] = {
 
 def _parse_assertion(raw: dict) -> Assertion:
     """Parse a single assertion dict into an Assertion dataclass."""
-    # Normalise: YAML uses 'value' (scalar) and 'values' (list); map both to 'expected'
+    # Normalise: YAML may use 'expected', 'value' (scalar) or 'values' (list);
+    # all map to Assertion.expected.  'expected' takes precedence.
     expected: object = None
-    if "value" in raw:
+    if "expected" in raw:
+        expected = raw["expected"]
+    elif "value" in raw:
         expected = raw["value"]
     elif "values" in raw:
         expected = raw["values"]

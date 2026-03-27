@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import List
 
@@ -19,11 +23,54 @@ from wafpass.waivers import DEFAULT_SKIP_FILE, apply_waivers, load_waivers
 
 _DEFAULT_STATE_DIR = Path(".wafpass-state")
 
+# ── UI server helpers ──────────────────────────────────────────────────────────
+
+_UI_PID_FILE = Path.home() / ".wafpass" / "ui.pid"
+_UI_LOG_FILE = Path.home() / ".wafpass" / "ui.log"
+
+# The serve package lives next to wafpass/ inside the same project root.
+_SERVE_ROOT = Path(__file__).parent.parent  # …/pass/
+
+
+def _pid_file_read() -> int | None:
+    """Return the PID from the pid-file, or None if absent / stale."""
+    if not _UI_PID_FILE.exists():
+        return None
+    try:
+        pid = int(_UI_PID_FILE.read_text().strip())
+    except (ValueError, OSError):
+        return None
+    # Verify the process still exists
+    try:
+        os.kill(pid, 0)
+        return pid
+    except (ProcessLookupError, PermissionError):
+        return None
+
+
+def _pid_file_write(pid: int) -> None:
+    _UI_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _UI_PID_FILE.write_text(str(pid))
+
+
+def _pid_file_remove() -> None:
+    try:
+        _UI_PID_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 app = typer.Typer(
     name="wafpass",
     help="WAF++ PASS – IaC controls checker for the WAF++ framework.",
     add_completion=False,
 )
+
+ui_app = typer.Typer(
+    name="ui",
+    help="Manage the WAF++ PASS web UI server.",
+    add_completion=False,
+)
+app.add_typer(ui_app, name="ui")
 
 
 def _version_callback(value: bool) -> None:
@@ -522,3 +569,544 @@ def check(
         raise typer.Exit(code=1)
     elif fail_on_lower == "any" and (report.total_fail > 0 or report.total_skip > 0):
         raise typer.Exit(code=1)
+
+
+# ── Shared pipeline helper ──────────────────────────────────────────────────────
+
+def _run_check_pipeline(
+    paths: list[Path],
+    plugin,
+    controls,
+    iac: str,
+    severity: str | None,
+    skip_file: Path | None,
+) -> tuple[list, "IaCState", list]:
+    """Run parse → controls → filter → waivers. Returns (results, merged_state, waivers)."""
+    merged_state = IaCState()
+    all_regions: list[tuple[str, str]] = []
+
+    for p in paths:
+        try:
+            state = plugin.parse(p)
+        except Exception as exc:
+            typer.echo(f"ERROR parsing IaC files in {p}: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        merged_state.resources.extend(state.resources)
+        merged_state.providers.extend(state.providers)
+        merged_state.variables.extend(state.variables)
+        merged_state.modules.extend(state.modules)
+        merged_state.config_blocks.extend(state.config_blocks)
+        all_regions.extend(plugin.extract_regions(state))
+
+    try:
+        results = run_controls(controls, merged_state, engine_name=iac.lower())
+    except Exception as exc:
+        typer.echo(f"ERROR running controls: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    if severity:
+        results = filter_by_severity(results, severity)
+
+    active_waivers: list = []
+    if skip_file and skip_file.exists():
+        try:
+            active_waivers = load_waivers(skip_file)
+        except ValueError as exc:
+            typer.echo(f"ERROR in waiver file: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        if active_waivers:
+            apply_waivers(results, active_waivers)
+
+    return results, merged_state, active_waivers
+
+
+@app.command()
+def fix(
+    paths: List[Path] = typer.Argument(
+        ...,
+        help=(
+            "Path(s) to IaC files or directories to scan and fix. "
+            "The same paths are passed to both the check and the patch step."
+        ),
+    ),
+    iac: str = typer.Option(
+        "terraform",
+        "--iac",
+        help="IaC framework plugin (terraform, bicep, cdk, pulumi). Default: terraform.",
+    ),
+    controls_dir: Path = typer.Option(
+        Path("controls"),
+        "--controls-dir",
+        help="Path to WAF++ YAML control files.",
+    ),
+    pillar: str | None = typer.Option(
+        None,
+        "--pillar",
+        help="Limit fixes to a single pillar (cost, security, reliability, …).",
+    ),
+    control_ids: str | None = typer.Option(
+        None,
+        "--controls",
+        help="Comma-separated control IDs to fix (e.g. WAF-SEC-010,WAF-COST-020).",
+    ),
+    severity: str | None = typer.Option(
+        None,
+        "--severity",
+        help="Minimum severity level to fix: low, medium, high, critical.",
+    ),
+    skip_file: Path | None = typer.Option(
+        None,
+        "--skip-file",
+        help="Path to waiver/skip YAML — waived controls are never auto-fixed.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        is_flag=True,
+        help="Write the patches to disk.  Without this flag the command is a dry-run.",
+    ),
+    backup: bool = typer.Option(
+        True,
+        "--backup/--no-backup",
+        help="Create <file>.tf.bak before modifying (default: true, only with --apply).",
+    ),
+) -> None:
+    """Auto-fix failing WAF++ checks by patching IaC source files.
+
+    By default this command runs in **dry-run / preview mode** and only prints
+    a coloured diff of what would change.  Pass ``--apply`` to actually write
+    the patches to disk.
+
+    Only assertions whose desired value can be derived unambiguously from the
+    control definition are patched:
+
+    \b
+      is_true / is_false → attribute = true / false
+      equals             → attribute = <expected>
+      ≥ / ≤ numeric      → attribute = <threshold>
+      in                 → attribute = <first allowed value>
+      key_exists (tags)  → inserts "key" = "TODO-fill-in" into tags block
+
+    Assertions using Terraform expressions (var., local., ${…}) are left
+    untouched.  Structural changes (missing resource blocks, runtime operators)
+    are reported as manual-fix items.
+
+    After ``--apply`` the checks are re-run and an improvement delta is printed.
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.rule import Rule
+    from rich.table import Table
+    from rich.text import Text
+
+    rc = Console()
+
+    # ── Resolve plugin ────────────────────────────────────────────────────────
+    plugin = registry.get(iac.lower())
+    if plugin is None:
+        typer.echo(f"ERROR: Unknown IaC plugin '{iac}'.", err=True)
+        raise typer.Exit(code=2)
+
+    for p in paths:
+        if not p.exists():
+            typer.echo(f"ERROR: Path does not exist: {p}", err=True)
+            raise typer.Exit(code=2)
+
+    # ── Parse control IDs filter ──────────────────────────────────────────────
+    ids: list[str] | None = None
+    if control_ids:
+        ids = [i.strip() for i in control_ids.split(",") if i.strip()]
+
+    # ── Load controls ─────────────────────────────────────────────────────────
+    try:
+        controls = load_controls(controls_dir, pillar=pillar, ids=ids)
+    except Exception as exc:
+        typer.echo(f"ERROR loading controls: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    if not controls:
+        typer.echo(f"No controls found in '{controls_dir}'.", err=True)
+        raise typer.Exit(code=2)
+
+    # ── Resolve waiver file ───────────────────────────────────────────────────
+    resolved_skip_file: Path | None = skip_file
+    if resolved_skip_file is None:
+        for name in ["risk_acceptance.yml", DEFAULT_SKIP_FILE]:
+            for p in [Path(name)] + [p / name for p in paths if p.is_dir()]:
+                if p.exists():
+                    resolved_skip_file = p
+                    break
+            if resolved_skip_file:
+                break
+
+    # ── Run initial check pipeline ────────────────────────────────────────────
+    rc.print()
+    rc.print(Rule("[bold cyan]WAF++ PASS — Auto-Fix[/bold cyan]", style="cyan"))
+    rc.print()
+
+    results, merged_state, _ = _run_check_pipeline(
+        paths=paths,
+        plugin=plugin,
+        controls=controls,
+        iac=iac,
+        severity=severity,
+        skip_file=resolved_skip_file,
+    )
+
+    total_fail = sum(1 for cr in results for r in cr.results if r.status == "FAIL")
+    if total_fail == 0:
+        rc.print("[bold green]✓  Nothing to fix — all checks pass.[/bold green]")
+        raise typer.Exit(code=0)
+
+    rc.print(f"[bold]{total_fail}[/bold] failing check(s) found. Deriving patches…")
+    rc.print()
+
+    # ── Build locator and fix plan ────────────────────────────────────────────
+    from wafpass.fixer import (
+        FixPlan,
+        PatchKind,
+        ResourceLocator,
+        apply_fix_plan,
+        build_fix_plan,
+        compute_fix_delta,
+        render_diff,
+    )
+
+    locator = ResourceLocator(list(paths)).build()
+    plan = build_fix_plan(
+        control_results=results,
+        merged_state=merged_state,
+        controls=controls,
+        locator=locator,
+    )
+
+    # ── Compute diffs (always, for preview) ───────────────────────────────────
+    diff_map = apply_fix_plan(plan, locator, dry_run=True, backup=False)
+
+    # ── Print per-file diff panels ────────────────────────────────────────────
+    if diff_map:
+        for file_path, (original, patched) in sorted(diff_map.items()):
+            file_patches = [p for p in plan.active_patches if p.file_path == file_path]
+            diff_lines = render_diff(original, patched, file_path)
+
+            diff_text = Text()
+            for dl in diff_lines:
+                line = dl.rstrip("\n")
+                if line.startswith("+++") or line.startswith("---"):
+                    diff_text.append(line + "\n", style="dim")
+                elif line.startswith("+"):
+                    diff_text.append(line + "\n", style="bold green")
+                elif line.startswith("-"):
+                    diff_text.append(line + "\n", style="bold red")
+                elif line.startswith("@@"):
+                    diff_text.append(line + "\n", style="cyan")
+                else:
+                    diff_text.append(line + "\n", style="dim white")
+
+            patch_label = f"{len(file_patches)} fix(es)"
+            rc.print(Panel(
+                diff_text,
+                title=f"[bold cyan]{file_path}[/bold cyan]  [dim]{patch_label}[/dim]",
+                border_style="cyan",
+                padding=(0, 1),
+            ))
+    else:
+        rc.print("[dim]No file changes could be derived from the failing checks.[/dim]")
+
+    # ── Patch summary ─────────────────────────────────────────────────────────
+    rc.print(Rule("[bold]Fix Plan Summary[/bold]", style="dim"))
+    rc.print()
+
+    active_count = len(plan.active_patches)
+    dedup_count  = len([p for p in plan.patches if p.already_applied])
+    skipped_count = len(plan.skipped)
+    files_count  = len(plan.files_affected)
+
+    summary_tbl = Table(show_header=False, box=None, padding=(0, 2))
+    summary_tbl.add_column("key",   style="dim",       no_wrap=True)
+    summary_tbl.add_column("value", style="bold white", no_wrap=True)
+    summary_tbl.add_column("note",  style="dim",       no_wrap=True)
+
+    summary_tbl.add_row(
+        "Patches to apply:",
+        str(active_count),
+        f"across {files_count} file(s)"  if files_count else "no files affected",
+    )
+    summary_tbl.add_row(
+        "Deduplicated:",
+        str(dedup_count),
+        "same attribute targeted by multiple controls",
+    )
+    summary_tbl.add_row(
+        "Manual remediation:",
+        str(skipped_count),
+        "see table below",
+    )
+    rc.print(summary_tbl)
+    rc.print()
+
+    if plan.patches:
+        # Detail table of what will be patched
+        detail_tbl = Table(
+            show_header=True,
+            header_style="bold white on dark_blue",
+            show_lines=True,
+            expand=True,
+        )
+        detail_tbl.add_column("Resource",  style="cyan",  no_wrap=True)
+        detail_tbl.add_column("Attribute", style="white", no_wrap=True)
+        detail_tbl.add_column("New value", style="green", no_wrap=True)
+        detail_tbl.add_column("Control",   style="dim",   no_wrap=True)
+        detail_tbl.add_column("File",      style="dim",   no_wrap=True)
+
+        for p in plan.active_patches:
+            label = p.tag_key if p.patch_kind == PatchKind.ADD_TAG_KEY else p.attribute_path
+            val   = f'tag "{p.tag_key}" = "TODO-fill-in"' if p.patch_kind == PatchKind.ADD_TAG_KEY else p.hcl_value
+            detail_tbl.add_row(
+                p.address,
+                label,
+                val,
+                p.control_id,
+                p.file_path.name,
+            )
+
+        rc.print(detail_tbl)
+        rc.print()
+
+    # ── Manual-fix items ──────────────────────────────────────────────────────
+    if plan.skipped:
+        skip_tbl = Table(
+            show_header=True,
+            header_style="bold white on dark_orange3",
+            show_lines=True,
+            expand=True,
+            title="[bold yellow]Manual Remediation Required[/bold yellow]",
+        )
+        skip_tbl.add_column("Check",     style="dim",    no_wrap=True)
+        skip_tbl.add_column("Resource",  style="yellow", no_wrap=True)
+        skip_tbl.add_column("Attribute", style="white",  no_wrap=True)
+        skip_tbl.add_column("Operator",  style="dim",    no_wrap=True)
+        skip_tbl.add_column("Reason",    style="dim")
+
+        for s in plan.skipped:
+            skip_tbl.add_row(s.check_id, s.address, s.attribute, s.op, s.reason)
+
+        rc.print(skip_tbl)
+        rc.print()
+
+    if plan.patches and any(p.patch_kind == PatchKind.ADD_TAG_KEY for p in plan.active_patches):
+        rc.print(
+            "[bold yellow]⚠  Tag patches use TODO-fill-in as placeholder.[/bold yellow]"
+            "  Replace with real values before deploying."
+        )
+        rc.print()
+
+    # ── Apply ─────────────────────────────────────────────────────────────────
+    if not apply:
+        rc.print(
+            "[dim]Dry-run complete. Pass [bold]--apply[/bold] to write the patches to disk.[/dim]"
+        )
+        raise typer.Exit(code=0)
+
+    if not diff_map:
+        rc.print("[dim]Nothing to write.[/dim]")
+        raise typer.Exit(code=0)
+
+    apply_fix_plan(plan, locator, dry_run=False, backup=backup)
+
+    files_written = list(diff_map.keys())
+    rc.print(Rule("[bold green]Patches Applied[/bold green]", style="green"))
+    rc.print()
+    for f in sorted(files_written):
+        bak_note = f"  [dim](backup: {f.name}.bak)[/dim]" if backup else ""
+        rc.print(f"  [green]✓[/green]  {f}{bak_note}")
+    rc.print()
+    rc.print(
+        f"[bold green]Applied {active_count} patch(es) to {len(files_written)} file(s).[/bold green]"
+    )
+    rc.print()
+
+    # ── Re-run and show improvement delta ────────────────────────────────────
+    rc.print(Rule("[bold cyan]Re-checking after fix…[/bold cyan]", style="cyan"))
+    rc.print()
+
+    new_results, _, _ = _run_check_pipeline(
+        paths=paths,
+        plugin=plugin,
+        controls=controls,
+        iac=iac,
+        severity=severity,
+        skip_file=resolved_skip_file,
+    )
+
+    delta = compute_fix_delta(results, new_results)
+
+    if delta.resolved:
+        rc.print(f"[bold green]Resolved ({len(delta.resolved)}):[/bold green]")
+        for check_id, addr in delta.resolved:
+            rc.print(f"  [green]✓[/green]  {check_id}  [dim]{addr}[/dim]  [dim]FAIL → PASS[/dim]")
+        rc.print()
+
+    if delta.still_failing:
+        rc.print(f"[bold yellow]Still failing ({len(delta.still_failing)}) — manual remediation required:[/bold yellow]")
+        for check_id, addr in delta.still_failing:
+            rc.print(f"  [yellow]─[/yellow]  {check_id}  [dim]{addr}[/dim]")
+        rc.print()
+
+    if delta.regressions:
+        rc.print(f"[bold red]⚠  Regressions introduced ({len(delta.regressions)}) — please review:[/bold red]")
+        for check_id, addr in delta.regressions:
+            rc.print(f"  [red]✗[/red]  {check_id}  [dim]{addr}[/dim]  [dim]PASS → FAIL[/dim]")
+        rc.print()
+
+    total_orig = len(delta.resolved) + len(delta.still_failing)
+    rc.print(
+        f"[bold]Fixed {len(delta.resolved)}/{total_orig} failing check(s).[/bold]"
+    )
+
+    exit_code = 1 if delta.still_failing or delta.regressions else 0
+    raise typer.Exit(code=exit_code)
+
+
+# ── wafpass ui ─────────────────────────────────────────────────────────────────
+
+
+@ui_app.command("start")
+def ui_start(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Host address to bind the server to.",
+    ),
+    port: int = typer.Option(
+        8080,
+        "--port",
+        "-p",
+        help="TCP port to listen on (default: 8080).",
+    ),
+    no_browser: bool = typer.Option(
+        False,
+        "--no-browser",
+        is_flag=True,
+        help="Do not open the browser automatically after starting.",
+    ),
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        is_flag=True,
+        help="Enable uvicorn auto-reload (for development).",
+    ),
+) -> None:
+    """Start the WAF++ PASS web UI server in the background."""
+    from rich.console import Console
+
+    rc = Console()
+
+    existing_pid = _pid_file_read()
+    if existing_pid is not None:
+        rc.print(
+            f"[yellow]Server is already running[/yellow] (PID {existing_pid})  "
+            f"[dim]http://{host}:{port}[/dim]"
+        )
+        rc.print("Run [bold]wafpass ui stop[/bold] first to restart.")
+        raise typer.Exit(code=1)
+
+    cmd = [
+        sys.executable, "-m", "uvicorn",
+        "serve.app:app",
+        "--host", host,
+        "--port", str(port),
+    ]
+    if reload:
+        cmd.append("--reload")
+
+    _UI_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = _UI_LOG_FILE.open("w")
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(_SERVE_ROOT),
+        stdout=log_fh,
+        stderr=log_fh,
+        start_new_session=True,   # detach from the terminal's process group
+    )
+
+    _pid_file_write(proc.pid)
+
+    # Brief pause so uvicorn can fail fast on port-in-use errors
+    time.sleep(1.2)
+
+    if _pid_file_read() is None:
+        rc.print("[red]✗  Server failed to start.[/red]")
+        rc.print(f"[dim]Check the log: {_UI_LOG_FILE}[/dim]")
+        raise typer.Exit(code=1)
+
+    url = f"http://{host}:{port}"
+    rc.print(f"[green]✓  WAF++ PASS UI started[/green]  PID [bold]{proc.pid}[/bold]")
+    rc.print(f"   [bold cyan]{url}[/bold cyan]")
+    rc.print(f"   [dim]Log: {_UI_LOG_FILE}[/dim]")
+    rc.print("   Run [bold]wafpass ui stop[/bold] to shut it down.")
+
+    if not no_browser:
+        import webbrowser
+        time.sleep(0.5)
+        webbrowser.open(url)
+
+
+@ui_app.command("status")
+def ui_status(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host the server was bound to."),
+    port: int = typer.Option(8080, "--port", "-p", help="Port the server is listening on."),
+) -> None:
+    """Show whether the WAF++ PASS web UI server is running."""
+    from rich.console import Console
+
+    rc = Console()
+    pid = _pid_file_read()
+
+    if pid is None:
+        rc.print("[red]●[/red]  Server is [bold]not running[/bold].")
+        if _UI_PID_FILE.exists():
+            rc.print(f"[dim]Stale PID file removed: {_UI_PID_FILE}[/dim]")
+            _pid_file_remove()
+        raise typer.Exit(code=1)
+
+    url = f"http://{host}:{port}"
+    rc.print(f"[green]●[/green]  Server is [bold green]running[/bold green]  PID [bold]{pid}[/bold]")
+    rc.print(f"   [bold cyan]{url}[/bold cyan]")
+    rc.print(f"   [dim]Log: {_UI_LOG_FILE}[/dim]")
+
+
+@ui_app.command("stop")
+def ui_stop() -> None:
+    """Stop the WAF++ PASS web UI server."""
+    from rich.console import Console
+
+    rc = Console()
+    pid = _pid_file_read()
+
+    if pid is None:
+        rc.print("[yellow]Server is not running.[/yellow]")
+        _pid_file_remove()
+        raise typer.Exit(code=0)
+
+    try:
+        if sys.platform == "win32":
+            os.kill(pid, signal.SIGTERM)
+        else:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    # Wait up to 5 seconds for graceful shutdown
+    for _ in range(50):
+        time.sleep(0.1)
+        if _pid_file_read() is None:
+            break
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+
+    _pid_file_remove()
+    rc.print(f"[green]✓  Server stopped[/green]  (was PID {pid})")

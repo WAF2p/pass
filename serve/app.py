@@ -259,6 +259,13 @@ class SandboxRequest(BaseModel):
     pillar: str | None = None
 
 
+class AutoFixRequest(BaseModel):
+    path: str
+    iac: str = "terraform"
+    control_ids: list[str] | None = None
+    apply: bool = False
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -423,6 +430,104 @@ async def api_run_scan(req: ScanRequest):
             json.dump(data, fh, indent=2)
 
         return data
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/auto-fix")
+async def api_auto_fix(req: AutoFixRequest):
+    """Build (and optionally apply) a fix plan for failing checks."""
+    path = Path(req.path)
+    if not path.exists():
+        raise HTTPException(status_code=400, detail=f"Path not found: {req.path}")
+
+    try:
+        from wafpass.engine import run_controls
+        from wafpass.fixer import (
+            ResourceLocator,
+            apply_fix_plan,
+            build_fix_plan,
+            render_diff,
+        )
+        from wafpass.iac import registry
+        from wafpass.loader import load_controls
+        from wafpass.waivers import apply_waivers, load_waivers
+
+        controls = load_controls(CONTROLS_DIR, ids=req.control_ids)
+        if not controls:
+            raise HTTPException(status_code=422, detail="No controls loaded.")
+
+        plugin = registry.get(req.iac.lower())
+        if plugin is None:
+            raise HTTPException(status_code=422, detail=f"Unknown IaC plugin: {req.iac}")
+
+        state = plugin.parse(path)
+        results = run_controls(controls, state)
+
+        waivers_data = []
+        if WAIVERS_FILE.exists():
+            waivers_data = load_waivers(WAIVERS_FILE)
+        apply_waivers(results, waivers_data)
+
+        tf_paths = [path] if path.is_file() else list(path.rglob("*.tf"))
+        locator = ResourceLocator(tf_paths).build()
+
+        plan = build_fix_plan(results, state, controls, locator)
+
+        base = path if path.is_dir() else path.parent
+
+        patches_data = [
+            {
+                "file": str(p.file_path.relative_to(base)),
+                "address": p.address,
+                "attribute": p.attribute_path,
+                "kind": p.patch_kind.name,
+                "new_value": p.hcl_value,
+                "description": p.description,
+                "check_id": p.check_id,
+                "control_id": p.control_id,
+            }
+            for p in plan.active_patches
+        ]
+
+        skipped_data = [
+            {
+                "check_id": s.check_id,
+                "control_id": s.control_id,
+                "address": s.address,
+                "attribute": s.attribute,
+                "op": s.op,
+                "reason": s.reason,
+            }
+            for s in plan.skipped
+        ]
+
+        file_results = apply_fix_plan(plan, locator, dry_run=not req.apply, backup=req.apply)
+
+        diff_preview: dict[str, list[str]] = {}
+        for fp, (orig, patched) in file_results.items():
+            diff_lines = render_diff(orig, patched, fp)
+            if diff_lines:
+                try:
+                    rel = str(fp.relative_to(base))
+                except ValueError:
+                    rel = fp.name
+                diff_preview[rel] = diff_lines
+
+        files_modified = sorted(diff_preview.keys())
+
+        return {
+            "patches_count": len(plan.active_patches),
+            "skipped_count": len(plan.skipped),
+            "files_modified": files_modified,
+            "applied": req.apply,
+            "patches": patches_data,
+            "skipped": skipped_data,
+            "diff_preview": diff_preview,
+        }
 
     except HTTPException:
         raise

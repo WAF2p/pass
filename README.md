@@ -106,6 +106,15 @@ wafpass check ./infra/ --no-secrets
 
 # Print version
 wafpass --version
+
+# Auto-fix failing checks (dry-run by default)
+wafpass fix ./infra/
+wafpass fix ./infra/ --apply
+
+# Web UI server management
+wafpass ui start
+wafpass ui status
+wafpass ui stop
 ```
 
 ### PDF report structure
@@ -119,7 +128,7 @@ The PDF report is divided into five parts plus an appendix, each introduced by a
 | **III** | Risk & Sustainability | CISO · CTO · CFO · ESG Team | Risk Dashboard, Carbon Footprint, Data Geography |
 | **IV** | Technical Deep Dive | Architects · Senior Engineers | Root Cause, Blast Radius, Summary, Regulatory Alignment |
 | **V** | Remediation | Engineering · DevOps | Roadmap, Detailed Findings |
-| **APP** | Appendix | Auditors · GRC · Legal | Controls Inventory, Passed & Skipped |
+| **APP** | Appendix | Auditors · GRC · Legal | Controls Inventory, Passed & Skipped, Risk Acceptance Register |
 
 ### Multi-cloud / multi-path scanning
 
@@ -415,6 +424,138 @@ If a waiver has expired, the tool prints a warning to stderr but continues norma
 - name: Run WAF++ PASS
   run: wafpass check ./infra/ --skip-file compliance/accepted-risks.yml --fail-on fail
 ```
+
+---
+
+## Risk acceptance register
+
+Waivers are a lightweight in-line mechanism for skipping controls. **Risk acceptances** are the formal, auditable counterpart — they record *who* approved a risk, *why*, what ticket or RFC covers it, the residual risk level, and when the acceptance expires.
+
+Risk acceptances differ from waivers in two ways:
+
+- They carry richer governance metadata (approver, RFC, Jira link, residual risk, accepted date).
+- They are rendered as a dedicated **Risk Acceptance Register** one-pager in the PDF report — suitable for auditor handover — including a sign-off block with CISO and approver lines.
+
+### `risk_acceptance.yml`
+
+Drop a `risk_acceptance.yml` file in the directory you pass to `wafpass check`. PASS auto-discovers it before falling back to `.wafpass-skip.yml`.
+
+```yaml
+# risk_acceptance.yml
+waivers:
+  - id: WAF-SEC-020
+    reason: >
+      Covered by external quarterly IAM review — approved via ticket SEC-1234
+      on 2026-03-01. Internal review scheduled for Q3 2026.
+    expires: "2026-09-30"
+
+  - id: WAF-COST-010
+    reason: >
+      Cost tagging is enforced at the Terraform module level via a shared
+      locals block; individual resource-level tags are therefore redundant.
+      Approved by Platform Lead on 2026-01-15 (ticket PLAT-0042).
+```
+
+Each entry requires `id` and `reason`. `expires` is optional (ISO-8601); expired entries trigger a CLI warning and are flagged in the PDF.
+
+```bash
+# Auto-discovery: place risk_acceptance.yml in the current directory
+wafpass check ./infra/
+
+# Explicit path
+wafpass check ./infra/ --skip-file ./compliance/risk_acceptance.yml
+```
+
+### PDF Risk Acceptance Register
+
+When a `risk_acceptance.yml` is present, the Appendix of the PDF report gains a **Risk Acceptance Register** section containing:
+
+- A KPI banner: total / active / expiring within 30 days / expired counts
+- A full register table: Control ID · Title · Pillar · Severity · Justification · Expiry · Status (colour-coded ACTIVE / EXPIRES SOON / EXPIRED / PERMANENT)
+- A printable sign-off block with CISO and Approver signature lines
+
+### Web UI
+
+The **Risk Acceptance** page in the web UI (`#risk-acceptance`) provides a full CRUD interface for acceptances with richer fields (approver, owner, RFC, Jira link, risk treatment, residual risk, accepted date). Entries are stored in `serve/risk_acceptances.yml` and applied automatically on every scan.
+
+---
+
+## Auto-fix (`wafpass fix`)
+
+`wafpass fix` analyses your IaC files, determines which failing assertions can be patched automatically, and either previews a coloured diff or writes the changes to disk.
+
+### How it works
+
+The engine:
+
+1. Runs the same check pipeline as `wafpass check`.
+2. Builds a `ResourceLocator` by scanning `.tf` files with a brace-counting state machine that handles heredocs, nested blocks, and multi-file projects.
+3. For each failing assertion derives the minimum change needed — e.g. `is_true → true`, `equals 14 → 14`, `in ["AES256","aws:kms"] → "AES256"`.
+4. Deduplicates patches by `(file, address, attribute)` so the same attribute is never written twice.
+5. Guards against overwriting Terraform dynamic expressions (`var.`, `local.`, `${…}`, `merge(…)`, etc.) — those lines are left untouched.
+
+**Dry-run is the default.** Pass `--apply` to write changes.
+
+### Usage
+
+```bash
+# Preview what would change (dry-run)
+wafpass fix ./infra/
+
+# Apply patches and create .tf.bak backups
+wafpass fix ./infra/ --apply
+
+# Apply without backups
+wafpass fix ./infra/ --apply --no-backup
+
+# Scope to a single pillar
+wafpass fix ./infra/ --pillar security
+
+# Scope to specific controls
+wafpass fix ./infra/ --controls WAF-SEC-010,WAF-REL-030
+
+# Fix only high-severity and above
+wafpass fix ./infra/ --severity high --apply
+```
+
+### What can be auto-fixed
+
+| Operator | Example fix |
+|----------|-------------|
+| `is_true` | `require_symbols = false` → `true` |
+| `is_false` | `publicly_accessible = true` → `false` |
+| `equals` | `minimum_password_length = 6` → `14` |
+| `greater_than_or_equal` | `backup_retention_period = 1` → `7` |
+| `less_than_or_equal` | `max_password_age = 365` → `90` |
+| `in` | `sse_algorithm = "NONE"` → `"AES256"` |
+| `key_exists` | adds `"Environment" = "TODO-fill-in"` to a `tags` block |
+
+Operators that require judgement (`block_exists`, `not_contains`, `matches`, `has_associated_resource`, all runtime-state operators) are reported as **skipped** with a plain-English reason.
+
+### Output
+
+```
+Dry-run — no files changed (pass --apply to write patches)
+
+ security/iam.tf — aws_iam_account_password_policy.corporate
+  ╔══ diff ════════════════════════════════════════╗
+  ║ - minimum_password_length = 6                  ║
+  ║ + minimum_password_length = 14                 ║
+  ║ - require_symbols         = false              ║
+  ║ + require_symbols         = true               ║
+  ╚════════════════════════════════════════════════╝
+
+Patches ready: 7  ·  Files affected: 1  ·  Skipped (manual fix needed): 3
+```
+
+After `--apply` the command re-runs the checks and reports a **delta**: how many previously failing checks are now passing.
+
+### Safety
+
+- `.tf.bak` backups are created by default (disable with `--no-backup`).
+- Terraform dynamic references are never overwritten.
+- Each `(file, address, attribute)` triple is patched at most once.
+- The command exits non-zero if any failing check remains after apply.
 
 ---
 
@@ -1266,28 +1407,68 @@ The patch counter resets to `0` automatically because no tags exist yet for the 
 
 WAF++ PASS ships with a browser-based dashboard that lets CISOs and security teams interact with controls, manage waivers, and view findings — **no YAML knowledge required**.
 
-### Internal serve (production)
+### Starting the server
 
-A **FastAPI** web server that connects directly to the WAF++ PASS engine. Reads real controls from `controls/`, runs live scans, and persists waivers to disk.
+The simplest way to manage the server is through the `wafpass ui` sub-command:
 
 ```bash
-# Install web dependencies
-pip install -e ".[web]"
+# Start in the background, open browser automatically
+wafpass ui start
 
-# Start the server (from the pass/ directory)
+# Custom host / port
+wafpass ui start --host 0.0.0.0 --port 9090
+
+# Start without opening the browser
+wafpass ui start --no-browser
+
+# Check whether the server is running
+wafpass ui status
+
+# Stop the server
+wafpass ui stop
+```
+
+The server PID is stored in `~/.wafpass/ui.pid` and log output in `~/.wafpass/ui.log`. The `start` command detects if a server is already running and refuses to start a second one.
+
+For development, use `--reload` to enable uvicorn auto-reload:
+
+```bash
+wafpass ui start --reload
+```
+
+You can also start the server directly with uvicorn if you prefer:
+
+```bash
+pip install -e ".[web]"
 uvicorn serve.app:app --reload --port 8080
 ```
 
-Then open **http://localhost:8080**.
+### Internal serve (production)
+
+A **FastAPI** web server that connects directly to the WAF++ PASS engine. Reads real controls from `controls/`, runs live scans, and persists waivers and risk acceptances to disk.
 
 | Feature | Details |
 |---------|---------|
-| Dashboard | Score gauge, pillar breakdown, severity chart, top failures |
+| Executive Dashboard | Score gauge, pillar breakdown, severity chart, architectural debt heatmap, quick wins |
 | Controls Library | Browse/search all 70+ controls, filter by pillar/severity |
 | Waiver Manager | Add waivers with reason + expiry, export `.wafpass-skip.yml` |
-| Findings | Per-check breakdown with remediation guidance |
+| Risk Acceptance | Full CRUD for formal risk acceptances with approver, RFC, Jira link, residual risk, expiry |
+| Findings | Per-check breakdown with remediation guidance, IDE deep-links |
 | Compliance Matrix | GDPR, ISO 27001:2022, BSI C5:2020, EUCS, CSRD mapping |
-| Run Scan | Trigger scans from the browser, results update in real-time |
+| Run Scan | Trigger scans from the browser, results persist across page loads |
+| Auto-Fix *(α)* | Preview and apply surgical IaC patches directly from the UI |
+| PDF Export | Generate and download the full PDF report from the browser |
+
+#### Auto-Fix in the UI
+
+The **Auto-Fix** feature *(alpha)* lets you preview and apply patches without leaving the browser:
+
+1. After a scan, click **Auto-Fix** in the Quick Wins section or Findings filter bar to analyse all failing checks.
+2. Alternatively, open any FAIL finding and click **Auto-Fix this Control** to scope the analysis to a single control.
+3. A diff preview modal shows the exact line-level changes grouped by file, plus a list of checks that require manual remediation.
+4. Click **Apply N Patch(es)** to write the changes to disk — `.tf.bak` backups are created automatically.
+
+> Auto-Fix is in alpha. Always review the diff and run `terraform plan` before deploying.
 
 See [`serve/README.md`](serve/README.md) for the full API reference and deployment guide.
 
@@ -1303,7 +1484,7 @@ open ../web-ui/index.html
 python3 -m http.server 3000 --directory ../web-ui
 ```
 
-The demo (`../web-ui/index.html`) has the **same UI/UX** as the internal serve but uses embedded JavaScript data instead of a live backend. It includes 17 representative controls, pre-loaded scan results with 7 failures, and fully working waiver management with YAML export.
+The demo (`../web-ui/index.html`) has the **same UI/UX** as the internal serve but uses embedded JavaScript data instead of a live backend. It includes 17 representative controls, pre-loaded scan results with 7 failures, fully working waiver management with YAML export, and a simulated Auto-Fix preview (the diff is computed client-side; applying redirects to the CLI).
 
 See [`../web-ui/README.md`](../web-ui/README.md) for more details.
 
