@@ -23,6 +23,10 @@ wafpass = "wafpass.cli:app"
 pdf = [
     "reportlab>=4.0",
 ]
+web = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.23",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

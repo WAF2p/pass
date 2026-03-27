@@ -1174,6 +1174,14 @@ def _styles() -> dict[str, ParagraphStyle]:
         "tbl_header_left": ParagraphStyle("tbl_header_left", **{**base,
             "fontName": "Helvetica-Bold", "fontSize": 8,
             "leading": 11, "textColor": C_WHITE}),
+        "kpi_number": ParagraphStyle("kpi_number", **{**base,
+            "fontName": "Helvetica-Bold", "fontSize": 22,
+            "leading": 26, "textColor": C_WHITE, "alignment": TA_CENTER}),
+        "kpi_label": ParagraphStyle("kpi_label", **{**base,
+            "fontSize": 8, "leading": 11, "textColor": C_WHITE, "alignment": TA_CENTER}),
+        "alert_text": ParagraphStyle("alert_text", **{**base,
+            "fontName": "Helvetica-Bold", "fontSize": 9, "leading": 12,
+            "textColor": C_ORANGE}),
     }
 
 
@@ -3917,6 +3925,194 @@ def _secrets_section(findings: list, S: dict) -> list:
     return elems
 
 
+# ── Risk Acceptance Register (one-pager) ─────────────────────────────────────
+
+def _risk_acceptance_section(report: Report, S: dict, generated_at: str) -> list:
+    """Standalone Risk Acceptance Register page.
+
+    Renders a printable register of all intentionally waived controls, suitable
+    for sign-off by a CISO or Risk Owner.  Each entry shows the control ID,
+    title, pillar, severity, justification, expiry date, and current status.
+    """
+    from datetime import date as _date
+
+    waived = [cr for cr in report.results if cr.status == "WAIVED"]
+    if not waived:
+        return []
+
+    today = _date.today()
+    elems = [*_section_header("Risk Acceptance Register", S)]
+
+    # ── Summary banner ──────────────────────────────────────────────────────
+    active     = sum(1 for cr in waived if not (cr.waived_expires and cr.waived_expires < today))
+    expired    = sum(1 for cr in waived if cr.waived_expires and cr.waived_expires < today)
+    permanent  = sum(1 for cr in waived if not cr.waived_expires)
+    expiring_soon = sum(
+        1 for cr in waived
+        if cr.waived_expires and not (cr.waived_expires < today)
+        and (cr.waived_expires - today).days <= 30
+    )
+
+    intro = (
+        "This register records all WAF++ controls for which the organisation has made a "
+        "conscious, documented decision to accept residual risk.  Each waiver requires a "
+        "written justification and an optional review date.  Waivers without an expiry date "
+        "are treated as permanent until explicitly revoked."
+    )
+    elems.append(Paragraph(intro, S["muted"]))
+    elems.append(Spacer(1, 4 * mm))
+
+    # KPI summary row
+    kpi_data = [
+        [
+            Paragraph(str(len(waived)), S["kpi_number"]),
+            Paragraph(str(active),      S["kpi_number"]),
+            Paragraph(str(expired),     S["kpi_number"]),
+            Paragraph(str(permanent),   S["kpi_number"]),
+        ],
+        [
+            Paragraph("Total Waivers",   S["kpi_label"]),
+            Paragraph("Active",          S["kpi_label"]),
+            Paragraph("Expired",         S["kpi_label"]),
+            Paragraph("Permanent",       S["kpi_label"]),
+        ],
+    ]
+    kpi_colors = [C_PURPLE, C_GREEN, C_RED, C_GREY]
+    kpi_w = CONTENT_W / 4
+    kpi_ts = TableStyle([
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    for col_idx, col_color in enumerate(kpi_colors):
+        kpi_ts.add("BACKGROUND", (col_idx, 0), (col_idx, 1), col_color)
+        kpi_ts.add("TEXTCOLOR",  (col_idx, 0), (col_idx, 1), C_WHITE)
+    elems.append(Table(kpi_data, colWidths=[kpi_w] * 4, style=kpi_ts))
+
+    if expiring_soon:
+        elems.append(Spacer(1, 3 * mm))
+        elems.append(Paragraph(
+            f"⚠  {expiring_soon} waiver(s) expire within 30 days — review required.",
+            S["alert_text"],
+        ))
+
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Main register table ──────────────────────────────────────────────────
+    sev_fg = {
+        "critical": C_RED, "high": C_ORANGE, "medium": C_YELLOW, "low": C_BLUE,
+    }
+
+    header = ["Control", "Title", "Pillar", "Sev.", "Justification", "Expires", "Status"]
+    col_widths = [
+        2.6 * cm,          # Control ID
+        CONTENT_W * 0.22,  # Title
+        2.0 * cm,          # Pillar
+        1.4 * cm,          # Severity
+        CONTENT_W * 0.30,  # Justification
+        2.0 * cm,          # Expires
+        1.8 * cm,          # Status
+    ]
+
+    def _row_status(cr: "ControlResult") -> tuple[str, colors.Color]:
+        if cr.waived_expires and cr.waived_expires < today:
+            return "EXPIRED", C_RED
+        if cr.waived_expires:
+            days = (cr.waived_expires - today).days
+            if days <= 30:
+                return f"≤30d", C_ORANGE
+            return "ACTIVE", C_GREEN
+        return "PERM.", C_GREY
+
+    rows: list = [
+        [Paragraph(h, S["tbl_header"]) for h in header]
+    ]
+    row_status_colors: list[colors.Color] = []
+
+    for cr in waived:
+        exp_str = str(cr.waived_expires) if cr.waived_expires else "—"
+        status_label, status_color = _row_status(cr)
+        row_status_colors.append(status_color)
+        pillar = cr.control.pillar.capitalize()[:6]
+        sev    = cr.control.severity[:4].capitalize()
+        reason = (cr.waived_reason or "")
+        rows.append([
+            Paragraph(cr.control.id, S["body_sm"]),
+            Paragraph(cr.control.title[:60] + ("…" if len(cr.control.title) > 60 else ""), S["body_sm"]),
+            Paragraph(pillar, S["body_sm"]),
+            Paragraph(sev, ParagraphStyle(
+                "sev_cell", parent=S["body_sm"],
+                textColor=sev_fg.get(cr.control.severity.lower(), C_GREY),
+                fontName="Helvetica-Bold",
+            )),
+            Paragraph(reason[:160] + ("…" if len(reason) > 160 else ""), S["body_sm"]),
+            Paragraph(exp_str, S["body_sm"]),
+            Paragraph(status_label, ParagraphStyle(
+                "status_cell", parent=S["body_sm"],
+                textColor=status_color, fontName="Helvetica-Bold",
+            )),
+        ])
+
+    ts = TableStyle([
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 7),
+        ("LEADING",       (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_PURPLE),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_PURPLE_LT]),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ])
+    elems.append(Table(rows, colWidths=col_widths, style=ts, repeatRows=1))
+
+    # ── Sign-off block ───────────────────────────────────────────────────────
+    elems.append(Spacer(1, 8 * mm))
+    elems.append(_hr(C_BORDER, 0.5))
+    elems.append(Spacer(1, 4 * mm))
+    elems.append(Paragraph("Sign-off &amp; Approval", S["h3"]))
+    elems.append(Spacer(1, 3 * mm))
+    elems.append(Paragraph(
+        "This Risk Acceptance Register was generated automatically from the "
+        f"<b>risk_acceptance.yml</b> waiver file as part of a WAF++ PASS scan on "
+        f"<b>{generated_at}</b>.  The Risk Owner below confirms that each waiver "
+        "reflects a current, informed decision and that compensating controls are in place.",
+        S["muted"],
+    ))
+    elems.append(Spacer(1, 6 * mm))
+
+    signoff_rows = [
+        ["Risk Owner / CISO", "___________________________________________", "Date", "________________"],
+        ["Approved by",       "___________________________________________", "Date", "________________"],
+    ]
+    signoff_ts = TableStyle([
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("LEADING",       (0, 0), (-1, -1), 14),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ("TEXTCOLOR",     (0, 0), (0, -1),  C_GREY),
+        ("TEXTCOLOR",     (2, 0), (2, -1),  C_GREY),
+    ])
+    signoff_widths = [3.5 * cm, CONTENT_W * 0.45, 1.5 * cm, CONTENT_W * 0.25]
+    elems.append(Table(
+        [[Paragraph(c, S["muted"] if i % 2 == 0 else S["body"]) for i, c in enumerate(row)]
+         for row in signoff_rows],
+        colWidths=signoff_widths,
+        style=signoff_ts,
+    ))
+
+    return elems
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_pdf(
@@ -3927,6 +4123,7 @@ def generate_pdf(
     blast_radius_result: "BlastResult | None" = None,
     secret_findings: list | None = None,
     carbon_result: "CarbonResult | None" = None,
+    waivers: list | None = None,
 ) -> None:
     """Generate a structured, audience-segmented PDF report.
 
@@ -3938,7 +4135,7 @@ def generate_pdf(
     PART III — Risk & Sustainability (CISO, CTO, CFO, Sustainability team)
     PART IV  — Technical Deep Dive   (Architects, Senior engineers)
     PART V   — Remediation           (Engineering teams)
-    Appendix — Compliance evidence   (Auditors, GRC)
+    Appendix — Compliance evidence + Risk Acceptance Register (Auditors, GRC)
     """
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     S = _styles()
@@ -4106,6 +4303,11 @@ def generate_pdf(
 
     story += [PageBreak()]
     story += _passed_section(report, S)
+
+    risk_acc_elems = _risk_acceptance_section(report, S, generated_at)
+    if risk_acc_elems:
+        story += [PageBreak()]
+        story += risk_acc_elems
 
     # multiBuild runs two passes so the TableOfContents can resolve page numbers
     doc.multiBuild(story)

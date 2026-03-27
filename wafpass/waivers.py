@@ -108,5 +108,6 @@ def apply_waivers(results: list, waivers: list[WaiverEntry]) -> list[WaiverEntry
         if waiver.is_expired:
             expired.append(waiver)
         cr.waived_reason = waiver.reason
+        cr.waived_expires = waiver.expires
 
     return expired

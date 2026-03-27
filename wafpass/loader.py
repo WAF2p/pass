@@ -40,9 +40,12 @@ PILLAR_PREFIXES: dict[str, str] = {
 
 def _parse_assertion(raw: dict) -> Assertion:
     """Parse a single assertion dict into an Assertion dataclass."""
-    # Normalise: YAML uses 'value' (scalar) and 'values' (list); map both to 'expected'
+    # Normalise: YAML may use 'expected', 'value' (scalar) or 'values' (list);
+    # all map to Assertion.expected.  'expected' takes precedence.
     expected: object = None
-    if "value" in raw:
+    if "expected" in raw:
+        expected = raw["expected"]
+    elif "value" in raw:
         expected = raw["value"]
     elif "values" in raw:
         expected = raw["values"]
@@ -86,6 +89,7 @@ def _parse_check(raw: dict) -> Check | None:
         assertions=[_parse_assertion(a) for a in assertions_raw],
         on_fail=raw.get("on_fail", "violation"),
         remediation=str(raw.get("remediation", "")).strip(),
+        example=raw.get("example"),
     )
 
 
@@ -122,6 +126,8 @@ def _parse_control(raw: dict) -> Control | None:
         description=str(raw.get("description", "")).strip(),
         checks=checks,
         regulatory_mapping=regulatory_mapping,
+        rationale=str(raw.get("rationale", "")).strip(),
+        threat=[str(t) for t in raw.get("threat", [])],
     )
 
 
