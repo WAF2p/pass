@@ -114,6 +114,21 @@
       #hamburger-btn { display: flex !important; align-items: center; justify-content: center; }
       #hamburger-btn:hover { background: rgba(0,148,255,0.1); color: var(--waf-brand); }
       .waf-main-content { margin-left: 0 !important; }
+      .cl-install-grid { grid-template-columns: 1fr !important; }
+      .cl-grid { grid-template-columns: 1fr !important; }
+      .settings-levels-grid { grid-template-columns: 1fr !important; }
+      .settings-3col { grid-template-columns: 1fr !important; }
+      .settings-2col { grid-template-columns: 1fr !important; }
+    }
+    .toggle-track {
+      width: 40px; height: 22px; border-radius: 999px; border: none;
+      cursor: pointer; transition: background 0.2s; flex-shrink: 0;
+      position: relative; outline: none;
+    }
+    .toggle-thumb {
+      position: absolute; top: 3px; width: 16px; height: 16px;
+      border-radius: 50%; background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: left 0.2s;
     }
   </style>
 </head>
@@ -188,11 +203,39 @@
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Deployed Regions
     </button>
+    <div style="border-top:1px solid var(--sidebar-border);margin:0.5rem 0;"></div>
+    <button @click="navTo('changelog')" :class="page==='changelog' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
+      Changelog &amp; Install
+    </button>
+    <button @click="navTo('settings')" :class="page==='settings' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Settings
+    </button>
   </nav>
 
+  <!-- Maturity level badge -->
+  <div style="padding:0.625rem 1.25rem;border-top:1px solid var(--sidebar-border);cursor:pointer;" @click="navTo('settings')">
+    <div style="font-size:0.62rem;color:var(--sidebar-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.3rem;">Maturity Level</div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;" :style="`background:${['','#d97706','#0094FF','#059669'][maturityLevel]};box-shadow:0 0 6px ${['','rgba(217,119,6,.5)','rgba(0,148,255,.5)','rgba(5,150,105,.5)'][maturityLevel]};`"></div>
+      <span style="font-size:0.8rem;font-weight:600;" :style="`color:${['','#fbbf24','#60a5fa','#34d399'][maturityLevel]}`" x-text="['','Foundational','Operational','Optimised'][maturityLevel]"></span>
+      <span class="ml-auto" style="font-size:0.65rem;border-radius:999px;padding:0.1rem 0.4rem;" :style="`color:${['','#d97706','#0094FF','#059669'][maturityLevel]};background:${['','rgba(217,119,6,.15)','rgba(0,148,255,.15)','rgba(5,150,105,.15)'][maturityLevel]};`" x-text="`L${maturityLevel}`"></span>
+    </div>
+  </div>
+
+  <!-- Policy version -->
+  <div style="padding:0.625rem 1.25rem;border-top:1px solid var(--sidebar-border);">
+    <div style="font-size:0.62rem;color:var(--sidebar-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;">Policy Version</div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <span style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(0,148,255,0.15);border:1px solid rgba(0,148,255,0.35);border-radius:999px;padding:0.18rem 0.6rem;font-size:0.72rem;font-weight:700;color:#60a5fa;letter-spacing:0.02em;" x-text="results ? 'v' + results.policy_version : 'v0.2.0'"></span>
+      <span style="font-size:0.65rem;color:var(--sidebar-muted);" x-show="results && results.controls_loaded" x-text="results.controls_loaded + ' controls'"></span>
+    </div>
+  </div>
+
   <!-- Footer -->
-  <div style="padding:0.75rem 1.25rem;border-top:1px solid var(--sidebar-border);font-size:0.7rem;color:var(--sidebar-muted);">
-    WAF++ PASS v0.1.0
+  <div style="padding:0.5rem 1.25rem;border-top:1px solid var(--sidebar-border);font-size:0.7rem;color:var(--sidebar-muted);">
+    WAF++ PASS v0.2.0
   </div>
 </aside>
 
@@ -215,7 +258,9 @@
         'risk-acceptance': 'Risk Acceptance',
         scan: 'Run Scan',
         sandbox: 'Architect Sandbox',
-        regions: 'Deployed Regions'
+        regions: 'Deployed Regions',
+        changelog: 'Changelog &amp; Installation',
+        settings: 'Settings'
       }[page]"></h1>
       <p class="text-xs text-slate-500" x-text="{
         dashboard: 'Risk posture overview across all WAF++ pillars',
@@ -225,7 +270,9 @@
         waivers: 'Manage intentional risk acceptances and export to .wafpass-skip.yml',
         'risk-acceptance': 'Formal risk acceptance register with full approval and audit trail',
         scan: 'Execute a WAF++ PASS scan against your IaC directory',
-        sandbox: 'Write Terraform and instantly evaluate it against all WAF++ controls'
+        sandbox: 'Write Terraform and instantly evaluate it against all WAF++ controls',
+        changelog: 'WAFPass release history and setup instructions',
+        settings: 'General configuration, feature defaults, and maturity model'
       }[page]"></p>
       </div>
     </div>
@@ -1242,6 +1289,411 @@
       </div>
     </section>
 
+    <!-- ══ SETTINGS ══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'settings'" x-transition style="max-width:900px;margin:0 auto;">
+
+      <!-- ── MATURITY LEVEL ────────────────────────────────────────────── -->
+      <div style="margin-bottom:2.5rem;">
+        <div style="margin-bottom:1.25rem;">
+          <h2 style="font-size:1rem;font-weight:700;color:var(--text);margin:0 0 0.3rem;display:flex;align-items:center;gap:0.5rem;">
+            <svg class="w-4 h-4" style="color:var(--waf-brand);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            Maturity Level
+          </h2>
+          <p style="font-size:0.82rem;color:var(--muted);margin:0;">Select the level that reflects your organisation's current cloud compliance posture. Selecting a level pre-configures recommended feature defaults — you can still adjust any setting individually below.</p>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;" class="settings-levels-grid">
+
+          <!-- L1: Foundational -->
+          <div @click="setMaturityLevel(1)" style="border-radius:16px;padding:1.25rem;cursor:pointer;border:2px solid var(--border);background:var(--surface);transition:border-color 0.15s,box-shadow 0.15s;" :style="maturityLevel===1?'border-color:#d97706;box-shadow:0 0 0 3px rgba(217,119,6,.12);':''">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(217,119,6,.1);display:flex;align-items:center;justify-content:center;">
+                <svg class="w-5 h-5" style="color:#d97706;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M1 12h1M22 12h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+              </div>
+              <div style="width:20px;height:20px;border-radius:50%;border:2px solid;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all 0.15s;" :style="maturityLevel===1?'border-color:#d97706;background:#d97706;':'border-color:#cbd5e1;background:transparent;'">
+                <svg x-show="maturityLevel===1" style="width:10px;height:10px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3.5" d="M5 13l4 4L19 7"/></svg>
+              </div>
+            </div>
+            <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#d97706;margin-bottom:0.2rem;">Level 1</div>
+            <div style="font-size:0.95rem;font-weight:700;color:var(--text);margin-bottom:0.2rem;">Foundational</div>
+            <div style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem;line-height:1.4;">Getting started with cloud compliance</div>
+            <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.35rem;margin-bottom:1rem;">
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#d97706;font-weight:700;flex-shrink:0;">→</span>Critical &amp; High severity only</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#d97706;font-weight:700;flex-shrink:0;">→</span>Security &amp; Cost pillars (P1–P2)</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#d97706;font-weight:700;flex-shrink:0;">→</span>Fast feedback, minimal overhead</li>
+              <li style="font-size:0.75rem;color:var(--muted);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#cbd5e1;flex-shrink:0;">→</span>Intelligence features off</li>
+              <li style="font-size:0.75rem;color:var(--muted);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#cbd5e1;flex-shrink:0;">→</span>No regulatory framework req.</li>
+            </ul>
+            <div style="padding-top:0.75rem;border-top:1px solid var(--border);">
+              <span style="font-size:0.65rem;background:#fef3c7;color:#92400e;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">Startup / Early-stage</span>
+            </div>
+          </div>
+
+          <!-- L2: Operational -->
+          <div @click="setMaturityLevel(2)" style="border-radius:16px;padding:1.25rem;cursor:pointer;border:2px solid var(--border);background:var(--surface);transition:border-color 0.15s,box-shadow 0.15s;" :style="maturityLevel===2?'border-color:#0094FF;box-shadow:0 0 0 3px rgba(0,148,255,.12);':''">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(0,148,255,.1);display:flex;align-items:center;justify-content:center;">
+                <svg class="w-5 h-5" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+              </div>
+              <div style="width:20px;height:20px;border-radius:50%;border:2px solid;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all 0.15s;" :style="maturityLevel===2?'border-color:#0094FF;background:#0094FF;':'border-color:#cbd5e1;background:transparent;'">
+                <svg x-show="maturityLevel===2" style="width:10px;height:10px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3.5" d="M5 13l4 4L19 7"/></svg>
+              </div>
+            </div>
+            <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#0094FF;margin-bottom:0.2rem;">Level 2</div>
+            <div style="font-size:0.95rem;font-weight:700;color:var(--text);margin-bottom:0.2rem;">Operational</div>
+            <div style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem;line-height:1.4;">Running compliance as standard practice</div>
+            <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.35rem;margin-bottom:1rem;">
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#0094FF;font-weight:700;flex-shrink:0;">→</span>Medium+ severity, all active pillars</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#0094FF;font-weight:700;flex-shrink:0;">→</span>Waivers, risk register, PDF reports</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#0094FF;font-weight:700;flex-shrink:0;">→</span>Secret scanner + blast radius on</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#0094FF;font-weight:700;flex-shrink:0;">→</span>GDPR, BSI C5, ISO 27001 mapped</li>
+              <li style="font-size:0.75rem;color:var(--muted);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#cbd5e1;flex-shrink:0;">→</span>Auto-fix &amp; ESG tracking off</li>
+            </ul>
+            <div style="padding-top:0.75rem;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:0.3rem;">
+              <span style="font-size:0.65rem;background:#eff6ff;color:#1e40af;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">GDPR</span>
+              <span style="font-size:0.65rem;background:#eff6ff;color:#1e40af;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">BSI C5</span>
+              <span style="font-size:0.65rem;background:#eff6ff;color:#1e40af;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">ISO 27001</span>
+            </div>
+          </div>
+
+          <!-- L3: Optimised -->
+          <div @click="setMaturityLevel(3)" style="border-radius:16px;padding:1.25rem;cursor:pointer;border:2px solid var(--border);background:var(--surface);transition:border-color 0.15s,box-shadow 0.15s;" :style="maturityLevel===3?'border-color:#059669;box-shadow:0 0 0 3px rgba(5,150,105,.12);':''">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(5,150,105,.1);display:flex;align-items:center;justify-content:center;">
+                <svg class="w-5 h-5" style="color:#059669;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
+              </div>
+              <div style="width:20px;height:20px;border-radius:50%;border:2px solid;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all 0.15s;" :style="maturityLevel===3?'border-color:#059669;background:#059669;':'border-color:#cbd5e1;background:transparent;'">
+                <svg x-show="maturityLevel===3" style="width:10px;height:10px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3.5" d="M5 13l4 4L19 7"/></svg>
+              </div>
+            </div>
+            <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#059669;margin-bottom:0.2rem;">Level 3</div>
+            <div style="font-size:0.95rem;font-weight:700;color:var(--text);margin-bottom:0.2rem;">Optimised</div>
+            <div style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem;line-height:1.4;">Continuous compliance at scale</div>
+            <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.35rem;margin-bottom:1rem;">
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#059669;font-weight:700;flex-shrink:0;">→</span>All severities, all 7 pillars</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#059669;font-weight:700;flex-shrink:0;">→</span>Full intelligence suite enabled</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#059669;font-weight:700;flex-shrink:0;">→</span>Auto-fix engine + ESG/carbon tracking</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#059669;font-weight:700;flex-shrink:0;">→</span>Full audit trail, multi-pillar reports</li>
+              <li style="font-size:0.75rem;color:var(--text);display:flex;gap:0.45rem;align-items:flex-start;"><span style="color:#059669;font-weight:700;flex-shrink:0;">→</span>All regulatory frameworks mapped</li>
+            </ul>
+            <div style="padding-top:0.75rem;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:0.3rem;">
+              <span style="font-size:0.65rem;background:#ecfdf5;color:#065f46;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">GDPR</span>
+              <span style="font-size:0.65rem;background:#ecfdf5;color:#065f46;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">BSI C5</span>
+              <span style="font-size:0.65rem;background:#ecfdf5;color:#065f46;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">ISO 27001</span>
+              <span style="font-size:0.65rem;background:#ecfdf5;color:#065f46;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">SOC 2</span>
+              <span style="font-size:0.65rem;background:#ecfdf5;color:#065f46;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">NIS2</span>
+              <span style="font-size:0.65rem;background:#ecfdf5;color:#065f46;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600;">HIPAA</span>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /maturity -->
+
+      <!-- ── GENERAL SETTINGS ─────────────────────────────────────────── -->
+      <div style="margin-bottom:2rem;">
+        <h2 style="font-size:1rem;font-weight:700;color:var(--text);margin:0 0 1rem;display:flex;align-items:center;gap:0.5rem;">
+          <svg class="w-4 h-4" style="color:var(--waf-brand);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+          General Settings
+        </h2>
+
+        <!-- Scan Defaults -->
+        <div class="card" style="margin-bottom:1rem;background:var(--bg);">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:0.25rem;">Scan Defaults</div>
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 1rem;">These defaults pre-fill the Run Scan form and are passed as CLI flags when generating commands.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;" class="settings-3col">
+            <div>
+              <label style="font-size:0.78rem;font-weight:600;color:var(--text);display:block;margin-bottom:0.35rem;">Default IaC Framework</label>
+              <select x-model="settings.defaultIac" class="input">
+                <option value="terraform">Terraform</option>
+                <option value="cdk">AWS CDK</option>
+                <option value="bicep">Bicep (stub)</option>
+                <option value="pulumi">Pulumi (stub)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:0.78rem;font-weight:600;color:var(--text);display:block;margin-bottom:0.35rem;">CI/CD Fail-on Threshold</label>
+              <select x-model="settings.failOn" class="input">
+                <option value="fail">fail — break on FAIL</option>
+                <option value="skip">skip — break on FAIL or SKIP</option>
+                <option value="any">any — break on any deviation</option>
+                <option value="none">none — never break CI</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:0.78rem;font-weight:600;color:var(--text);display:block;margin-bottom:0.35rem;">Minimum Severity to Show</label>
+              <select x-model="settings.defaultSeverity" class="input">
+                <option value="">All severities</option>
+                <option value="critical">Critical only</option>
+                <option value="high">High &amp; Critical</option>
+                <option value="medium">Medium and above</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Intelligence Features -->
+        <div class="card" style="margin-bottom:1rem;background:var(--bg);">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:0.25rem;">Intelligence Features</div>
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 1rem;">Enhanced analysis modules that run alongside the core control checks. Disabling them speeds up scans in resource-constrained environments.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.625rem;" class="settings-2col">
+            <!-- Secret Scanner -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem;background:var(--surface);border-radius:12px;border:1px solid var(--border);">
+              <div>
+                <div style="font-size:0.82rem;font-weight:600;color:var(--text);">Secret Scanner</div>
+                <div style="font-size:0.72rem;color:var(--muted);margin-top:0.1rem;">Detect exposed API keys and credentials in IaC</div>
+              </div>
+              <button @click="settings.secretScanner = !settings.secretScanner" class="toggle-track" :style="settings.secretScanner ? 'background:#0094FF;' : 'background:#cbd5e1;'">
+                <div class="toggle-thumb" :style="settings.secretScanner ? 'left:21px;' : 'left:3px;'"></div>
+              </button>
+            </div>
+            <!-- Auto-fix -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem;background:var(--surface);border-radius:12px;border:1px solid var(--border);">
+              <div>
+                <div style="font-size:0.82rem;font-weight:600;color:var(--text);">Auto-fix Engine <span style="font-size:0.6rem;font-weight:800;background:rgba(234,88,12,.12);color:#c2410c;padding:0.1rem 0.35rem;border-radius:3px;margin-left:0.25rem;">α</span></div>
+                <div style="font-size:0.72rem;color:var(--muted);margin-top:0.1rem;">Generate concrete remediation patches for FAIL controls</div>
+              </div>
+              <button @click="settings.autoFix = !settings.autoFix" class="toggle-track" :style="settings.autoFix ? 'background:#0094FF;' : 'background:#cbd5e1;'">
+                <div class="toggle-thumb" :style="settings.autoFix ? 'left:21px;' : 'left:3px;'"></div>
+              </button>
+            </div>
+            <!-- Carbon & ESG -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem;background:var(--surface);border-radius:12px;border:1px solid var(--border);">
+              <div>
+                <div style="font-size:0.82rem;font-weight:600;color:var(--text);">Carbon &amp; ESG Tracking</div>
+                <div style="font-size:0.72rem;color:var(--muted);margin-top:0.1rem;">Estimate carbon footprint per control, included in PDF</div>
+              </div>
+              <button @click="settings.carbonTracking = !settings.carbonTracking" class="toggle-track" :style="settings.carbonTracking ? 'background:#0094FF;' : 'background:#cbd5e1;'">
+                <div class="toggle-thumb" :style="settings.carbonTracking ? 'left:21px;' : 'left:3px;'"></div>
+              </button>
+            </div>
+            <!-- Blast Radius -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem;background:var(--surface);border-radius:12px;border:1px solid var(--border);">
+              <div>
+                <div style="font-size:0.82rem;font-weight:600;color:var(--text);">Blast Radius Display</div>
+                <div style="font-size:0.72rem;color:var(--muted);margin-top:0.1rem;">Show impact score per control to prioritise remediation</div>
+              </div>
+              <button @click="settings.blastRadius = !settings.blastRadius" class="toggle-track" :style="settings.blastRadius ? 'background:#0094FF;' : 'background:#cbd5e1;'">
+                <div class="toggle-thumb" :style="settings.blastRadius ? 'left:21px;' : 'left:3px;'"></div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reporting -->
+        <div class="card" style="background:var(--bg);">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--text);margin-bottom:0.25rem;">Reporting</div>
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 1rem;">Control how scan results are presented and exported.</p>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:0.75rem;background:var(--surface);border-radius:12px;border:1px solid var(--border);">
+            <div>
+              <div style="font-size:0.82rem;font-weight:600;color:var(--text);">Auto-open PDF after export</div>
+              <div style="font-size:0.72rem;color:var(--muted);margin-top:0.1rem;">Automatically open the generated PDF report in a new tab</div>
+            </div>
+            <button @click="settings.pdfAutoOpen = !settings.pdfAutoOpen" class="toggle-track" :style="settings.pdfAutoOpen ? 'background:#0094FF;' : 'background:#cbd5e1;'">
+              <div class="toggle-thumb" :style="settings.pdfAutoOpen ? 'left:21px;' : 'left:3px;'"></div>
+            </button>
+          </div>
+        </div>
+      </div><!-- /general settings -->
+
+      <!-- Save -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+        <p style="font-size:0.75rem;color:var(--muted);margin:0;display:flex;align-items:center;gap:0.4rem;">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          Settings are persisted in browser local storage and survive page reloads.
+        </p>
+        <button @click="saveSettings()" class="btn btn-primary" style="flex-shrink:0;">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+          Save Settings
+        </button>
+      </div>
+
+    </section>
+
+    <!-- ══ CHANGELOG & INSTALL ════════════════════════════════════════════ -->
+    <section x-show="page === 'changelog'" x-transition style="max-width:860px;margin:0 auto;">
+    <!-- Beta notice -->
+    <div style="background:rgba(255,207,99,.10);border:1px solid rgba(255,207,99,.25);border-radius:14px;padding:0.75rem 1rem;display:flex;align-items:flex-start;gap:0.75rem;margin-bottom:1.5rem;">
+      <svg class="w-4 h-4 flex-shrink-0" style="color:#d97706;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <p style="font-size:0.8rem;color:#b45309;margin:0;"><strong>Public beta</strong> — WAFPass v1.0 is planned alongside Framework v1.0, shortly before 12 May 2026. All versions below v1.0 are beta. The API, controls, and scoring model may still change.</p>
+    </div>
+
+
+      <!-- ── INSTALLATION ─────────────────────────────────────────────── -->
+      <div style="margin-bottom:2.5rem;">
+        <h2 style="font-size:1rem;font-weight:700;color:var(--text);margin:0 0 1rem;display:flex;align-items:center;gap:0.5rem;">
+          <svg class="w-4 h-4" style="color:var(--waf-brand);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Installation
+        </h2>
+
+        <!-- Requirements -->
+        <div class="card" style="margin-bottom:1rem;background:var(--bg);border-color:var(--border);">
+          <div style="font-size:0.8rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">Requirements</div>
+          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+            <span class="pill" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">Python 3.10+</span>
+            <span class="pill" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;">Terraform .tf files or CDK project</span>
+            <span class="pill" style="background:#faf5ff;color:#7e22ce;border:1px solid #e9d5ff;">WAF++ Controls (YAML)</span>
+            <span class="pill" style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa;">No cloud credentials required</span>
+          </div>
+        </div>
+
+        <!-- Install methods -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;" class="cl-install-grid">
+
+          <!-- From GitHub release -->
+          <div class="card" style="background:var(--bg);">
+            <div style="font-size:0.8rem;font-weight:700;color:var(--text);margin-bottom:0.5rem;">From GitHub Release</div>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.625rem;">Download the <code style="background:#e2e8f0;padding:0.1rem 0.35rem;border-radius:4px;font-size:0.72rem;">.whl</code> artifact from the latest release and install it via pip.</p>
+            <pre style="background:#0f172a;border-radius:10px;padding:0.75rem 1rem;margin:0;font-family:monospace;font-size:0.72rem;line-height:1.7;overflow-x:auto;"><span style="color:#94a3b8;"># Download from GitHub Releases</span>
+<span style="color:#86efac;">pip install</span> <span style="color:#fde68a;">wafpass-0.2.0-py3-none-any.whl</span></pre>
+          </div>
+
+          <!-- From source -->
+          <div class="card" style="background:var(--bg);">
+            <div style="font-size:0.8rem;font-weight:700;color:var(--text);margin-bottom:0.5rem;">From Source</div>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.625rem;">Clone the repository and install in editable mode. Works with pip or uv.</p>
+            <pre style="background:#0f172a;border-radius:10px;padding:0.75rem 1rem;margin:0;font-family:monospace;font-size:0.72rem;line-height:1.7;overflow-x:auto;"><span style="color:#94a3b8;"># Standard pip</span>
+<span style="color:#86efac;">pip install</span> <span style="color:#fde68a;">-e .</span>
+
+<span style="color:#94a3b8;"># Or with uv (faster)</span>
+<span style="color:#86efac;">uv pip install</span> <span style="color:#fde68a;">-e .</span></pre>
+          </div>
+        </div>
+
+        <!-- Quick start -->
+        <div class="card" style="margin-top:1rem;background:var(--bg);">
+          <div style="font-size:0.8rem;font-weight:700;color:var(--text);margin-bottom:0.625rem;">Quick Start</div>
+          <pre style="background:#0f172a;border-radius:10px;padding:0.875rem 1rem;margin:0;font-family:monospace;font-size:0.72rem;line-height:1.8;overflow-x:auto;"><span style="color:#94a3b8;"># 1. Download WAF++ controls into a local controls/ directory</span>
+<span style="color:#94a3b8;">#    (from the WAF++ framework repo or author your own YAML controls)</span>
+
+<span style="color:#94a3b8;"># 2. Run a scan against your IaC directory (Terraform default)</span>
+<span style="color:#86efac;">wafpass check</span> <span style="color:#fde68a;">./infra/</span>
+
+<span style="color:#94a3b8;"># 3. Specify IaC framework explicitly</span>
+<span style="color:#86efac;">wafpass check</span> <span style="color:#fde68a;">./infra/</span> <span style="color:#c4b5fd;">--iac terraform</span>
+
+<span style="color:#94a3b8;"># 4. Multi-cloud / multi-path scan</span>
+<span style="color:#86efac;">wafpass check</span> <span style="color:#fde68a;">./aws ./azure ./gcp</span>
+
+<span style="color:#94a3b8;"># 5. Launch the web UI dashboard</span>
+<span style="color:#86efac;">wafpass ui start</span>
+<span style="color:#94a3b8;"># → http://localhost:8080
+
+# 6. Export a PDF compliance report</span>
+<span style="color:#86efac;">wafpass check</span> <span style="color:#fde68a;">./infra/</span> <span style="color:#c4b5fd;">--output pdf</span></pre>
+        </div>
+
+        <!-- CI/CD tip -->
+        <div style="margin-top:1rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:0.875rem 1rem;display:flex;gap:0.75rem;">
+          <svg class="w-4 h-4 flex-shrink-0 mt-0.5" style="color:#2563eb;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          <div>
+            <div style="font-size:0.8rem;font-weight:600;color:#1e40af;margin-bottom:0.2rem;">CI/CD Integration</div>
+            <p style="font-size:0.78rem;color:#1e40af;margin:0;">Use <code style="background:#dbeafe;padding:0.1rem 0.3rem;border-radius:3px;">--fail-on fail</code> to break pipelines on control failures. Native GitHub Actions and GitLab CI examples are available in the documentation. Intentional exceptions go in <code style="background:#dbeafe;padding:0.1rem 0.3rem;border-radius:3px;">.wafpass-skip.yml</code> and appear as WAIVED in reports without breaking CI.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── CHANGELOG ───────────────────────────────────────────────── -->
+      <div>
+        <h2 style="font-size:1rem;font-weight:700;color:var(--text);margin:0 0 1rem;display:flex;align-items:center;gap:0.5rem;">
+          <svg class="w-4 h-4" style="color:var(--waf-brand);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          Release History
+        </h2>
+
+        <!-- v0.2.0 -->
+        <div style="position:relative;padding-left:1.5rem;margin-bottom:1.75rem;">
+          <div style="position:absolute;left:0;top:0.35rem;width:10px;height:10px;border-radius:50%;background:var(--waf-brand);box-shadow:0 0 0 3px rgba(0,148,255,.2);"></div>
+          <div style="position:absolute;left:4px;top:1.1rem;bottom:-1rem;width:2px;background:var(--border);"></div>
+          <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">v0.2.0 Beta</span>
+            <span class="pill" style="background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;">Current</span>
+            <span style="font-size:0.75rem;color:var(--muted);">March 2026</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;" class="cl-grid">
+            <div>
+              <div style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">New Features</div>
+              <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.3rem;">
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Web UI dashboard for compliance visualization</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Mobile-responsive dashboard theme</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Deployed regions in compliance output</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Sandbox environment support</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Risk acceptance (waivers) with justification</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Auto-fix engine for automated remediation</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Carbon footprint estimation (ESG)</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Secret scanner with remediation guidance</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Blast radius scoring per control</li>
+              </ul>
+            </div>
+            <div>
+              <div style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">Fixes &amp; Infrastructure</div>
+              <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.3rem;">
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Favicon added to web UI</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#059669;margin-top:1px;">✓</span> Permitted Git workflow documented</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- v0.1.1 -->
+        <div style="position:relative;padding-left:1.5rem;margin-bottom:1.75rem;">
+          <div style="position:absolute;left:0;top:0.35rem;width:10px;height:10px;border-radius:50%;background:#cbd5e1;"></div>
+          <div style="position:absolute;left:4px;top:1.1rem;bottom:-1rem;width:2px;background:var(--border);"></div>
+          <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">v0.1.1 Beta</span>
+            <span style="font-size:0.75rem;color:var(--muted);">March 2026</span>
+          </div>
+          <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.3rem;">
+            <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Release workflow corrected for GitHub Actions PyPI publishing</li>
+            <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Release workflow fix attempt</li>
+          </ul>
+        </div>
+
+        <!-- v0.1.0 -->
+        <div style="position:relative;padding-left:1.5rem;margin-bottom:1.75rem;">
+          <div style="position:absolute;left:0;top:0.35rem;width:10px;height:10px;border-radius:50%;background:#cbd5e1;"></div>
+          <div style="position:absolute;left:4px;top:1.1rem;bottom:-1rem;width:2px;background:var(--border);"></div>
+          <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--text);">v0.1.0 Beta</span>
+            <span style="font-size:0.75rem;color:var(--muted);">March 2026</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;" class="cl-grid">
+            <div>
+              <div style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">New Features</div>
+              <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.3rem;">
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Alicloud, Yandex Cloud, Oracle Cloud support</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Executive summary &amp; decision board in PDF reports</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Multi/split report mode for per-pillar reports</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Intentional skip support with skip file</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Risk estimation in PDF reports</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> OpenStreetMap integration &amp; regional spread map</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Regulatory mapping (GDPR, BSI, ISO 27001)</li>
+              </ul>
+            </div>
+            <div>
+              <div style="font-size:0.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">Engine &amp; Fixes</div>
+              <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0.3rem;">
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Dynamic pillar loading without code changes</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> PDF export of compliance results</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Security pillar (Pillar 1) checks</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> Financial impact split into distinct root groups</li>
+                <li style="font-size:0.8rem;color:var(--text);display:flex;gap:0.5rem;"><span style="color:#64748b;margin-top:1px;">•</span> CLI skip file path resolution corrected</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Initial commit -->
+        <div style="position:relative;padding-left:1.5rem;">
+          <div style="position:absolute;left:0;top:0.35rem;width:10px;height:10px;border-radius:50%;background:#e2e8f0;border:2px solid #cbd5e1;"></div>
+          <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.25rem;flex-wrap:wrap;">
+            <span style="font-size:0.9rem;font-weight:700;color:var(--muted);">Initial Commit</span>
+            <span style="font-size:0.75rem;color:var(--muted);">February 2026</span>
+          </div>
+          <p style="font-size:0.8rem;color:var(--muted);margin:0;">WAFPass repository initialized.</p>
+        </div>
+      </div>
+
+    </section>
+
   </div><!-- /p-6 -->
 </main>
 
@@ -1635,6 +2087,12 @@
 </div>
 
 
+<!-- ═══ SETTINGS ══════════════════════════════════════════════════════════ -->
+
+
+<!-- ═══ CHANGELOG & INSTALL ═══════════════════════════════════════════════ -->
+
+
 <!-- ═══ NOTIFICATION TOAST ════════════════════════════════════════════════ -->
 <div x-show="notification" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0" class="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium flex items-center gap-2 max-w-xs"
   :class="notification && notification.type === 'error' ? 'bg-red-600' : 'bg-[#070a12]'">
@@ -1807,8 +2265,24 @@
     // Auto-Fix
     autoFix: { loading: false, applying: false, error: null, result: null, showModal: false, controlIds: null },
 
+    // Settings & Maturity
+    maturityLevel: 1,
+    settings: {
+      defaultIac: 'terraform',
+      failOn: 'fail',
+      secretScanner: true,
+      autoFix: true,
+      carbonTracking: false,
+      blastRadius: true,
+      pdfAutoOpen: false,
+      defaultSeverity: '',
+    },
+
     // ── Init ───────────────────────────────────────────────────────────
     init() {
+      // Load persisted settings
+      try { const _s = localStorage.getItem('wafpass_settings'); if (_s) Object.assign(this.settings, JSON.parse(_s)); } catch(e) {}
+      try { const _m = localStorage.getItem('wafpass_maturity'); if (_m) this.maturityLevel = parseInt(_m) || 1; } catch(e) {}
       this.$watch('results', () => {
         this.$nextTick(() => this.initCharts());
       });
@@ -2189,12 +2663,31 @@
       if (p === 'regions') this.$nextTick(() => this.renderWorldMap());
     },
 
+    saveSettings() {
+      try {
+        localStorage.setItem('wafpass_settings', JSON.stringify(this.settings));
+        localStorage.setItem('wafpass_maturity', String(this.maturityLevel));
+      } catch(e) {}
+      this.notify('Settings saved');
+    },
+
+    setMaturityLevel(level) {
+      this.maturityLevel = level;
+      if (level === 1) {
+        Object.assign(this.settings, { secretScanner: false, autoFix: false, carbonTracking: false, blastRadius: false, failOn: 'fail', defaultSeverity: 'critical' });
+      } else if (level === 2) {
+        Object.assign(this.settings, { secretScanner: true, autoFix: false, carbonTracking: false, blastRadius: true, failOn: 'fail', defaultSeverity: '' });
+      } else {
+        Object.assign(this.settings, { secretScanner: true, autoFix: true, carbonTracking: true, blastRadius: true, failOn: 'skip', defaultSeverity: '' });
+      }
+    },
+
     _applyHash(hash) {
       if (!hash || hash === '#') return;
       const raw = hash.slice(1);
       const qmark = raw.indexOf('?');
       const pageName = qmark === -1 ? raw : raw.slice(0, qmark);
-      const validPages = ['dashboard','controls','findings','compliance','waivers','risk-acceptance','scan','sandbox','regions'];
+      const validPages = ['dashboard','controls','findings','compliance','waivers','risk-acceptance','scan','sandbox','regions','changelog','settings'];
       if (!validPages.includes(pageName)) return;
       this.page = pageName;
       if (pageName === 'regions') this.$nextTick(() => this.renderWorldMap());

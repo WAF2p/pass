@@ -6,16 +6,33 @@ Supported IaC frameworks are loaded as **plugins** — Terraform and AWS CDK are
 
 ## Installation
 
+WAFPass is available via **GitHub release artifacts** or directly **from source**. PyPI is in preparation and will follow.
+
+### Option A — GitHub release artifact (recommended for users)
+
+Download the latest `.whl` from the [GitHub Releases page](https://github.com/WAF2p/pass/releases) and install it:
+
 ```bash
-# Using pip
-pip install -e .
+pip install wafpass-*.whl
+# or with uv (recommended)
+uv pip install wafpass-*.whl
+```
+
+### Option B — From source
+
+```bash
+git clone https://github.com/WAF2p/pass.git
+cd pass
 
 # Using uv (recommended)
 uv pip install -e .
 
-# Install with dev dependencies
-pip install -e ".[dev]"
+# Using pip
+pip install -e .
+
+# With dev dependencies
 uv pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
 ### macOS (Apple M-series)
