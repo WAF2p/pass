@@ -95,12 +95,40 @@ wafpass check ./infra/ --controls-dir /path/to/controls
 # Show only the summary table
 wafpass check ./infra/ --summary
 
-# Generate a PDF report from multiple cloud folders
+# Generate a PDF report (includes carbon footprint automatically)
 wafpass check ./aws ./azure --output pdf --pdf-out report.pdf
+
+# PDF + blast radius + secret scan
+wafpass check ./infra/ --output pdf --pdf-out report.pdf --blast-radius
+
+# Disable hardcoded-secret scanning
+wafpass check ./infra/ --no-secrets
 
 # Print version
 wafpass --version
+
+# Auto-fix failing checks (dry-run by default)
+wafpass fix ./infra/
+wafpass fix ./infra/ --apply
+
+# Web UI server management
+wafpass ui start
+wafpass ui status
+wafpass ui stop
 ```
+
+### PDF report structure
+
+The PDF report is divided into five parts plus an appendix, each introduced by a coloured divider page that identifies the intended audience:
+
+| Part | Title | Audience | Sections |
+|------|-------|----------|----------|
+| **I** | Security Alerts | DevSecOps · Engineering Leads | Hardcoded Secrets (if any) |
+| **II** | Executive Briefing | C-Suite · Board · Sponsors | Decision Brief, Change Tracking |
+| **III** | Risk & Sustainability | CISO · CTO · CFO · ESG Team | Risk Dashboard, Carbon Footprint, Data Geography |
+| **IV** | Technical Deep Dive | Architects · Senior Engineers | Root Cause, Blast Radius, Summary, Regulatory Alignment |
+| **V** | Remediation | Engineering · DevOps | Roadmap, Detailed Findings |
+| **APP** | Appendix | Auditors · GRC · Legal | Controls Inventory, Passed & Skipped, Risk Acceptance Register |
 
 ### Multi-cloud / multi-path scanning
 
@@ -395,6 +423,243 @@ If a waiver has expired, the tool prints a warning to stderr but continues norma
 # GitHub Actions: block on failures, allow waivers
 - name: Run WAF++ PASS
   run: wafpass check ./infra/ --skip-file compliance/accepted-risks.yml --fail-on fail
+```
+
+---
+
+## Risk acceptance register
+
+Waivers are a lightweight in-line mechanism for skipping controls. **Risk acceptances** are the formal, auditable counterpart — they record *who* approved a risk, *why*, what ticket or RFC covers it, the residual risk level, and when the acceptance expires.
+
+Risk acceptances differ from waivers in two ways:
+
+- They carry richer governance metadata (approver, RFC, Jira link, residual risk, accepted date).
+- They are rendered as a dedicated **Risk Acceptance Register** one-pager in the PDF report — suitable for auditor handover — including a sign-off block with CISO and approver lines.
+
+### `risk_acceptance.yml`
+
+Drop a `risk_acceptance.yml` file in the directory you pass to `wafpass check`. PASS auto-discovers it before falling back to `.wafpass-skip.yml`.
+
+```yaml
+# risk_acceptance.yml
+waivers:
+  - id: WAF-SEC-020
+    reason: >
+      Covered by external quarterly IAM review — approved via ticket SEC-1234
+      on 2026-03-01. Internal review scheduled for Q3 2026.
+    expires: "2026-09-30"
+
+  - id: WAF-COST-010
+    reason: >
+      Cost tagging is enforced at the Terraform module level via a shared
+      locals block; individual resource-level tags are therefore redundant.
+      Approved by Platform Lead on 2026-01-15 (ticket PLAT-0042).
+```
+
+Each entry requires `id` and `reason`. `expires` is optional (ISO-8601); expired entries trigger a CLI warning and are flagged in the PDF.
+
+```bash
+# Auto-discovery: place risk_acceptance.yml in the current directory
+wafpass check ./infra/
+
+# Explicit path
+wafpass check ./infra/ --skip-file ./compliance/risk_acceptance.yml
+```
+
+### PDF Risk Acceptance Register
+
+When a `risk_acceptance.yml` is present, the Appendix of the PDF report gains a **Risk Acceptance Register** section containing:
+
+- A KPI banner: total / active / expiring within 30 days / expired counts
+- A full register table: Control ID · Title · Pillar · Severity · Justification · Expiry · Status (colour-coded ACTIVE / EXPIRES SOON / EXPIRED / PERMANENT)
+- A printable sign-off block with CISO and Approver signature lines
+
+### Web UI
+
+The **Risk Acceptance** page in the web UI (`#risk-acceptance`) provides a full CRUD interface for acceptances with richer fields (approver, owner, RFC, Jira link, risk treatment, residual risk, accepted date). Entries are stored in `serve/risk_acceptances.yml` and applied automatically on every scan.
+
+---
+
+## Auto-fix (`wafpass fix`)
+
+`wafpass fix` analyses your IaC files, determines which failing assertions can be patched automatically, and either previews a coloured diff or writes the changes to disk.
+
+### How it works
+
+The engine:
+
+1. Runs the same check pipeline as `wafpass check`.
+2. Builds a `ResourceLocator` by scanning `.tf` files with a brace-counting state machine that handles heredocs, nested blocks, and multi-file projects.
+3. For each failing assertion derives the minimum change needed — e.g. `is_true → true`, `equals 14 → 14`, `in ["AES256","aws:kms"] → "AES256"`.
+4. Deduplicates patches by `(file, address, attribute)` so the same attribute is never written twice.
+5. Guards against overwriting Terraform dynamic expressions (`var.`, `local.`, `${…}`, `merge(…)`, etc.) — those lines are left untouched.
+
+**Dry-run is the default.** Pass `--apply` to write changes.
+
+### Usage
+
+```bash
+# Preview what would change (dry-run)
+wafpass fix ./infra/
+
+# Apply patches and create .tf.bak backups
+wafpass fix ./infra/ --apply
+
+# Apply without backups
+wafpass fix ./infra/ --apply --no-backup
+
+# Scope to a single pillar
+wafpass fix ./infra/ --pillar security
+
+# Scope to specific controls
+wafpass fix ./infra/ --controls WAF-SEC-010,WAF-REL-030
+
+# Fix only high-severity and above
+wafpass fix ./infra/ --severity high --apply
+```
+
+### What can be auto-fixed
+
+| Operator | Example fix |
+|----------|-------------|
+| `is_true` | `require_symbols = false` → `true` |
+| `is_false` | `publicly_accessible = true` → `false` |
+| `equals` | `minimum_password_length = 6` → `14` |
+| `greater_than_or_equal` | `backup_retention_period = 1` → `7` |
+| `less_than_or_equal` | `max_password_age = 365` → `90` |
+| `in` | `sse_algorithm = "NONE"` → `"AES256"` |
+| `key_exists` | adds `"Environment" = "TODO-fill-in"` to a `tags` block |
+
+Operators that require judgement (`block_exists`, `not_contains`, `matches`, `has_associated_resource`, all runtime-state operators) are reported as **skipped** with a plain-English reason.
+
+### Output
+
+```
+Dry-run — no files changed (pass --apply to write patches)
+
+ security/iam.tf — aws_iam_account_password_policy.corporate
+  ╔══ diff ════════════════════════════════════════╗
+  ║ - minimum_password_length = 6                  ║
+  ║ + minimum_password_length = 14                 ║
+  ║ - require_symbols         = false              ║
+  ║ + require_symbols         = true               ║
+  ╚════════════════════════════════════════════════╝
+
+Patches ready: 7  ·  Files affected: 1  ·  Skipped (manual fix needed): 3
+```
+
+After `--apply` the command re-runs the checks and reports a **delta**: how many previously failing checks are now passing.
+
+### Safety
+
+- `.tf.bak` backups are created by default (disable with `--no-backup`).
+- Terraform dynamic references are never overwritten.
+- Each `(file, address, attribute)` triple is patched at most once.
+- The command exits non-zero if any failing check remains after apply.
+
+---
+
+## Hardcoded secret detection
+
+WAF++ PASS scans your IaC source files for hardcoded credentials **before** evaluating controls. Findings are printed prominently to the console and included as the first section of the PDF report.
+
+The scanner is **enabled by default** on every `wafpass check` run. Disable it with `--no-secrets` if needed.
+
+### What is detected
+
+| Category | Example attribute names matched |
+|---|---|
+| Passwords | `password`, `passwd`, `db_password`, `MASTER_PASSWORD`, … |
+| Secrets | `secret`, `client_secret`, `APP_SECRET`, … |
+| API keys | `api_key`, `apikey`, `SUBSCRIPTION_KEY`, … |
+| Tokens | `token`, `auth_token`, `SLACK_BOT_TOKEN`, `GITHUB_TOKEN`, … |
+| Access keys | `access_key`, `access_key_id`, `AWS_ACCESS_KEY_ID`, … |
+| Secret keys | `secret_key`, `secret_access_key`, `AWS_SECRET_ACCESS_KEY`, … |
+| Private keys | `private_key`, `rsa_private_key`, `TLS_PRIVATE_KEY`, … |
+| Connection strings | `connection_string`, `database_url`, `POSTGRES_URL`, … |
+| AWS AKIA key IDs | Any value matching `AKIA[A-Z0-9]{16}` |
+| PEM private key blocks | `-----BEGIN … PRIVATE KEY-----` |
+
+Compound underscore-delimited key names (e.g. `SLACK_BOT_TOKEN`, `DB_MASTER_PASSWORD`) are matched regardless of casing.
+
+### What is NOT flagged (safe values)
+
+The scanner skips values that are clearly IaC references or placeholders:
+
+- Terraform variable references: `var.db_password`, `${var.secret}`
+- Data source references: `data.aws_secretsmanager_secret_version.db.secret_string`
+- Module outputs: `module.secrets.api_key`
+- Vault / Key Vault / Secrets Manager paths (contain the words `vault`, `secretsmanager`, `keyvault`)
+- Common placeholder strings: `REPLACE_…`, `YOUR_…`, `changeme`, `dummy`, `example`, `<YOUR_KEY>`, `****`, …
+
+### Console output
+
+When secrets are found, a red warning panel is printed to stderr **before** the main report:
+
+```
+╭──────────────────── ⚠  HARDCODED SECRETS DETECTED ─────────────────────╮
+│  Severity  File : Line               Finding              Attribute       │
+│  CRITICAL  providers.tf:35           Hardcoded access key access_key      │
+│  CRITICAL  providers.tf:36           Hardcoded secret key secret_key      │
+│  CRITICAL  database.tf:48            Hardcoded password   password        │
+│  HIGH      monitoring.tf:39          Hardcoded token      SLACK_BOT_TOKEN │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+4 hardcoded secret(s) found. These must be remediated before deployment.
+```
+
+Values are always **masked** in output (`Wafp********`) — the raw secret is never printed.
+
+### PDF report
+
+Secret findings appear in **Part I — Security Alerts** of the PDF report (first section after the table of contents), with:
+- A severity KPI strip (Critical / High / Medium / Suppressed counts)
+- A findings table with file path, line number, matched attribute, and masked value
+- Inline remediation guidance for AWS, Azure, GCP, and HashiCorp Vault
+
+### How to fix
+
+Instead of hardcoding credentials, reference a managed secret:
+
+```hcl
+# ✗ Before — hardcoded
+password = "Wafpp@Postgres2024!"
+
+# ✓ After — AWS Secrets Manager
+password = data.aws_secretsmanager_secret_version.db.secret_string
+
+# ✓ After — AWS SSM Parameter Store
+password = data.aws_ssm_parameter.db_password.value
+
+# ✓ After — Terraform variable (pass value via TF_VAR_db_password env var)
+variable "db_password" {}
+password = var.db_password
+
+# ✓ After — Azure Key Vault
+password = "@Microsoft.KeyVault(SecretUri=https://myvault.vault.azure.net/secrets/db-pass)"
+
+# ✓ After — HashiCorp Vault
+password = data.vault_generic_secret.db.data["password"]
+```
+
+### Suppressing a finding
+
+If a value is intentionally non-sensitive (e.g. a known-public test credential or a CI seed value), suppress the finding on that line with an inline comment:
+
+```hcl
+password = "ci-seed-only-not-real"  # wafpass:ignore-secret  reason: non-sensitive CI seed value
+```
+
+Suppressed findings are excluded from the console output and counted separately in the PDF report. Use sparingly — every suppression should include a `reason`.
+
+### CLI flag
+
+```bash
+# Run with secret scanning (default)
+wafpass check ./infra/
+
+# Disable secret scanning
+wafpass check ./infra/ --no-secrets
 ```
 
 ---
@@ -862,6 +1127,122 @@ The `snapshot` dict passed to `export()` is the complete run snapshot from `wafp
 
 ---
 
+## Blast radius analysis
+
+When a resource fails a control, other resources that *reference* it inherit part of that risk — this is the blast radius. Run `--blast-radius` to visualise the propagation:
+
+```bash
+wafpass check ./infra/ --blast-radius
+wafpass check ./infra/ --blast-radius --blast-radius-out diagrams/blast.md
+wafpass check ./infra/ --blast-radius --output pdf --pdf-out report.pdf
+```
+
+### How it works
+
+1. **Reference extraction** — the scanner reads every Terraform `${resource_type.name.attr}` interpolation in attribute values to build a downstream dependency graph.
+2. **BFS propagation** — starting from every resource that failed at least one control, a breadth-first search walks the graph and assigns each downstream resource a *hop distance*.
+3. **Criticality labelling** — hop distance maps to an impact tier:
+
+| Hop | Label | Meaning |
+|-----|-------|---------|
+| 0 | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` | Root cause — the resource itself failed a control; label = failing control severity |
+| 1 | `HIGH` | Directly references a failing resource |
+| 2 | `MEDIUM` | Two hops away |
+| 3+ | `LOW` | Residual / tertiary exposure |
+
+### Console output
+
+A colour-coded Rich tree is printed after the main report:
+
+```
+🔴 aws_kms_key.main  [WAF-SEC-010]  CRITICAL
+ └── 🟠 aws_db_instance.prod  HIGH
+      └── 🟡 aws_lambda_function.api  MEDIUM
+
+  🔴 CRITICAL  🟠 HIGH  🟡 MEDIUM  ⚪ LOW
+```
+
+### Mermaid diagram
+
+A `blast_radius.md` file is written containing a `graph LR` Mermaid diagram with colour-coded nodes, renderable natively in GitHub, GitLab, and Notion:
+
+```markdown
+​```mermaid
+graph LR
+  aws_kms_key__main["aws_kms_key.main\nFAIL: WAF-SEC-010\nCRITICAL"]
+  aws_db_instance__prod["aws_db_instance.prod\nHIGH"]
+  aws_kms_key__main --> aws_db_instance__prod
+  style aws_kms_key__main fill:#c0392b,stroke:#c0392b,color:#ffffff
+  style aws_db_instance__prod fill:#e67e22,stroke:#e67e22,color:#ffffff
+​```
+```
+
+### PDF report
+
+When `--blast-radius` is combined with `--output pdf`, the PDF report includes a **Blast Radius Analysis** section with:
+- KPI strip: root-cause resource count, downstream affected count, total impacted
+- Root-cause resources table (with failed control IDs and severity)
+- Downstream affected resources table (with hop distance and parent resources)
+
+---
+
+## Carbon footprint & sustainability
+
+WAF++ PASS automatically estimates the monthly carbon footprint of your cloud infrastructure whenever a PDF report is generated (`--output pdf`). No extra flag is needed.
+
+### How the estimate is calculated
+
+1. **Resource inventory** — counts every resource type in the parsed IaC state (EC2, RDS, Lambda, S3, EKS, etc.).
+2. **Power lookup** — maps each resource type to an estimated watt draw based on SPECpower benchmarks and the [Cloud Carbon Footprint](https://www.cloudcarbonfootprint.org/) project.
+3. **Grid emission factor** — multiplies energy (kWh/month) by the carbon intensity of the detected deployment region (kgCO₂e/kWh).
+4. **Waste multiplier** — if WAF-COST controls for rightsizing, lifecycle, or FinOps review are **FAIL**, an additional 25% is added to reflect over-provisioned, unoptimised workloads.
+
+> All figures are **directional estimates**. Actual cloud emissions depend on real workload utilisation and provider renewable-energy purchases (RECs).
+
+### What the PDF report shows
+
+The **Carbon Footprint & Sustainability** section (Part III) includes:
+
+| Element | Description |
+|---|---|
+| Monthly CO₂e | Estimated kilograms of CO₂ equivalent per month |
+| Annual CO₂e | 12-month projection in metric tonnes |
+| Monthly energy | Total kWh/month across all resources |
+| Region intensity | Grid emission factor (kgCO₂e/kWh) for the detected region |
+| Real-world equivalences | Car miles, trees needed to offset, phone charges, flight hours |
+| Over-provisioning alert | Extra CO₂e from failing WAF-COST controls (waste) |
+| Region comparison | How much CO₂e would be saved by deploying to the greenest available region |
+| Breakdown by type | Per-resource-type table sorted by CO₂ contribution with % bar |
+
+### Region carbon intensities
+
+Some regions are dramatically cleaner than others:
+
+| Region | Provider | Intensity (kgCO₂e/kWh) | Grid mix |
+|---|---|---|---|
+| `eu-north-1` (Sweden) | AWS | 0.008 | Hydro + nuclear |
+| `eu-central-2` (Switzerland) | AWS | 0.029 | Hydro |
+| `eu-west-3` (France) | AWS | 0.052 | Nuclear |
+| `sa-east-1` (Brazil) | AWS | 0.074 | Hydro |
+| `us-west-2` (Oregon) | AWS | 0.136 | Hydro |
+| `eu-west-1` (Ireland) | AWS | 0.316 | Wind + gas |
+| `eu-central-1` (Germany) | AWS | 0.338 | Mixed |
+| `us-east-1` (Virginia) | AWS | 0.415 | Mixed |
+| `ap-south-1` (Mumbai) | AWS | 0.708 | Coal-heavy |
+| `af-south-1` (Cape Town) | AWS | 0.900 | Coal |
+
+Moving from `eu-central-1` to `eu-north-1` reduces compute emissions by ~**98%**.
+
+### Sustainability recommendations
+
+- **Choose low-carbon regions** — `eu-north-1`, `eu-west-3`, `sa-east-1`, `us-west-2`
+- **Fix WAF-COST controls** — each rightsizing/lifecycle failure adds ~25% to your estimated footprint
+- **Use managed / serverless** — Lambda and DynamoDB have much lower per-unit power draw than EC2/RDS equivalents
+- **Enable instance scheduling** — stopping non-production workloads nights/weekends cuts footprint by up to 70%
+- **Tag for lifecycle** — resources without lifecycle tags cannot be automatically shut down or right-sized
+
+---
+
 ## Exit codes
 
 | Code | Meaning |
@@ -1021,6 +1402,93 @@ git push
 ```
 
 The patch counter resets to `0` automatically because no tags exist yet for the new major.minor.
+
+## Web UI
+
+WAF++ PASS ships with a browser-based dashboard that lets CISOs and security teams interact with controls, manage waivers, and view findings — **no YAML knowledge required**.
+
+### Starting the server
+
+The simplest way to manage the server is through the `wafpass ui` sub-command:
+
+```bash
+# Start in the background, open browser automatically
+wafpass ui start
+
+# Custom host / port
+wafpass ui start --host 0.0.0.0 --port 9090
+
+# Start without opening the browser
+wafpass ui start --no-browser
+
+# Check whether the server is running
+wafpass ui status
+
+# Stop the server
+wafpass ui stop
+```
+
+The server PID is stored in `~/.wafpass/ui.pid` and log output in `~/.wafpass/ui.log`. The `start` command detects if a server is already running and refuses to start a second one.
+
+For development, use `--reload` to enable uvicorn auto-reload:
+
+```bash
+wafpass ui start --reload
+```
+
+You can also start the server directly with uvicorn if you prefer:
+
+```bash
+pip install -e ".[web]"
+uvicorn serve.app:app --reload --port 8080
+```
+
+### Internal serve (production)
+
+A **FastAPI** web server that connects directly to the WAF++ PASS engine. Reads real controls from `controls/`, runs live scans, and persists waivers and risk acceptances to disk.
+
+| Feature | Details |
+|---------|---------|
+| Executive Dashboard | Score gauge, pillar breakdown, severity chart, architectural debt heatmap, quick wins |
+| Controls Library | Browse/search all 70+ controls, filter by pillar/severity |
+| Waiver Manager | Add waivers with reason + expiry, export `.wafpass-skip.yml` |
+| Risk Acceptance | Full CRUD for formal risk acceptances with approver, RFC, Jira link, residual risk, expiry |
+| Findings | Per-check breakdown with remediation guidance, IDE deep-links |
+| Compliance Matrix | GDPR, ISO 27001:2022, BSI C5:2020, EUCS, CSRD mapping |
+| Run Scan | Trigger scans from the browser, results persist across page loads |
+| Auto-Fix *(α)* | Preview and apply surgical IaC patches directly from the UI |
+| PDF Export | Generate and download the full PDF report from the browser |
+
+#### Auto-Fix in the UI
+
+The **Auto-Fix** feature *(alpha)* lets you preview and apply patches without leaving the browser:
+
+1. After a scan, click **Auto-Fix** in the Quick Wins section or Findings filter bar to analyse all failing checks.
+2. Alternatively, open any FAIL finding and click **Auto-Fix this Control** to scope the analysis to a single control.
+3. A diff preview modal shows the exact line-level changes grouped by file, plus a list of checks that require manual remediation.
+4. Click **Apply N Patch(es)** to write the changes to disk — `.tf.bak` backups are created automatically.
+
+> Auto-Fix is in alpha. Always review the diff and run `terraform plan` before deploying.
+
+See [`serve/README.md`](serve/README.md) for the full API reference and deployment guide.
+
+### Demo (standalone)
+
+A **self-contained, no-server** interactive demo with embedded sample data. Open in any browser — no Python, no install.
+
+```bash
+# From the repository root
+open ../web-ui/index.html
+
+# Or serve locally
+python3 -m http.server 3000 --directory ../web-ui
+```
+
+The demo (`../web-ui/index.html`) has the **same UI/UX** as the internal serve but uses embedded JavaScript data instead of a live backend. It includes 17 representative controls, pre-loaded scan results with 7 failures, fully working waiver management with YAML export, and a simulated Auto-Fix preview (the diff is computed client-side; applying redirects to the CLI).
+
+See [`../web-ui/README.md`](../web-ui/README.md) for more details.
+
+---
 
 ## Running tests
 

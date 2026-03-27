@@ -1,0 +1,2548 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WAF++ PASS — Controls Dashboard</title>
+  <link rel="icon" type="image/png" href="/static/logo-square.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+  <script>
+    // Server-injected initial data
+    window.__INITIAL_CONTROLS__ = __CONTROLS_JSON__;
+    window.__INITIAL_WAIVERS__  = __WAIVERS_JSON__;
+    window.__INITIAL_RESULTS__  = __RESULTS_JSON__;
+    window.__INITIAL_RISK_ACCEPTANCES__ = __RISK_ACCEPTANCES_JSON__;
+    window.__MODE__ = "__MODE__";
+  </script>
+  
+  
+  <style>
+    /* ── WAF++ PASS — Brand theme ─────────────────────────────────────── */
+    :root {
+      --waf-brand:       #0094FF;
+      --waf-brand-h:     #21A5FF;
+      --waf-accent:      #FFCF63;
+      --waf-danger:      #DA2C38;
+      --sidebar-bg:      #070a12;
+      --sidebar-surf:    #0f1630;
+      --sidebar-border:  rgba(238,242,255,.10);
+      --sidebar-text:    #b4c0d6;
+      --sidebar-muted:   #64748b;
+      --bg:              #f7f8fb;
+      --surface:         #ffffff;
+      --border:          rgba(15,23,42,.09);
+      --text:            #0b1220;
+      --muted:           #5b6474;
+      --shadow-sm:       0 1px 3px rgba(15,23,42,.06);
+      --shadow-md:       0 4px 24px rgba(15,23,42,.09);
+    }
+    [x-cloak] { display: none !important; }
+
+    body { background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+    /* Sidebar */
+    .waf-sidebar { background: var(--sidebar-bg); }
+    .sidebar-link {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 0.5rem 0.875rem; border-radius: 10px;
+      color: var(--sidebar-text); font-size: 0.875rem; font-weight: 500;
+      transition: all 0.15s; cursor: pointer; width: 100%; border: none;
+      background: transparent;
+    }
+    .sidebar-link:hover { color: #eef2ff; background: rgba(0,148,255,.14); }
+    .sidebar-link.active { color: #fff; background: var(--waf-brand); box-shadow: 0 4px 16px rgba(0,148,255,.30); }
+
+    /* Cards */
+    .card {
+      background: var(--surface); border-radius: 20px;
+      border: 1px solid var(--border); padding: 1.25rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Pills */
+    .pill { display: inline-flex; align-items: center; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 10px; font-size: 0.875rem; font-weight: 600; transition: all 0.15s; cursor: pointer; border: none; }
+    .btn-primary { background: var(--waf-brand); color: #fff; box-shadow: 0 4px 16px rgba(0,148,255,.25); }
+    .btn-primary:hover:not(:disabled) { background: var(--waf-brand-h); }
+    .btn-outline { background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
+    .btn-outline:hover { background: var(--bg); border-color: rgba(0,148,255,.30); color: var(--waf-brand); }
+    .btn-danger { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .btn-danger:hover { background: #fee2e2; }
+
+    /* Inputs */
+    .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 10px; font-size: 0.875rem; outline: none; background: var(--surface); color: var(--text); transition: border-color 0.15s; }
+    .input:focus { border-color: var(--waf-brand); box-shadow: 0 0 0 3px rgba(0,148,255,.12); }
+
+    /* Table */
+    .table-th { padding: 0.75rem 1rem; text-align: left; font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg); }
+    .table-td { padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--text); }
+
+    /* Top header */
+    .waf-header { background: rgba(247,248,251,.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+
+    /* Score colors */
+    .score-glow-green  { color: #059669; }
+    .score-glow-yellow { color: #d97706; }
+    .score-glow-red    { color: var(--waf-danger); }
+
+    /* Sidebar count badges */
+    .sidebar-count       { background: rgba(255,255,255,.08); color: var(--sidebar-text); font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; }
+    .sidebar-count-fail  { background: rgba(218,44,56,.25); color: #fca5a5; }
+    .sidebar-count-waiver{ background: rgba(124,58,237,.25); color: #c4b5fd; }
+
+    /* Accent line under active tab in modals */
+    .tab-active { border-bottom: 2px solid var(--waf-brand); color: var(--waf-brand); }
+
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* Mobile sidebar */
+    .waf-sidebar { transition: transform 0.25s cubic-bezier(0.4,0,0.2,1); }
+    .sidebar-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45); z-index: 39;
+    }
+    @media (max-width: 767px) {
+      .waf-sidebar { transform: translateX(-100%); z-index: 40; }
+      .waf-sidebar.open { transform: translateX(0); }
+      .sidebar-backdrop.open { display: block; }
+      #hamburger-btn { display: flex !important; align-items: center; justify-content: center; }
+      #hamburger-btn:hover { background: rgba(0,148,255,0.1); color: var(--waf-brand); }
+      .waf-main-content { margin-left: 0 !important; }
+    }
+  </style>
+</head>
+
+<body class="h-full font-sans" style="background:var(--bg);" x-data="wafpass()" x-cloak>
+
+<!-- ═══ SIDEBAR ═══════════════════════════════════════════════════════════ -->
+<!-- Mobile sidebar backdrop -->
+<div class="sidebar-backdrop" :class="sidebarOpen ? 'open' : ''" @click="sidebarOpen=false"></div>
+<aside class="waf-sidebar fixed left-0 top-0 h-screen w-64 flex flex-col z-30"
+  :class="sidebarOpen ? 'open' : ''">
+    <!-- Logo -->
+  <div class="px-5 py-4 waf-sidebar-border" style="border-bottom:1px solid var(--sidebar-border);">
+    <div class="flex items-center gap-2">
+      <img src="/static/logo.png" alt="WAF++ Logo" style="height:32px;width:auto;object-fit:contain;filter:brightness(1.05);" />
+    </div>
+    <div style="margin-top:0.375rem;font-size:0.7rem;color:var(--sidebar-muted);letter-spacing:0.06em;text-transform:uppercase;font-weight:600;">Controls Dashboard</div>
+  </div>
+</div>
+
+  <!-- Score badge -->
+  <div class="px-5 py-4" style="border-bottom:1px solid var(--sidebar-border);" x-show="results">
+    <div style="color:var(--sidebar-text);font-size:0.75rem;margin-bottom:0.25rem;">Overall Score</div>
+    <div class="flex items-baseline gap-2">
+      <span class="text-3xl font-bold"
+        :class="results && effectiveScore >= 80 ? 'score-glow-green' : results && effectiveScore >= 60 ? 'score-glow-yellow' : 'score-glow-red'"
+        x-text="results ? effectiveScore + '/100' : '—'"></span>
+    </div>
+    <div style="color:var(--sidebar-muted);font-size:0.7rem;margin-top:0.25rem;" x-text="results ? results.path : ''"></div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="flex-1 px-3 py-4 overflow-y-auto" style="display:flex;flex-direction:column;gap:2px;">
+    <button @click="navTo('dashboard')" :class="page==='dashboard' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      Dashboard
+    </button>
+    <button @click="navTo('controls')" :class="page==='controls' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+      Controls Library
+      <span class="ml-auto sidebar-count" x-text="controls.length"></span>
+    </button>
+    <button @click="navTo('findings')" :class="page==='findings' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      Findings
+      <span x-show="results && results.total_fail > 0" class="ml-auto sidebar-count sidebar-count-fail" x-text="results ? results.total_fail : ''"></span>
+    </button>
+    <button @click="navTo('compliance')" :class="page==='compliance' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Compliance Matrix
+    </button>
+    <button @click="navTo('waivers')" :class="page==='waivers' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      Waivers
+      <span x-show="Object.keys(waivers).length > 0" class="ml-auto sidebar-count sidebar-count-waiver" x-text="Object.keys(waivers).length"></span>
+    </button>
+    <button @click="navTo('risk-acceptance')" :class="page==='risk-acceptance' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+      Risk Acceptance
+      <span x-show="Object.keys(riskAcceptances).length > 0" class="ml-auto sidebar-count sidebar-count-waiver" x-text="Object.keys(riskAcceptances).length"></span>
+    </button>
+    <div style="border-top:1px solid var(--sidebar-border);margin:0.5rem 0;"></div>
+    <button @click="navTo('scan')" :class="page==='scan' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Run Scan
+    </button>
+    <button @click="navTo('sandbox')" :class="page==='sandbox' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+      Architect Sandbox
+    </button>
+    <button @click="navTo('regions')" :class="page==='regions' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Deployed Regions
+    </button>
+  </nav>
+
+  <!-- Footer -->
+  <div style="padding:0.75rem 1.25rem;border-top:1px solid var(--sidebar-border);font-size:0.7rem;color:var(--sidebar-muted);">
+    WAF++ PASS v0.1.0
+  </div>
+</aside>
+
+<!-- ═══ MAIN CONTENT ══════════════════════════════════════════════════════ -->
+<main class="ml-64 waf-main-content">
+
+  <!-- Top header -->
+  <header class="waf-header sticky top-0 z-20 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <button id="hamburger-btn" @click="sidebarOpen = !sidebarOpen" style="display:none;padding:0.375rem;border-radius:8px;background:transparent;border:none;cursor:pointer;color:#475569;flex-shrink:0;" aria-label="Toggle menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div>
+      <h1 class="text-lg font-bold text-slate-900" x-text="{
+        dashboard: 'Executive Dashboard',
+        controls: 'Controls Library',
+        findings: 'Scan Findings',
+        compliance: 'Compliance Matrix',
+        waivers: 'Waivers Manager',
+        'risk-acceptance': 'Risk Acceptance',
+        scan: 'Run Scan',
+        sandbox: 'Architect Sandbox',
+        regions: 'Deployed Regions'
+      }[page]"></h1>
+      <p class="text-xs text-slate-500" x-text="{
+        dashboard: 'Risk posture overview across all WAF++ pillars',
+        controls: 'Browse, filter and manage all WAF++ controls — no YAML required',
+        findings: 'Detailed results from the last scan',
+        compliance: 'Regulatory framework coverage (GDPR, ISO 27001, BSI C5, EUCS)',
+        waivers: 'Manage intentional risk acceptances and export to .wafpass-skip.yml',
+        'risk-acceptance': 'Formal risk acceptance register with full approval and audit trail',
+        scan: 'Execute a WAF++ PASS scan against your IaC directory',
+        sandbox: 'Write Terraform and instantly evaluate it against all WAF++ controls'
+      }[page]"></p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span x-show="results" class="text-xs text-slate-400" x-text="results ? 'Last scan: ' + new Date(results.timestamp).toLocaleString() : ''"></span>
+      <a x-show="results" href="/api/export/pdf" target="_blank" class="btn btn-outline flex items-center gap-1.5" style="font-size:0.75rem;">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Export PDF
+      </a>
+      <button @click="page='scan'" class="btn btn-primary" style="font-size:0.75rem;">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+        Run Scan
+      </button>
+    </div>
+  </header>
+
+  <div class="p-6">
+
+    <!-- ══ DASHBOARD ══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'dashboard'" x-transition>
+
+      <!-- KPI strip -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" x-show="results">
+        <template x-for="kpi in [
+          { label:'Passed', value: results ? results.total_pass : 0, color:'text-green-600', bg:'bg-green-50', border:'border-green-200' },
+          { label:'Failed', value: results ? results.total_fail : 0, color:'text-red-600', bg:'bg-red-50', border:'border-red-200' },
+          { label:'Skipped', value: results ? results.total_skip : 0, color:'text-slate-500', bg:'bg-[#f7f8fb]', border:'border-slate-200' },
+          { label:'Waived', value: results ? results.total_waived : 0, color:'text-purple-600', bg:'bg-purple-50', border:'border-purple-200' }
+        ]">
+          <div class="card flex flex-col items-center" :class="[kpi.bg, kpi.border]">
+            <div class="text-3xl font-bold" :class="kpi.color" x-text="kpi.value"></div>
+            <div class="text-xs font-medium text-slate-500 mt-1" x-text="kpi.label + ' Controls'"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- No results state -->
+      <div x-show="!results" class="card" style="text-align:center;padding-top:4rem;padding-bottom:4rem;">
+        <svg class="w-16 h-16 text-slate-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <h2 class="text-lg font-semibold text-slate-700 mb-2">No scan results yet</h2>
+        <p class="text-slate-400 text-sm mb-4">Run a scan against your IaC directory to see your security posture.</p>
+        <button @click="page='scan'" class="btn btn-primary" style="font-size:0.8rem;padding:0.4rem 0.875rem;">Run your first scan</button>
+      </div>
+
+      <!-- Charts row -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6" x-show="results">
+        <!-- Score gauge -->
+        <div class="card flex flex-col items-center justify-center">
+          <div class="text-sm font-semibold text-slate-500 mb-2 uppercase tracking-wide">WAF++ Score</div>
+          <div class="relative w-36 h-36">
+            <canvas id="scoreChart"></canvas>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span class="text-3xl font-bold" :class="results && effectiveScore >= 80 ? 'text-green-600' : results && effectiveScore >= 60 ? 'text-yellow-600' : 'text-red-600'" x-text="results ? effectiveScore : '—'"></span>
+              <span class="text-xs text-slate-400">/100</span>
+            </div>
+          </div>
+          <div class="text-xs text-slate-400 mt-2" x-text="results && effectiveScore >= 80 ? 'Good posture' : results && effectiveScore >= 60 ? 'Needs attention' : 'High risk'"></div>
+        </div>
+
+        <!-- Pillar scores -->
+        <div class="card lg:col-span-2">
+          <div class="text-sm font-semibold text-slate-600 mb-3">Score by Pillar</div>
+          <div style="height:200px;position:relative;"><canvas id="pillarChart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Cloud Footprint -->
+      <div class="card mb-4" x-show="results && results.detected_regions && results.detected_regions.length">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold text-slate-600 flex items-center gap-2">
+            <svg class="w-4 h-4 text-[#0094FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 004 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg>
+            Cloud Footprint
+          </div>
+          <button @click="navTo('regions')" class="text-xs text-[#0094FF] hover:underline font-medium">View full map →</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-4">
+          <div class="flex flex-col items-center px-4 py-2 rounded-xl" style="background:rgba(0,148,255,.07);border:1px solid rgba(0,148,255,.18);">
+            <span class="text-2xl font-bold text-[#0094FF]" x-text="(results.detected_regions || []).length"></span>
+            <span class="text-xs text-slate-500 mt-0.5">Regions</span>
+          </div>
+          <template x-for="[prov, cnt] in Object.entries((results.detected_regions||[]).reduce((acc,[r,p])=>{acc[p]=(acc[p]||0)+1;return acc},{}))" :key="prov">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
+              <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="'background:'+({'aws':'#f97316','azure':'#2b7fff','gcp':'#22c55e','oci':'#c74634','alicloud':'#ff6a00','yandex':'#fcdb03'}[prov]||'#888')"></span>
+              <span class="text-xs font-semibold text-slate-700 uppercase" x-text="prov"></span>
+              <span class="text-xs text-slate-400 font-medium" x-text="cnt + ' region' + (cnt>1?'s':'')"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Severity breakdown + top fails -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4" x-show="results">
+        <!-- Severity distribution -->
+        <div class="card">
+          <div class="text-sm font-semibold text-slate-600 mb-3">Failed Controls by Severity</div>
+          <div style="height:220px;position:relative;"><canvas id="severityChart"></canvas></div>
+        </div>
+
+        <!-- Top failing controls -->
+        <div class="card overflow-hidden">
+          <div class="text-sm font-semibold text-slate-600 mb-3">Critical & High Failures</div>
+          <div class="space-y-2">
+            <template x-for="r in (results ? results.results.filter(r => r.status === 'FAIL' && ['critical','high'].includes(r.severity)).slice(0,6) : [])">
+              <div class="flex items-start gap-3 p-3 rounded-lg bg-red-50 border border-red-100 cursor-pointer hover:bg-red-100 transition-colors" @click="openControl(controls.find(c=>c.id===r.control_id) || r)">
+                <div class="flex-shrink-0 mt-0.5">
+                  <span class="pill" :class="r.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'" x-text="r.severity.toUpperCase()"></span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs font-mono text-slate-500" x-text="r.control_id"></div>
+                  <div class="text-sm font-medium text-slate-800 truncate" x-text="r.control_title"></div>
+                  <div class="text-xs text-slate-400 mt-0.5" x-text="(r.check_results||[]).filter(c=>c.status==='FAIL').length + ' check(s) failing'"></div>
+                </div>
+                <svg class="w-4 h-4 text-slate-300 flex-shrink-0 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              </div>
+            </template>
+            <div x-show="!results || results.results.filter(r=>r.status==='FAIL' && ['critical','high'].includes(r.severity)).length === 0" class="text-center py-6 text-slate-400 text-sm">
+              No critical or high failures — great work!
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Check-level KPIs -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4" x-show="results && checkStats">
+        <template x-for="stat in checkStats ? [
+          { label:'Checks Run', value: checkStats.total, sub: 'individual automated checks', icon:'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', color:'text-slate-700', ic:'text-slate-400' },
+          { label:'Check Pass Rate', value: checkStats.passRate + '%', sub: checkStats.pass + ' of ' + checkStats.total + ' passed', icon:'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', color: checkStats.passRate >= 80 ? 'text-green-600' : checkStats.passRate >= 60 ? 'text-yellow-600' : 'text-red-600', ic: checkStats.passRate >= 80 ? 'text-green-400' : checkStats.passRate >= 60 ? 'text-yellow-400' : 'text-red-400' },
+          { label:'Resources Scanned', value: checkStats.resources, sub: 'unique Terraform resources', icon:'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10', color:'text-[#0094FF]', ic:'text-[#0094FF]' },
+          { label:'Resources Failing', value: checkStats.failResources, sub: 'resources with ≥1 failure', icon:'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', color: checkStats.failResources > 0 ? 'text-red-600' : 'text-green-600', ic: checkStats.failResources > 0 ? 'text-red-400' : 'text-green-400' }
+        ] : []" :key="stat.label">
+          <div class="card border border-slate-200 flex items-start gap-3">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5" style="background:#f7f8fb;">
+              <svg class="w-4 h-4" :class="stat.ic" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="stat.icon"/></svg>
+            </div>
+            <div>
+              <div class="text-2xl font-bold leading-tight" :class="stat.color" x-text="stat.value"></div>
+              <div class="text-xs font-semibold text-slate-600 mt-0.5" x-text="stat.label"></div>
+              <div class="text-xs text-slate-400" x-text="stat.sub"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Category breakdown + Regulatory readiness -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4" x-show="results">
+        <!-- Category breakdown -->
+        <div class="card">
+          <div class="text-sm font-semibold text-slate-600 mb-4">Pass Rate by Category</div>
+          <div class="space-y-3" x-show="categoryBreakdown.length > 0">
+            <template x-for="item in categoryBreakdown" :key="item.cat">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-medium text-slate-700 capitalize" x-text="item.cat.replace(/_/g,' ')"></span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400" x-text="item.pass + '/' + item.total"></span>
+                    <span class="text-xs font-bold w-9 text-right" :class="item.pct >= 80 ? 'text-green-600' : item.pct >= 60 ? 'text-yellow-600' : 'text-red-600'" x-text="item.pct + '%'"></span>
+                  </div>
+                </div>
+                <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500" :class="item.pct >= 80 ? 'bg-green-500' : item.pct >= 60 ? 'bg-yellow-400' : 'bg-red-500'" :style="'width:' + item.pct + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div x-show="categoryBreakdown.length === 0" class="text-slate-400 text-sm text-center py-4">Run a scan to see category breakdown.</div>
+        </div>
+
+        <!-- Regulatory readiness -->
+        <div class="card">
+          <div class="text-sm font-semibold text-slate-600 mb-4">Regulatory Readiness</div>
+          <div class="space-y-3" x-show="regulatoryReadiness.length > 0">
+            <template x-for="fw in regulatoryReadiness" :key="fw.framework">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-semibold text-slate-700" x-text="fw.framework"></span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400" x-text="fw.pass + '/' + fw.total + ' controls'"></span>
+                    <span class="pill text-xs font-bold" :class="fw.pct >= 80 ? 'bg-green-100 text-green-700' : fw.pct >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'" x-text="fw.pct + '%'"></span>
+                  </div>
+                </div>
+                <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500" :class="fw.pct >= 80 ? 'bg-green-500' : fw.pct >= 60 ? 'bg-yellow-400' : 'bg-red-500'" :style="'width:' + fw.pct + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div x-show="regulatoryReadiness.length === 0" class="text-slate-400 text-sm text-center py-4">No regulatory mappings found in scan results.</div>
+        </div>
+      </div>
+
+      <!-- Quick Wins -->
+      <!-- Architectural Debt Heatmap -->
+      <div class="card mt-4">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(239,68,68,.1);">
+            <svg class="w-4 h-4" style="color:#dc2626;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z"/></svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-slate-800">Architectural Debt Heatmap</div>
+            <div class="text-xs text-slate-400" x-text="debtHeatmap.hasResults ? 'Failing controls by pillar × severity' : 'Control coverage by pillar × severity (no scan results yet)'"></div>
+          </div>
+          <div class="flex items-center gap-1.5 text-slate-400" style="font-size:0.65rem;">
+            <span>Low</span>
+            <div class="w-3 h-3 rounded" style="background:#fee2e2;border:1px solid #fecaca;"></div>
+            <div class="w-3 h-3 rounded" style="background:#fca5a5;"></div>
+            <div class="w-3 h-3 rounded" style="background:#f87171;"></div>
+            <div class="w-3 h-3 rounded" style="background:#dc2626;"></div>
+            <span>High</span>
+          </div>
+        </div>
+        <!-- Header row -->
+        <div style="display:grid;grid-template-columns:6.5rem repeat(4,1fr);gap:0.25rem;margin-bottom:0.25rem;">
+          <div></div>
+          <template x-for="s in debtHeatmap.sevs" :key="s">
+            <div class="text-center uppercase font-semibold text-slate-400 pb-1" style="font-size:0.65rem;" x-text="s"></div>
+          </template>
+        </div>
+        <!-- Data rows -->
+        <template x-for="row in debtHeatmap.rows" :key="row.pillar">
+          <div style="display:grid;grid-template-columns:6.5rem repeat(4,1fr);gap:0.25rem;margin-bottom:0.25rem;align-items:center;">
+            <div class="text-right pr-2 capitalize font-medium text-slate-600" style="font-size:0.75rem;" x-text="row.pillar"></div>
+            <template x-for="cell in row.cells" :key="cell.sev">
+              <div
+                class="flex items-center justify-center rounded-md text-xs font-bold transition-transform"
+                style="height:2.25rem;"
+                :style="'background:' + heatColor(cell.count, debtHeatmap.max) + ';color:' + (cell.count > debtHeatmap.max * 0.5 ? '#7f1d1d' : cell.count > 0 ? '#991b1b' : '#cbd5e1')"
+                :title="row.pillar + ' / ' + cell.sev + ': ' + cell.count + (debtHeatmap.hasResults ? ' failing' : ' controls')"
+                @mouseenter="$el.style.transform='scale(1.08)'" @mouseleave="$el.style.transform=''"
+                x-text="cell.count || ''">
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div class="card mt-4" x-show="results && quickWins.length > 0">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(34,197,94,.12);">
+            <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <div>
+            <div class="text-sm font-semibold text-slate-800">Quick Wins</div>
+            <div class="text-xs text-slate-400">Medium &amp; low severity failures — lower effort to remediate</div>
+          </div>
+          <span class="ml-auto text-xs text-slate-400 mr-2" x-text="quickWins.length + ' control(s)'"></span>
+          <button x-show="results && results.path && results.path !== 'sandbox'" @click="runAutoFix()" :disabled="autoFix.loading" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors" style="background:rgba(0,148,255,.08);border-color:rgba(0,148,255,.25);color:#0094FF;" :class="autoFix.loading ? 'opacity-60 cursor-not-allowed' : 'hover:bg-[#0094FF] hover:text-white hover:border-[#0094FF]'">
+            <span x-show="!autoFix.loading"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
+            <span x-show="autoFix.loading" class="animate-spin"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></span>
+            <span x-text="autoFix.loading ? 'Analysing…' : 'Auto-Fix'"></span>
+            <span x-show="!autoFix.loading" style="background:rgba(234,88,12,.12);color:#c2410c;font-size:0.55rem;font-weight:800;padding:0.1rem 0.35rem;border-radius:3px;line-height:1.2;">α</span>
+          </button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <template x-for="r in quickWins" :key="r.control_id">
+            <div class="p-3 rounded-xl border border-slate-200 hover:border-[#0094FF] hover:shadow-sm cursor-pointer transition-all" @click="openControl(controls.find(c=>c.id===r.control_id) || r)">
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="font-mono text-xs text-slate-400" x-text="r.control_id"></span>
+                <span class="pill text-xs" :class="severityColor(r.severity)" x-text="r.severity"></span>
+              </div>
+              <div class="text-sm font-medium text-slate-700 leading-snug mb-2" x-text="r.control_title"></div>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="pill text-xs" :class="pillarColor(r.pillar)" x-text="r.pillar"></span>
+                <span class="text-xs text-slate-400" x-text="(r.check_results||[]).filter(c=>c.status==='FAIL').length + ' check(s) failing'"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+
+    </section>
+
+
+    <!-- ══ CONTROLS LIBRARY ═══════════════════════════════════════════════ -->
+    <section x-show="page === 'controls'" x-transition>
+
+      <!-- Filter bar -->
+      <div class="card mb-4 flex flex-wrap items-center gap-3">
+        <!-- Search -->
+        <div class="relative flex-1 min-w-48">
+          <svg class="absolute left-3 top-2.5 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input x-model="searchQuery" type="text" placeholder="Search controls…" class="input pl-9" />
+        </div>
+        <!-- Pillar filter -->
+        <select x-model="filterPillar" class="input w-auto">
+          <option value="">All pillars</option>
+          <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+            <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+          </template>
+        </select>
+        <!-- Severity filter -->
+        <select x-model="filterSeverity" class="input w-auto">
+          <option value="">All severities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <!-- Waiver filter -->
+        <label class="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+          <input type="checkbox" x-model="filterWaived" class="rounded border-slate-300 text-blue-600" />
+          Waived only
+        </label>
+        <!-- Count -->
+        <span class="text-xs text-slate-400 ml-auto" x-text="filteredControls.length + ' / ' + controls.length + ' controls'"></span>
+      </div>
+
+      <!-- Controls grid -->
+      <div class="space-y-3">
+        <template x-for="ctrl in filteredControls" :key="ctrl.id">
+          <div class="bg-white rounded-xl border shadow-sm overflow-hidden"
+            :class="{
+              'border-l-4 border-l-red-500': ctrl.severity === 'critical',
+              'border-l-4 border-l-orange-500': ctrl.severity === 'high',
+              'border-l-4 border-l-yellow-400': ctrl.severity === 'medium',
+              'border-l-4 border-l-blue-400': ctrl.severity === 'low'
+            }">
+            <div class="p-4">
+              <div class="flex items-start gap-3">
+                <!-- Status indicator -->
+                <div class="flex-shrink-0 mt-0.5">
+                  <span class="pill text-xs"
+                    :class="waivers[ctrl.id] ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'"
+                    x-text="waivers[ctrl.id] ? 'WAIVED' : 'ACTIVE'"></span>
+                </div>
+
+                <!-- Main content -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap mb-1">
+                    <span class="font-mono text-xs font-semibold text-slate-500" x-text="ctrl.id"></span>
+                    <span class="pill text-xs" :class="pillarColor(ctrl.pillar)" x-text="ctrl.pillar"></span>
+                    <span class="pill text-xs" :class="severityColor(ctrl.severity)" x-text="ctrl.severity"></span>
+                  </div>
+                  <h3 class="font-semibold text-slate-800 text-sm" x-text="ctrl.title"></h3>
+                  <p class="text-xs text-slate-500 mt-1 line-clamp-2" x-text="ctrl.description"></p>
+
+                  <!-- Regulatory tags -->
+                  <div class="flex flex-wrap gap-1 mt-2" x-show="ctrl.regulatory_mapping && ctrl.regulatory_mapping.length > 0">
+                    <template x-for="mapping in ctrl.regulatory_mapping.slice(0,4)">
+                      <span class="pill bg-slate-100 text-slate-600" x-text="mapping.framework"></span>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex-shrink-0 flex items-center gap-2">
+                  <button @click="openControl(ctrl)" class="btn-outline text-xs">
+                    Details
+                  </button>
+                  <button @click="toggleWaiver(ctrl)" class="btn text-xs"
+                    :class="waivers[ctrl.id] ? 'btn-danger' : 'border border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100'"
+                    x-text="waivers[ctrl.id] ? 'Remove Waiver' : 'Add Waiver'">
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Waiver reason strip -->
+            <div x-show="waivers[ctrl.id]" class="px-4 py-2 bg-purple-50 border-t border-purple-100 text-xs text-purple-700 flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span x-text="'Waiver: ' + (waivers[ctrl.id] ? waivers[ctrl.id].reason : '')"></span>
+              <span x-show="waivers[ctrl.id] && waivers[ctrl.id].expires" class="ml-1 text-purple-500" x-text="'(expires ' + (waivers[ctrl.id] ? waivers[ctrl.id].expires : '') + ')'"></span>
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty state -->
+        <div x-show="filteredControls.length === 0" class="card" style="text-align:center;padding-top:3rem;padding-bottom:3rem;color:var(--muted);">
+          <svg class="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          No controls match your filters.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ══ FINDINGS ═══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'findings'" x-transition>
+
+      <div x-show="!results" class="card" style="text-align:center;padding-top:4rem;padding-bottom:4rem;">
+        <p class="text-slate-400 mb-4">No scan results yet. Run a scan first.</p>
+        <button @click="page='scan'" class="btn btn-primary" style="font-size:0.8rem;padding:0.4rem 0.875rem;">Run Scan</button>
+      </div>
+
+      <div x-show="results">
+        <!-- IDE deep links -->
+        <div x-show="results && results.path && results.path !== 'sandbox'" class="mb-4 flex flex-wrap items-center gap-2">
+          <span class="text-xs font-medium text-slate-500 mr-1">Open in IDE:</span>
+          <template x-for="ide in [
+            {label:'VS Code', href:'vscode://file/', dot:'#007ACC'},
+            {label:'Cursor',  href:'cursor://file/', dot:'#000000'},
+            {label:'JetBrains', href:'idea://open?file=', dot:'#FE315D'},
+            {label:'Zed',     href:'zed://file/', dot:'#084CCF'}
+          ]" :key="ide.label">
+            <a :href="ide.href + results.path" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 bg-white hover:border-[#0094FF] hover:text-[#0094FF] text-slate-600 transition-colors">
+              <span class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:' + ide.dot"></span>
+              <span x-text="ide.label"></span>
+            </a>
+          </template>
+          <button @click="navigator.clipboard.writeText(results.path); notify('Path copied')" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 bg-white hover:border-slate-400 text-slate-500 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            Copy path
+          </button>
+        </div>
+        <!-- Filter -->
+        <div class="card mb-4 flex flex-wrap gap-3 items-center">
+          <select x-model="findingFilter" class="input w-auto">
+            <option value="">All statuses</option>
+            <option value="FAIL">Failed</option>
+            <option value="PASS">Passed</option>
+            <option value="SKIP">Skipped</option>
+            <option value="WAIVED">Waived</option>
+          </select>
+          <select x-model="findingPillar" class="input w-auto">
+            <option value="">All pillars</option>
+            <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+              <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+            </template>
+          </select>
+          <span class="text-xs text-slate-400 ml-auto" x-text="filteredFindings.length + ' results'"></span>
+          <button x-show="results && results.path && results.path !== 'sandbox'" @click="runAutoFix()" :disabled="autoFix.loading" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex-shrink-0" style="background:rgba(0,148,255,.08);border-color:rgba(0,148,255,.25);color:#0094FF;" :class="autoFix.loading ? 'opacity-60 cursor-not-allowed' : 'hover:bg-[#0094FF] hover:text-white hover:border-[#0094FF]'">
+            <span x-show="!autoFix.loading"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
+            <span x-show="autoFix.loading" class="animate-spin"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></span>
+            <span x-text="autoFix.loading ? 'Analysing…' : 'Auto-Fix All FAILs'"></span>
+            <span x-show="!autoFix.loading" style="background:rgba(234,88,12,.12);color:#c2410c;font-size:0.55rem;font-weight:800;padding:0.1rem 0.35rem;border-radius:3px;line-height:1.2;">α</span>
+          </button>
+        </div>
+
+        <!-- Results table -->
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <table class="w-full">
+            <thead>
+              <tr>
+                <th class="table-th">Control</th>
+                <th class="table-th">Pillar</th>
+                <th class="table-th">Severity</th>
+                <th class="table-th">Status</th>
+                <th class="table-th">Checks</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="r in filteredFindings" :key="r.control_id">
+                <tr class="hover:bg-[#f7f8fb] cursor-pointer" @click="openFinding(r)">
+                  <td class="table-td">
+                    <div class="font-mono text-xs text-slate-400" x-text="r.control_id"></div>
+                    <div class="font-medium text-slate-800 text-sm" x-text="r.control_title"></div>
+                  </td>
+                  <td class="table-td">
+                    <span class="pill" :class="pillarColor(r.pillar)" x-text="r.pillar"></span>
+                  </td>
+                  <td class="table-td">
+                    <span class="pill" :class="severityColor(r.severity)" x-text="r.severity"></span>
+                  </td>
+                  <td class="table-td">
+                    <span class="pill text-xs" :class="riskAcceptances[r.control_id] ? 'bg-sky-100 text-sky-700' : statusColor(r.status)" x-text="riskAcceptances[r.control_id] ? 'ACCEPTED' : r.status"></span>
+                  </td>
+                  <td class="table-td text-slate-500" x-text="r.check_results.length + ' checks'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ══ COMPLIANCE MATRIX ══════════════════════════════════════════════ -->
+    <section x-show="page === 'compliance'" x-transition>
+      <div class="space-y-4">
+        <template x-for="fw in complianceFrameworks" :key="fw.name">
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h3 class="font-bold text-slate-800" x-text="fw.name"></h3>
+                <p class="text-xs text-slate-500" x-text="fw.description"></p>
+              </div>
+              <div class="text-right">
+                <div class="text-2xl font-bold text-slate-800" x-text="fw.controls.length + ' controls'"></div>
+                <div class="text-xs text-slate-500">mapped</div>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="ctrl in fw.controls.slice(0,12)">
+                <div class="px-2.5 py-1.5 bg-[#f7f8fb] rounded-lg border border-slate-200 text-xs">
+                  <div class="font-mono font-semibold text-slate-600" x-text="ctrl.id"></div>
+                  <div class="text-slate-400 truncate max-w-32" x-text="ctrl.title"></div>
+                </div>
+              </template>
+              <div x-show="fw.controls.length > 12" class="px-2.5 py-1.5 bg-[#f7f8fb] rounded-lg border border-slate-200 text-xs text-slate-400 flex items-center" x-text="'+' + (fw.controls.length - 12) + ' more'"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+
+    <!-- ══ WAIVERS ════════════════════════════════════════════════════════ -->
+    <section x-show="page === 'waivers'" x-transition>
+
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-sm text-slate-500">Waivers allow you to intentionally accept risk for specific controls. They are exported as <code class="bg-slate-100 px-1 rounded">.wafpass-skip.yml</code>.</p>
+        <button @click="exportWaivers()" class="btn-outline">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Export .wafpass-skip.yml
+        </button>
+      </div>
+
+      <!-- Waiver list -->
+      <div x-show="Object.keys(waivers).length === 0" class="card" style="text-align:center;padding-top:3rem;padding-bottom:3rem;color:var(--muted);">
+        No waivers configured. Add waivers from the Controls Library.
+      </div>
+
+      <div class="space-y-3">
+        <template x-for="(waiver, controlId) in waivers" :key="controlId">
+          <div class="card border-l-4 border-l-purple-400">
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-mono text-sm font-bold text-purple-700" x-text="controlId"></span>
+                  <span x-show="waiver.expires" class="pill bg-orange-100 text-orange-700 text-xs" x-text="'expires ' + waiver.expires"></span>
+                </div>
+                <p class="text-sm text-slate-700 font-medium" x-text="controlTitle(controlId)"></p>
+                <p class="text-sm text-slate-500 mt-1" x-text="waiver.reason"></p>
+                <p x-show="waiver.owner" class="text-xs text-slate-400 mt-1" x-text="'Owner: ' + waiver.owner"></p>
+              </div>
+              <div class="flex gap-2 flex-shrink-0">
+                <button @click="editWaiver(controlId)" class="btn-outline text-xs">Edit</button>
+                <button @click="removeWaiver(controlId)" class="btn-danger text-xs">Remove</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+
+    <!-- ══ RISK ACCEPTANCE ════════════════════════════════════════════════ -->
+    <section x-show="page === 'risk-acceptance'" x-transition>
+
+      <!-- Stats bar -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="card text-center" style="background:rgba(14,165,233,.06);border-color:rgba(14,165,233,.2);">
+          <div class="text-3xl font-bold text-sky-600" x-text="Object.keys(riskAcceptances).length"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Total Accepted</div>
+        </div>
+        <div class="card text-center" style="background:rgba(34,197,94,.06);border-color:rgba(34,197,94,.2);">
+          <div class="text-3xl font-bold text-green-600" x-text="Object.values(riskAcceptances).filter(r => !raIsExpired(r)).length"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Active</div>
+        </div>
+        <div class="card text-center" style="background:rgba(251,191,36,.06);border-color:rgba(251,191,36,.2);">
+          <div class="text-3xl font-bold text-yellow-600" x-text="Object.values(riskAcceptances).filter(r => raExpiresSoon(r)).length"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Expiring in 30d</div>
+        </div>
+        <div class="card text-center" style="background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2);">
+          <div class="text-3xl font-bold text-red-600" x-text="Object.values(riskAcceptances).filter(r => raIsExpired(r)).length"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Overdue / Expired</div>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <p class="text-sm text-slate-500">Formal risk acceptances require approver sign-off, an RFC or ticket reference, and a defined residual risk level.</p>
+        <div class="flex gap-2">
+          <button @click="exportRiskAcceptances()" class="btn btn-outline text-xs">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Export YAML
+          </button>
+          <button @click="openRAModal()" class="btn btn-primary text-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Add Risk Acceptance
+          </button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div x-show="Object.keys(riskAcceptances).length === 0" class="card text-center py-12">
+        <svg class="w-12 h-12 mx-auto mb-3 text-slate-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        <p class="text-sm text-slate-400">No risk acceptances recorded. Click <strong class="text-slate-600">Add Risk Acceptance</strong> to begin.</p>
+      </div>
+
+      <!-- Acceptance cards -->
+      <div class="space-y-3">
+        <template x-for="(ra, id) in riskAcceptances" :key="id">
+          <div class="card" style="border-left:4px solid #0ea5e9;">
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex-1 min-w-0">
+                <!-- Header -->
+                <div class="flex flex-wrap items-center gap-2 mb-2">
+                  <span class="font-mono text-sm font-bold text-sky-700" x-text="id"></span>
+                  <span class="pill text-xs bg-sky-100 text-sky-700" x-text="ra.risk_level || 'accepted'"></span>
+                  <span class="pill text-xs" :class="{'bg-green-100 text-green-700': ra.residual_risk === 'low', 'bg-yellow-100 text-yellow-700': ra.residual_risk === 'medium', 'bg-red-100 text-red-700': ra.residual_risk === 'high'}" x-text="(ra.residual_risk || 'medium') + ' residual risk'"></span>
+                  <span x-show="raIsExpired(ra)" class="pill text-xs bg-red-100 text-red-700">EXPIRED</span>
+                  <span x-show="raExpiresSoon(ra)" class="pill text-xs bg-yellow-100 text-yellow-700" x-text="'expires ' + ra.expires"></span>
+                  <span x-show="ra.expires && !raIsExpired(ra) && !raExpiresSoon(ra)" class="pill text-xs bg-slate-100 text-slate-500" x-text="'expires ' + ra.expires"></span>
+                </div>
+                <!-- Control title -->
+                <p class="text-sm font-semibold text-slate-800 mb-1" x-text="controlTitle(id)"></p>
+                <!-- Reason -->
+                <p class="text-sm text-slate-600 mb-3" x-text="ra.reason"></p>
+                <!-- Metadata row -->
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <span x-show="ra.approver" class="flex items-center gap-1 text-xs text-slate-500">
+                    <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                    Approved by <strong class="text-slate-700 ml-0.5" x-text="ra.approver"></strong>
+                  </span>
+                  <span x-show="ra.owner" class="text-xs text-slate-500" x-text="'Owner: ' + ra.owner"></span>
+                  <span x-show="ra.rfc" class="flex items-center gap-1 text-xs text-slate-500">
+                    <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    <span x-text="ra.rfc"></span>
+                  </span>
+                  <a x-show="ra.jira_link" :href="ra.jira_link" target="_blank" rel="noopener" class="flex items-center gap-1 text-xs text-sky-600 hover:underline">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    Jira
+                  </a>
+                  <a x-show="ra.other_link" :href="ra.other_link" target="_blank" rel="noopener" class="flex items-center gap-1 text-xs text-sky-600 hover:underline">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    Reference
+                  </a>
+                  <span x-show="ra.accepted_at" class="text-xs text-slate-400" x-text="'Accepted: ' + ra.accepted_at"></span>
+                </div>
+                <p x-show="ra.notes" class="text-xs text-slate-400 italic mt-2 border-t border-slate-100 pt-2" x-text="ra.notes"></p>
+              </div>
+              <div class="flex gap-2 flex-shrink-0">
+                <button @click="openRAModal(id)" class="btn btn-outline text-xs">Edit</button>
+                <button @click="deleteRiskAcceptance(id)" class="btn btn-danger text-xs">Remove</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+    </section>
+
+
+    <!-- ══ RISK ACCEPTANCE MODAL ═══════════════════════════════════════════ -->
+    <div x-show="raModal" x-transition class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" style="padding-top:2rem;" @click.self="raModal = false">
+      <div class="bg-white rounded-2xl shadow-2xl w-full" style="max-width:42rem;">
+        <!-- Modal header -->
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            <h3 class="text-base font-bold text-slate-800" x-text="raEditId ? 'Edit Risk Acceptance' : 'New Risk Acceptance'"></h3>
+          </div>
+          <button @click="raModal = false" class="text-slate-400 hover:text-slate-600">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <!-- Modal body -->
+        <div class="px-6 py-5 space-y-5" style="max-height:70vh;overflow-y:auto;">
+
+          <!-- Control ID -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">Control <span class="text-red-500">*</span></label>
+            <select x-model="raForm.id" class="input w-full" :disabled="raEditId !== null">
+              <option value="">Select a control…</option>
+              <template x-for="c in controls" :key="c.id">
+                <option :value="c.id" x-text="c.id + ' — ' + c.title"></option>
+              </template>
+            </select>
+            <p x-show="results" class="text-xs text-slate-400 mt-1">Tip: Only controls with findings will impact your score.</p>
+          </div>
+
+          <!-- Reason -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">Business Justification <span class="text-red-500">*</span></label>
+            <textarea x-model="raForm.reason" rows="3" class="input w-full" style="resize:vertical;" placeholder="Describe why this risk is being accepted and what compensating controls exist…"></textarea>
+          </div>
+
+          <!-- Approval section -->
+          <div>
+            <div class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <div class="flex-1 h-px bg-slate-200"></div>Approval<div class="flex-1 h-px bg-slate-200"></div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Approver Name <span class="text-red-500">*</span></label>
+                <input x-model="raForm.approver" type="text" class="input w-full" placeholder="e.g. Jane Smith, CISO"/>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Owner / Team</label>
+                <input x-model="raForm.owner" type="text" class="input w-full" placeholder="e.g. platform-team"/>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">RFC Reference</label>
+                <input x-model="raForm.rfc" type="text" class="input w-full" placeholder="e.g. RFC-2024-042"/>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Jira / Issue Link</label>
+                <input x-model="raForm.jira_link" type="url" class="input w-full" placeholder="https://jira.example.com/…"/>
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Other Reference Link</label>
+                <input x-model="raForm.other_link" type="url" class="input w-full" placeholder="https://…"/>
+              </div>
+            </div>
+          </div>
+
+          <!-- Risk Classification -->
+          <div>
+            <div class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <div class="flex-1 h-px bg-slate-200"></div>Risk Classification<div class="flex-1 h-px bg-slate-200"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Risk Treatment</label>
+                <select x-model="raForm.risk_level" class="input w-full">
+                  <option value="accepted">Accepted — risk acknowledged as-is</option>
+                  <option value="mitigated">Mitigated — compensating controls in place</option>
+                  <option value="transferred">Transferred — risk shifted (insurance/vendor)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Residual Risk</label>
+                <select x-model="raForm.residual_risk" class="input w-full">
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Timeline -->
+          <div>
+            <div class="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <div class="flex-1 h-px bg-slate-200"></div>Timeline<div class="flex-1 h-px bg-slate-200"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Accepted Date</label>
+                <input x-model="raForm.accepted_at" type="date" class="input w-full"/>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Expiry Date</label>
+                <input x-model="raForm.expires" type="date" class="input w-full"/>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notes -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">Additional Notes</label>
+            <textarea x-model="raForm.notes" rows="2" class="input w-full" style="resize:vertical;" placeholder="Any additional context, links to runbooks, migration plans, etc."></textarea>
+          </div>
+        </div>
+        <!-- Modal footer -->
+        <div class="flex items-center justify-between gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+          <p class="text-xs text-slate-400">Required fields: Control, Justification, Approver</p>
+          <div class="flex gap-2">
+            <button @click="raModal = false" class="btn btn-outline">Cancel</button>
+            <button @click="saveRiskAcceptance()" :disabled="!raForm.id || !raForm.reason || !raForm.approver" class="btn btn-primary" :class="!raForm.id || !raForm.reason || !raForm.approver ? 'opacity-50 cursor-not-allowed' : ''">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              Save Risk Acceptance
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ══ DEPLOYED REGIONS ════════════════════════════════════════════════ -->
+    <section x-show="page === 'regions'" x-transition>
+      <h2 class="text-xl font-bold text-slate-800 mb-4">Deployed Regions</h2>
+      <div x-show="results && results.detected_regions && results.detected_regions.length">
+        <div class="card mb-4">
+          <div id="worldmap" style="width:100%;height:clamp(320px,45vw,540px);border-radius:12px;overflow:hidden;background:#0a162e;"></div>
+          <div id="worldmap-legend" class="flex flex-wrap gap-3 mt-3 px-1"></div>
+        </div>
+        <div class="card">
+          <h3 class="font-semibold text-slate-700 mb-3">Region List</h3>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="[r,p] in (results.detected_regions || [])" :key="r">
+              <span class="pill text-xs font-mono" x-text="r + ' (' + p + ')'"></span>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div x-show="!results || !results.detected_regions || !results.detected_regions.length" class="card text-slate-500 text-sm">
+        No deployed regions detected. Run a scan first to see cloud region data.
+      </div>
+    </section>
+
+    <!-- ══ RUN SCAN ═══════════════════════════════════════════════════════ -->
+    <!-- ══ ARCHITECT SANDBOX ════════════════════════════════════════════ -->
+    <section x-show="page === 'sandbox'" x-transition>
+
+      <!-- Toolbar -->
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        <select @change="loadSandboxTemplate($event.target.value); $event.target.value=''" class="input w-auto text-sm">
+          <option value="">Load template…</option>
+          <option value="weak_iam">⚠ Weak IAM Password Policy</option>
+          <option value="open_storage">⚠ Unencrypted Storage (S3 + RDS)</option>
+          <option value="open_sg">⚠ Open Security Group (SSH/RDP)</option>
+          <option value="compliant_s3">✓ Compliant S3 Bucket</option>
+          <option value="compliant_rds">✓ Hardened RDS Instance</option>
+        </select>
+        <select x-model="sandboxPillar" class="input w-auto text-sm">
+          <option value="">All pillars</option>
+          <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+            <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+          </template>
+        </select>
+        <button @click="sandboxContent = ''; sandboxResults = null; sandboxError = null;" class="btn btn-outline text-xs">Clear</button>
+        <button @click="shareSandbox()" :disabled="!sandboxContent.trim()" class="btn btn-outline text-xs" title="Copy shareable link to clipboard">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+          Share
+        </button>
+        <button @click="runSandboxScan()" :disabled="sandboxScanning || !sandboxContent.trim()" class="btn btn-primary ml-auto" style="font-size:0.8rem;" :class="sandboxScanning || !sandboxContent.trim() ? 'opacity-60 cursor-not-allowed' : ''">
+          <svg x-show="!sandboxScanning" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+          <svg x-show="sandboxScanning" class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span x-text="sandboxScanning ? 'Scanning…' : 'Run Sandbox Scan'"></span>
+        </button>
+      </div>
+
+      <!-- Editor + Results split -->
+      <div style="display:grid;grid-template-columns:3fr 2fr;gap:1.5rem;align-items:start;">
+
+        <!-- Code editor (left) -->
+        <div class="flex flex-col">
+          <div class="rounded-xl overflow-hidden flex-1" style="border:1px solid #334155;display:flex;flex-direction:column;">
+            <!-- macOS-style title bar -->
+            <div class="flex items-center justify-between px-4 py-2.5 flex-shrink-0" style="background:#1e293b;">
+              <div class="flex items-center gap-3">
+                <div class="flex gap-1.5">
+                  <div class="w-3 h-3 rounded-full" style="background:#ef4444;"></div>
+                  <div class="w-3 h-3 rounded-full" style="background:#f97316;"></div>
+                  <div class="w-3 h-3 rounded-full" style="background:#22c55e;"></div>
+                </div>
+                <span style="color:#64748b;font-family:monospace;font-size:0.7rem;">sandbox.tf</span>
+              </div>
+              <span style="color:#475569;font-size:0.65rem;font-family:monospace;" x-text="sandboxContent.split('\n').length + ' lines · ' + sandboxContent.length + ' chars'"></span>
+            </div>
+            <!-- Textarea -->
+            <textarea
+              x-model="sandboxContent"
+              @keydown.tab.prevent="sandboxHandleTab($event)"
+              rows="26"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              placeholder="# Paste or write Terraform here, then click Run Sandbox Scan&#10;&#10;resource &quot;aws_s3_bucket&quot; &quot;example&quot; {&#10;  bucket = &quot;my-bucket&quot;&#10;}"
+              style="flex:1;width:100%;background:#0f172a;color:#e2e8f0;font-family:'Fira Code',ui-monospace,monospace;font-size:0.8rem;line-height:1.65;padding:1rem 1.25rem;border:none;resize:none;outline:none;tab-size:2;"></textarea>
+            <!-- Status bar -->
+            <div class="flex items-center justify-between px-4 py-1.5 flex-shrink-0" style="background:#1e293b;border-top:1px solid #334155;">
+              <span style="color:#475569;font-size:0.65rem;font-family:monospace;">HCL · Terraform</span>
+              <div class="flex items-center gap-3" style="color:#475569;font-size:0.65rem;font-family:monospace;">
+                <span x-show="sandboxPillar" style="color:#0094FF;" x-text="'pillar: ' + sandboxPillar"></span>
+                <span>UTF-8</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Results panel (right) -->
+        <div>
+
+          <!-- Placeholder -->
+          <div x-show="!sandboxResults && !sandboxScanning && !sandboxError" class="card flex flex-col items-center justify-center text-center" style="min-height:280px;">
+            <svg class="w-14 h-14 mb-3" style="color:#e2e8f0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+            <p class="text-sm text-slate-400 leading-relaxed">Load a template or paste your Terraform,<br>then click <strong class="text-slate-600">Run Sandbox Scan</strong>.</p>
+          </div>
+
+          <!-- Scanning spinner -->
+          <div x-show="sandboxScanning" class="card flex flex-col items-center justify-center gap-3" style="min-height:280px;">
+            <svg class="w-8 h-8 animate-spin" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            <p class="text-slate-500 text-sm">Evaluating controls…</p>
+          </div>
+
+          <!-- Error -->
+          <div x-show="sandboxError" class="card border-red-200 bg-red-50">
+            <div class="flex items-start gap-2">
+              <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              <p class="text-sm text-red-700" x-text="sandboxError"></p>
+            </div>
+          </div>
+
+          <!-- Results -->
+          <div x-show="sandboxResults">
+            <!-- ROI Live Counter -->
+            <div class="mb-3 rounded-xl overflow-hidden" style="border:1px solid #334155;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);">
+              <div class="flex items-center gap-2 px-3.5 py-2.5" style="border-bottom:1px solid #1e293b;">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-wide text-slate-400">Remediation ROI</span>
+                <span class="ml-auto text-slate-600" style="font-size:0.6rem;">industry benchmarks</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#1e293b;">
+                <div class="px-3.5 py-3" style="background:#0f172a;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Est. Annual Risk</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#f87171;font-variant-numeric:tabular-nums;" x-text="'$' + _roi.risk.toLocaleString()"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">if left unaddressed</div>
+                </div>
+                <div class="px-3.5 py-3" style="background:#0f172a;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Savings if Fixed</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#4ade80;font-variant-numeric:tabular-nums;" x-text="'$' + _roi.savings.toLocaleString()"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">estimated risk reduction</div>
+                </div>
+                <div class="px-3.5 py-3" style="background:#0f172a;border-top:1px solid #1e293b;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Fix Effort</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#94a3b8;font-variant-numeric:tabular-nums;" x-text="_roi.effort + 'h'"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">engineering hours est.</div>
+                </div>
+                <div class="px-3.5 py-3" style="background:#0f172a;border-top:1px solid #1e293b;">
+                  <div class="text-slate-500 mb-1" style="font-size:0.65rem;">Controls to Fix</div>
+                  <div class="font-bold leading-none" style="font-size:1.25rem;color:#fbbf24;font-variant-numeric:tabular-nums;" x-text="_roi.fail"></div>
+                  <div class="text-slate-600 mt-1" style="font-size:0.6rem;">failing controls</div>
+                </div>
+              </div>
+            </div>
+            <!-- Score strip -->
+            <div class="card mb-3">
+              <div class="flex items-center gap-4 mb-3">
+                <div class="text-center flex-shrink-0">
+                  <div class="text-4xl font-bold" :class="sandboxResults && sandboxResults.score >= 80 ? 'text-green-600' : sandboxResults && sandboxResults.score >= 60 ? 'text-yellow-600' : 'text-red-600'" x-text="sandboxResults ? sandboxResults.score : 0"></div>
+                  <div class="text-xs text-slate-400">/100</div>
+                </div>
+                <div class="flex gap-3 flex-wrap">
+                  <div class="text-center"><div class="text-xl font-bold text-green-600" x-text="sandboxResults ? sandboxResults.total_pass : 0"></div><div class="text-xs text-slate-400">Pass</div></div>
+                  <div class="text-center"><div class="text-xl font-bold text-red-600" x-text="sandboxResults ? sandboxResults.total_fail : 0"></div><div class="text-xs text-slate-400">Fail</div></div>
+                  <div class="text-center"><div class="text-xl font-bold text-slate-400" x-text="sandboxResults ? sandboxResults.total_skip : 0"></div><div class="text-xs text-slate-400">Skip</div></div>
+                </div>
+              </div>
+              <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-700" :class="sandboxResults && sandboxResults.score >= 80 ? 'bg-green-500' : sandboxResults && sandboxResults.score >= 60 ? 'bg-yellow-400' : 'bg-red-500'" :style="'width:' + (sandboxResults ? sandboxResults.score : 0) + '%'"></div>
+              </div>
+            </div>
+            <!-- Control results -->
+            <div class="space-y-2">
+              <template x-for="r in (sandboxResults ? sandboxResults.results.filter(r => r.status !== 'SKIP') : [])" :key="r.control_id">
+                <div class="rounded-xl border overflow-hidden" :class="r.status === 'PASS' ? 'border-green-200' : 'border-red-200'">
+                  <div class="flex items-center justify-between px-3 py-2" :class="r.status === 'PASS' ? 'bg-green-50' : 'bg-red-50'">
+                    <span class="font-mono text-xs text-slate-500" x-text="r.control_id"></span>
+                    <span class="pill text-xs" :class="r.status === 'PASS' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'" x-text="r.status"></span>
+                  </div>
+                  <div class="px-3 py-2 bg-white">
+                    <div class="text-sm font-medium text-slate-700 mb-1" x-text="r.control_title"></div>
+                    <template x-for="cr in (r.check_results || []).filter(c => c.status === 'FAIL')" :key="cr.check_id">
+                      <div class="mt-1.5 p-2 rounded-lg" style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);">
+                        <div class="flex items-center gap-1.5 mb-0.5">
+                          <span class="font-mono text-xs" style="color:#ef4444;" x-text="cr.resource"></span>
+                          <button @click="navigator.clipboard.writeText(cr.resource); notify('Copied')" class="text-slate-300 hover:text-slate-500">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                          </button>
+                        </div>
+                        <div class="text-xs text-red-700" x-text="cr.message"></div>
+                        <div x-show="cr.remediation" class="text-xs text-slate-500 mt-1 italic" x-text="cr.remediation"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <div x-show="sandboxResults && sandboxResults.results.filter(r=>r.status!=='SKIP').length === 0" class="text-center py-6 text-slate-400 text-sm">
+                No controls matched the code. Try a different template or pillar filter.
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ RUN SCAN ═══════════════════════════════════════════════════════ -->
+    <section x-show="page === 'scan'" x-transition>
+      <div class="max-w-xl">
+        <div class="card">
+          <h2 class="font-bold text-slate-800 mb-4">Scan Configuration</h2>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">IaC Directory Path</label>
+              <input x-model="scanPath" type="text" placeholder="/path/to/terraform" class="input" />
+              <p class="text-xs text-slate-400 mt-1">Absolute or relative path to your Terraform (or other IaC) files.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">IaC Framework</label>
+              <select x-model="scanIac" class="input">
+                <option value="terraform">Terraform</option>
+                <option value="cdk">AWS CDK (CloudFormation)</option>
+                <option value="bicep">Azure Bicep</option>
+                <option value="pulumi">Pulumi</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Pillar Filter <span class="text-slate-400 font-normal">(optional)</span></label>
+              <select x-model="scanPillar" class="input">
+                <option value="">All pillars</option>
+                <template x-for="p in ['security','cost','reliability','operations','sovereignty','sustainability','performance']">
+                  <option :value="p" x-text="p.charAt(0).toUpperCase() + p.slice(1)"></option>
+                </template>
+              </select>
+            </div>
+          </div>
+
+          <!-- Waiver notice -->
+          <div x-show="Object.keys(waivers).length > 0" class="mt-4 p-3 bg-purple-50 rounded-lg border border-purple-200 text-xs text-purple-700">
+            <span x-text="Object.keys(waivers).length + ' waiver(s) will be applied during this scan.'"></span>
+          </div>
+
+          <div class="mt-5">
+            <button @click="runScan()" :disabled="scanning || !scanPath" class="btn-primary w-full justify-center" :class="scanning || !scanPath ? 'opacity-60 cursor-not-allowed' : ''">
+              <span x-show="!scanning">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+              </span>
+              <span x-show="scanning" class="animate-spin">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              </span>
+              <span x-text="scanning ? 'Scanning…' : 'Start Scan'"></span>
+            </button>
+          </div>
+
+          <div x-show="scanError" class="mt-3 p-3 bg-red-50 rounded-lg border border-red-200 text-sm text-red-700" x-text="scanError"></div>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /p-6 -->
+</main>
+
+
+<!-- ═══ CONTROL DETAIL MODAL ═══════════════════════════════════════════════ -->
+<div x-show="selectedControl" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" @click.self="selectedControl = null">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8" @click.stop>
+    <template x-if="selectedControl">
+      <div>
+        <!-- Modal header -->
+        <div class="flex items-start justify-between p-6 border-b">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-mono text-xs font-bold text-slate-500" x-text="selectedControl.id"></span>
+              <span class="pill text-xs" :class="pillarColor(selectedControl.pillar)" x-text="selectedControl.pillar"></span>
+              <span class="pill text-xs" :class="severityColor(selectedControl.severity)" x-text="selectedControl.severity"></span>
+            </div>
+            <h2 class="text-lg font-bold text-slate-900" x-text="selectedControl.title"></h2>
+          </div>
+          <button @click="selectedControl = null" class="text-slate-400 hover:text-slate-600 p-1">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b px-6">
+          <template x-for="tab in ['overview','why','regulatory','checks','fix','waiver']">
+            <button @click="modalTab = tab" class="px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap"
+              :class="modalTab === tab ? 'border-[#0094FF] text-[#0094FF]' : 'border-transparent text-slate-500 hover:text-slate-700'">
+              <span x-text="({'overview':'Overview','why':'Why it Matters','regulatory':'Regulatory','checks':'Checks','fix':'How to Fix','waiver':'Waiver'})[tab]"></span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Tab content -->
+        <div class="p-6">
+          <!-- Overview -->
+          <div x-show="modalTab === 'overview'">
+            <p class="text-sm text-slate-700 leading-relaxed" x-text="selectedControl.description"></p>
+            <div class="mt-4">
+              <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Category</div>
+              <span class="pill bg-slate-100 text-slate-700" x-text="selectedControl.category"></span>
+            </div>
+            <div class="mt-4">
+              <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Automated Checks</div>
+              <div class="text-sm text-slate-700" x-text="selectedControl.checks_count + ' automated check(s)'"></div>
+            </div>
+          </div>
+
+          <!-- Why it Matters -->
+          <div x-show="modalTab === 'why'">
+            <!-- Business Impact -->
+            <div class="mb-5">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(0,148,255,.1);">
+                  <svg class="w-4 h-4" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                </div>
+                <span class="text-sm font-semibold text-slate-800">Business Impact</span>
+              </div>
+              <div x-show="selectedControl.rationale" class="p-4 rounded-xl text-sm text-slate-700 leading-relaxed" style="background:rgba(0,148,255,.05);border:1px solid rgba(0,148,255,.15);" x-text="selectedControl.rationale"></div>
+              <div x-show="!selectedControl.rationale" class="text-sm text-slate-400 italic">No business rationale defined for this control.</div>
+            </div>
+            <!-- Technical Impact -->
+            <div>
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(239,68,68,.1);">
+                  <svg class="w-4 h-4" style="color:#ef4444;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                </div>
+                <span class="text-sm font-semibold text-slate-800">Technical Impact</span>
+              </div>
+              <div x-show="selectedControl.threat && selectedControl.threat.length" class="space-y-2">
+                <template x-for="t in (selectedControl.threat || [])">
+                  <div class="flex items-start gap-2 p-3 rounded-xl text-sm text-slate-700 leading-relaxed" style="background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.12);">
+                    <svg class="w-4 h-4 mt-0.5 flex-shrink-0" style="color:#ef4444;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                    <span x-text="t"></span>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!selectedControl.threat || !selectedControl.threat.length" class="text-sm text-slate-400 italic">No threat information defined for this control.</div>
+            </div>
+          </div>
+
+          <!-- Regulatory -->
+          <div x-show="modalTab === 'regulatory'">
+            <div x-show="!selectedControl.regulatory_mapping || selectedControl.regulatory_mapping.length === 0" class="text-slate-400 text-sm">No regulatory mappings defined.</div>
+            <div class="space-y-4">
+              <template x-for="mapping in (selectedControl.regulatory_mapping || [])">
+                <div>
+                  <div class="text-sm font-bold text-slate-800 mb-1" x-text="mapping.framework"></div>
+                  <div class="flex flex-wrap gap-1">
+                    <template x-for="ctrl in (mapping.controls || [])">
+                      <span class="pill bg-blue-50 text-blue-700 text-xs" x-text="ctrl"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Checks -->
+          <div x-show="modalTab === 'checks'">
+            <div class="space-y-3">
+              <template x-for="check in (selectedControl.automated_checks || [])">
+                <div class="p-3 bg-[#f7f8fb] rounded-lg border">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-mono text-xs text-slate-500" x-text="check.id"></span>
+                    <span class="pill text-xs" :class="severityColor(check.severity)" x-text="check.severity"></span>
+                  </div>
+                  <div class="text-sm font-medium text-slate-700" x-text="check.title"></div>
+                </div>
+              </template>
+              <div x-show="!selectedControl.automated_checks || selectedControl.automated_checks.length === 0" class="text-slate-400 text-sm">No automated checks available.</div>
+            </div>
+          </div>
+
+          <!-- How to Fix -->
+          <div x-show="modalTab === 'fix'">
+            <div x-show="!selectedControl.automated_checks || selectedControl.automated_checks.length === 0" class="text-slate-400 text-sm">No automated checks available.</div>
+            <div class="space-y-4">
+              <template x-for="check in (selectedControl.automated_checks || [])">
+                <div class="rounded-xl border border-slate-200 overflow-hidden">
+                  <!-- Check header -->
+                  <div class="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-200">
+                    <span class="font-mono text-xs text-slate-500" x-text="check.id"></span>
+                    <span class="pill text-xs" :class="severityColor(check.severity)" x-text="check.severity"></span>
+                  </div>
+                  <!-- Remediation -->
+                  <div x-show="check.remediation" class="px-3 py-2 text-sm text-slate-700 leading-relaxed border-b border-slate-100" x-text="check.remediation"></div>
+                  <!-- Compliant snippet -->
+                  <div x-show="check.example && check.example.compliant">
+                    <div class="flex items-center justify-between px-3 py-1.5" style="background:#1e293b;">
+                      <span style="color:#64748b;font-size:0.65rem;font-family:monospace;letter-spacing:.04em;">COMPLIANT TERRAFORM</span>
+                      <button @click="copyFix(check.example && check.example.compliant)" class="flex items-center gap-1 text-xs px-2 py-0.5 rounded" style="background:rgba(255,255,255,.08);color:#94a3b8;border:1px solid rgba(255,255,255,.12);" :style="copiedFix === (check.example && check.example.compliant) ? 'color:#4ade80;border-color:#4ade80;' : ''">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        <span x-text="copiedFix === (check.example && check.example.compliant) ? 'Copied!' : 'Copy'"></span>
+                      </button>
+                    </div>
+                    <pre class="px-3 py-2 text-xs overflow-x-auto" style="background:#0f172a;color:#e2e8f0;font-family:monospace;margin:0;line-height:1.55;max-height:240px;" x-text="check.example && check.example.compliant"></pre>
+                  </div>
+                  <!-- Terraform Registry link -->
+                  <div x-show="check.resource_types && check.resource_types.length" class="flex items-center gap-1.5 px-3 py-2 border-t border-slate-100">
+                    <svg class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    <a :href="tfDocUrl(check.resource_types && check.resource_types[0])" target="_blank" rel="noopener" class="text-xs text-[#0094FF] hover:underline" x-text="'registry.terraform.io → ' + (check.resource_types && check.resource_types[0])"></a>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Waiver form -->
+          <div x-show="modalTab === 'waiver'">
+            <div x-show="waivers[selectedControl.id]" class="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200 text-sm text-purple-700">
+              This control is currently waived.
+            </div>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Reason <span class="text-red-500">*</span></label>
+                <textarea x-model="waiverForm.reason" rows="3" class="input resize-none" placeholder="Describe why this control is intentionally waived…"></textarea>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Owner</label>
+                  <input x-model="waiverForm.owner" type="text" class="input" placeholder="team@example.com" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-slate-700 mb-1">Expires</label>
+                  <input x-model="waiverForm.expires" type="date" class="input" />
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button @click="saveWaiver(selectedControl.id)" :disabled="!waiverForm.reason" class="btn-primary flex-1 justify-center" :class="!waiverForm.reason ? 'opacity-60 cursor-not-allowed' : ''">
+                  Save Waiver
+                </button>
+                <button x-show="waivers[selectedControl.id]" @click="removeWaiver(selectedControl.id)" class="btn-danger">
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+
+<!-- ═══ FINDING DETAIL MODAL ══════════════════════════════════════════════ -->
+<div x-show="selectedFinding" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" @click.self="selectedFinding = null">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8" @click.stop>
+    <template x-if="selectedFinding">
+      <div>
+        <div class="flex items-start justify-between p-6 border-b">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-mono text-xs font-bold text-slate-500" x-text="selectedFinding.control_id"></span>
+              <span class="pill text-xs" :class="statusColor(selectedFinding.status)" x-text="selectedFinding.status"></span>
+              <span class="pill text-xs" :class="severityColor(selectedFinding.severity)" x-text="selectedFinding.severity"></span>
+            </div>
+            <h2 class="text-lg font-bold text-slate-900" x-text="selectedFinding.control_title"></h2>
+          </div>
+          <button @click="selectedFinding = null" class="text-slate-400 hover:text-slate-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <!-- Auto-fix button bar -->
+        <div x-show="selectedFinding.status === 'FAIL' && results && results.path && results.path !== 'sandbox'" class="px-6 py-3 border-b border-slate-100 flex items-center gap-3">
+          <button @click="runAutoFix([selectedFinding.control_id])" :disabled="autoFix.loading" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors" style="background:rgba(0,148,255,.08);border-color:rgba(0,148,255,.25);color:#0094FF;" :class="autoFix.loading ? 'opacity-60 cursor-not-allowed' : 'hover:bg-[#0094FF] hover:text-white hover:border-[#0094FF]'">
+            <span x-show="!autoFix.loading"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
+            <span x-show="autoFix.loading" class="animate-spin"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></span>
+            <span x-text="autoFix.loading ? 'Analysing…' : 'Auto-Fix this Control'"></span>
+            <span x-show="!autoFix.loading" style="background:rgba(234,88,12,.12);color:#c2410c;font-size:0.55rem;font-weight:800;padding:0.1rem 0.35rem;border-radius:3px;line-height:1.2;">α</span>
+          </button>
+          <span class="text-xs text-slate-400">Preview &amp; apply surgical patches to your IaC source files</span>
+        </div>
+        <div class="p-6 space-y-4 max-h-96 overflow-y-auto">
+          <div>
+            <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Description</div>
+            <p class="text-sm text-slate-700" x-text="selectedFinding.description"></p>
+          </div>
+          <div x-show="selectedFinding.waived_reason">
+            <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Waiver Reason</div>
+            <p class="text-sm text-purple-700 bg-purple-50 p-3 rounded-lg" x-text="selectedFinding.waived_reason"></p>
+          </div>
+          <div x-show="selectedFinding.check_results && selectedFinding.check_results.length > 0">
+            <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Check Results</div>
+            <div class="space-y-2">
+              <template x-for="cr in selectedFinding.check_results">
+                <div class="p-3 rounded-lg border" :class="cr.status === 'FAIL' ? 'bg-red-50 border-red-200' : cr.status === 'PASS' ? 'bg-green-50 border-green-200' : 'bg-[#f7f8fb] border-slate-200'">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-mono text-xs text-slate-500" x-text="cr.check_id"></span>
+                    <span class="pill text-xs" :class="statusColor(cr.status)" x-text="cr.status"></span>
+                  </div>
+                  <div class="text-sm font-medium text-slate-700" x-text="cr.check_title"></div>
+                  <div x-show="cr.resource" class="flex items-center gap-1.5 mt-1">
+                    <span class="text-xs text-slate-500 font-mono" x-text="cr.resource"></span>
+                    <button @click="navigator.clipboard.writeText(cr.resource); notify('Resource copied')" title="Copy resource address" class="text-slate-300 hover:text-slate-500 transition-colors flex-shrink-0">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    </button>
+                    <a x-show="results && results.path && results.path !== 'sandbox'" :href="'vscode://file/' + (results ? results.path : '')" title="Open project in VS Code" class="text-slate-300 hover:text-[#007ACC] transition-colors flex-shrink-0">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    </a>
+                  </div>
+                  <div x-show="cr.message" class="text-xs text-slate-600 mt-1" x-text="cr.message"></div>
+                  <div x-show="cr.remediation && cr.status === 'FAIL'" class="text-xs text-blue-600 mt-2 bg-blue-50 p-2 rounded" x-text="'Remediation: ' + cr.remediation"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+
+<!-- ═══ WAIVER EDIT MODAL ══════════════════════════════════════════════════ -->
+<div x-show="editingWaiver" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="editingWaiver = null">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" @click.stop>
+    <h2 class="text-lg font-bold text-slate-800 mb-4">Edit Waiver — <span class="font-mono text-blue-600" x-text="editingWaiver"></span></h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Reason <span class="text-red-500">*</span></label>
+        <textarea x-model="editWaiverForm.reason" rows="3" class="input resize-none"></textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Owner</label>
+          <input x-model="editWaiverForm.owner" type="text" class="input" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Expires</label>
+          <input x-model="editWaiverForm.expires" type="date" class="input" />
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button @click="saveEditedWaiver()" class="btn-primary flex-1 justify-center">Save</button>
+        <button @click="editingWaiver = null" class="btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══ AUTO-FIX PREVIEW MODAL ════════════════════════════════════════════ -->
+<div x-show="autoFix.showModal" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 overflow-y-auto" style="padding-top:2rem;" @click.self="autoFix.showModal = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl" @click.stop>
+    <template x-if="autoFix.result">
+      <div>
+        <!-- Header -->
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style="background:rgba(0,148,255,.1);">
+              <svg class="w-5 h-5" style="color:#0094FF;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-base font-bold text-slate-800">Auto-Fix Preview</h3>
+                <span style="background:rgba(234,88,12,.12);color:#c2410c;font-size:0.6rem;font-weight:800;padding:0.15rem 0.5rem;border-radius:4px;letter-spacing:.04em;border:1px solid rgba(234,88,12,.2);">α ALPHA</span>
+              </div>
+              <div class="text-xs text-slate-500 mt-0.5">
+                <span class="font-semibold text-green-600" x-text="autoFix.result.patches_count"></span> patch(es) ready ·
+                <span x-text="autoFix.result.files_modified.length + ' file(s)'"></span> affected ·
+                <span class="text-slate-400" x-text="autoFix.result.skipped_count + ' check(s) not auto-fixable'"></span>
+              </div>
+            </div>
+          </div>
+          <button @click="autoFix.showModal = false" class="text-slate-400 hover:text-slate-600">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- KPI row -->
+        <div class="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
+          <div class="px-5 py-3 text-center">
+            <div class="text-2xl font-bold text-green-600" x-text="autoFix.result.patches_count"></div>
+            <div class="text-xs text-slate-500 mt-0.5">Patches</div>
+          </div>
+          <div class="px-5 py-3 text-center">
+            <div class="text-2xl font-bold text-[#0094FF]" x-text="autoFix.result.files_modified.length"></div>
+            <div class="text-xs text-slate-500 mt-0.5">Files</div>
+          </div>
+          <div class="px-5 py-3 text-center">
+            <div class="text-2xl font-bold text-slate-400" x-text="autoFix.result.skipped_count"></div>
+            <div class="text-xs text-slate-500 mt-0.5">Skipped (manual fix needed)</div>
+          </div>
+        </div>
+
+        <!-- Body: diffs + skipped list -->
+        <div class="overflow-y-auto" style="max-height:55vh;">
+
+          <!-- Per-file diffs -->
+          <div x-show="Object.keys(autoFix.result.diff_preview || {}).length > 0" class="p-4 space-y-3">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Diff Preview</div>
+            <template x-for="[file, lines] in Object.entries(autoFix.result.diff_preview || {})" :key="file">
+              <div class="rounded-xl overflow-hidden border border-slate-200">
+                <div class="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200" style="background:#1e293b;">
+                  <svg class="w-3.5 h-3.5 flex-shrink-0" style="color:#475569;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                  <span style="color:#94a3b8;font-size:0.7rem;font-family:monospace;" x-text="file"></span>
+                </div>
+                <pre style="background:#0f172a;margin:0;padding:0.75rem;overflow-x:auto;font-family:monospace;font-size:0.72rem;line-height:1.6;max-height:260px;"><template x-for="(ln, idx) in lines" :key="idx"><span :style="'display:block;color:' + autoFixDiffColor(ln) + (ln.startsWith('+') && !ln.startsWith('+++') ? ';background:rgba(21,128,61,.12)' : ln.startsWith('-') && !ln.startsWith('---') ? ';background:rgba(220,38,38,.10)' : '')" x-text="ln"></span></template></pre>
+              </div>
+            </template>
+          </div>
+
+          <!-- Skipped list -->
+          <div x-show="autoFix.result.skipped && autoFix.result.skipped.length > 0" class="px-4 pb-4">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Checks Requiring Manual Fix</div>
+            <div class="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+              <template x-for="s in autoFix.result.skipped" :key="s.check_id + s.address">
+                <div class="flex items-start gap-3 px-3 py-2">
+                  <div class="flex-shrink-0 mt-0.5">
+                    <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="font-mono text-xs text-slate-500" x-text="s.check_id"></span>
+                      <span class="font-mono text-xs text-slate-400" x-text="s.address"></span>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5" x-text="s.reason"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex items-center justify-between gap-4 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+          <div class="space-y-1">
+            <p class="text-xs text-slate-400">
+              <svg class="w-3.5 h-3.5 inline-block mr-1 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              Original files will be backed up as <code class="bg-slate-200 px-1 rounded">.tf.bak</code> before changes are written.
+            </p>
+            <p class="text-xs" style="color:#c2410c;">
+              <span style="background:rgba(234,88,12,.12);color:#c2410c;font-size:0.6rem;font-weight:800;padding:0.1rem 0.4rem;border-radius:3px;margin-right:0.35rem;">α ALPHA</span>
+              Auto-Fix is in alpha. Always review the diff and test changes before deploying.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button @click="autoFix.showModal = false" class="btn btn-outline text-sm">Cancel</button>
+            <button @click="applyAutoFix()" :disabled="autoFix.applying || autoFix.result.patches_count === 0" class="btn btn-primary text-sm" :class="autoFix.applying || autoFix.result.patches_count === 0 ? 'opacity-50 cursor-not-allowed' : ''">
+              <span x-show="!autoFix.applying"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
+              <span x-show="autoFix.applying" class="animate-spin"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></span>
+              <span x-text="autoFix.applying ? 'Applying…' : 'Apply ' + autoFix.result.patches_count + ' Patch(es)'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+
+<!-- ═══ NOTIFICATION TOAST ════════════════════════════════════════════════ -->
+<div x-show="notification" x-transition:enter="transition ease-out duration-300 transform" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0" class="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium flex items-center gap-2 max-w-xs"
+  :class="notification && notification.type === 'error' ? 'bg-red-600' : 'bg-[#070a12]'">
+  <svg x-show="notification && notification.type !== 'error'" class="w-4 h-4 flex-shrink-0 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+  <svg x-show="notification && notification.type === 'error'" class="w-4 h-4 flex-shrink-0 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+  <span x-text="notification ? notification.message : ''"></span>
+</div>
+
+
+<!-- ═══ ALPINE.JS APPLICATION ═════════════════════════════════════════════ -->
+<script>
+
+    // ── World-map region coordinates ──────────────────────────────────────
+    const _REGION_COORDS = {
+      // AWS
+      "us-east-1":[37.77,-77.42],"us-east-2":[40.42,-82.88],"us-west-1":[37.35,-121.96],
+      "us-west-2":[45.52,-122.68],"af-south-1":[-33.87,18.43],"ap-east-1":[22.32,114.17],
+      "ap-south-1":[19.08,72.88],"ap-south-2":[17.38,78.47],"ap-northeast-1":[35.68,139.65],
+      "ap-northeast-2":[37.57,126.98],"ap-northeast-3":[34.69,135.50],"ap-southeast-1":[1.35,103.82],
+      "ap-southeast-2":[-33.87,151.21],"ap-southeast-3":[-6.21,106.85],"ap-southeast-4":[-37.81,144.96],
+      "ca-central-1":[43.65,-79.38],"ca-west-1":[51.05,-114.07],"eu-central-1":[50.11,8.68],
+      "eu-central-2":[47.38,8.54],"eu-west-1":[53.33,-6.25],"eu-west-2":[51.51,-0.13],
+      "eu-west-3":[48.86,2.35],"eu-north-1":[59.33,18.07],"eu-south-1":[45.46,9.19],
+      "eu-south-2":[40.42,-3.70],"me-south-1":[26.07,50.55],"me-central-1":[24.47,54.37],
+      "il-central-1":[32.09,34.78],"sa-east-1":[-23.55,-46.63],
+      // Azure
+      "eastus":[37.77,-77.42],"eastus2":[36.65,-78.37],"westus":[37.78,-122.40],
+      "westus2":[47.61,-122.33],"westus3":[33.45,-112.07],"centralus":[41.88,-87.63],
+      "northcentralus":[41.88,-87.63],"southcentralus":[29.76,-95.37],"westcentralus":[40.90,-110.26],
+      "canadacentral":[43.65,-79.38],"canadaeast":[46.82,-71.21],"brazilsouth":[-23.55,-46.63],
+      "northeurope":[53.33,-6.25],"westeurope":[52.37,4.90],"uksouth":[51.51,-0.13],
+      "ukwest":[51.48,-3.18],"francecentral":[48.86,2.35],"francesouth":[43.30,5.38],
+      "germanywestcentral":[50.11,8.68],"germanynorth":[53.07,8.80],"norwayeast":[59.91,10.75],
+      "norwaywest":[58.97,5.73],"switzerlandnorth":[47.38,8.54],"switzerlandwest":[46.20,6.14],
+      "eastasia":[22.32,114.17],"southeastasia":[1.35,103.82],"australiaeast":[-33.87,151.21],
+      "australiasoutheast":[-37.81,144.96],"japaneast":[35.68,139.65],"japanwest":[34.69,135.50],
+      "koreacentral":[37.57,126.98],"koreasouth":[35.18,129.08],"centralindia":[18.52,73.86],
+      "southindia":[12.98,80.25],"westindia":[19.08,72.88],"uaenorth":[25.21,55.27],
+      "uaecentral":[24.47,54.37],"southafricanorth":[-25.73,28.22],"southafricawest":[-33.93,18.42],
+      "qatarcentral":[25.28,51.56],"polandcentral":[52.23,21.01],"swedencentral":[60.67,17.14],
+      "italynorth":[45.47,9.19],"israelcentral":[32.09,34.78],
+      // GCP
+      "us-central1":[41.26,-95.86],"us-east1":[33.20,-80.00],"us-east4":[39.03,-77.47],
+      "us-east5":[40.00,-83.00],"us-south1":[32.78,-96.80],"us-west1":[45.59,-122.06],
+      "us-west2":[34.05,-118.24],"us-west3":[40.77,-111.89],"us-west4":[36.17,-115.14],
+      "northamerica-northeast1":[45.51,-73.55],"northamerica-northeast2":[43.65,-79.38],
+      "southamerica-east1":[-23.55,-46.63],"southamerica-west1":[-33.46,-70.65],
+      "europe-west1":[50.45,3.81],"europe-west2":[51.51,-0.13],"europe-west3":[50.11,8.68],
+      "europe-west4":[52.37,4.90],"europe-west6":[47.38,8.54],"europe-west8":[45.46,9.19],
+      "europe-west9":[48.86,2.35],"europe-west10":[52.52,13.40],"europe-west12":[45.07,7.69],
+      "europe-north1":[60.57,27.19],"europe-central2":[52.23,21.01],"europe-southwest1":[38.72,-9.14],
+      "asia-east1":[24.05,120.52],"asia-east2":[22.32,114.17],"asia-northeast1":[35.68,139.65],
+      "asia-northeast2":[34.69,135.50],"asia-northeast3":[37.57,126.98],"asia-south1":[19.08,72.88],
+      "asia-south2":[28.61,77.21],"asia-southeast1":[1.35,103.82],"asia-southeast2":[-6.21,106.85],
+      "australia-southeast1":[-33.87,151.21],"australia-southeast2":[-37.81,144.96],
+      "me-west1":[32.09,34.78],"me-central1":[24.47,54.37],"me-central2":[25.28,51.56],
+      "africa-south1":[-33.87,18.43],
+      // Alibaba
+      "cn-hangzhou":[30.25,120.16],"cn-shanghai":[31.23,121.47],"cn-beijing":[39.91,116.39],
+      "cn-shenzhen":[22.54,114.06],"cn-hongkong":[22.32,114.17],"ap-southeast-1-ali":[1.35,103.82],
+      // OCI
+      "us-phoenix-1":[33.45,-112.07],"us-ashburn-1":[39.03,-77.47],"eu-frankfurt-1":[50.11,8.68],
+      "uk-london-1":[51.51,-0.13],"ap-tokyo-1":[35.68,139.65],"ap-sydney-1":[-33.87,151.21],
+      "ap-mumbai-1":[19.08,72.88],"sa-saopaulo-1":[-23.55,-46.63],"ca-toronto-1":[43.65,-79.38],
+    };
+
+    const _REGION_LABELS = {
+      "us-east-1":"N. Virginia, USA","us-east-2":"Ohio, USA","us-west-1":"N. California, USA",
+      "us-west-2":"Oregon, USA","af-south-1":"Cape Town, South Africa","ap-east-1":"Hong Kong",
+      "ap-south-1":"Mumbai, India","ap-south-2":"Hyderabad, India","ap-northeast-1":"Tokyo, Japan",
+      "ap-northeast-2":"Seoul, South Korea","ap-northeast-3":"Osaka, Japan","ap-southeast-1":"Singapore",
+      "ap-southeast-2":"Sydney, Australia","ap-southeast-3":"Jakarta, Indonesia","ap-southeast-4":"Melbourne, Australia",
+      "ca-central-1":"Montreal, Canada","ca-west-1":"Calgary, Canada","eu-central-1":"Frankfurt, Germany",
+      "eu-central-2":"Zurich, Switzerland","eu-west-1":"Dublin, Ireland","eu-west-2":"London, UK",
+      "eu-west-3":"Paris, France","eu-north-1":"Stockholm, Sweden","eu-south-1":"Milan, Italy",
+      "eu-south-2":"Madrid, Spain","me-south-1":"Bahrain","me-central-1":"UAE","il-central-1":"Tel Aviv, Israel",
+      "sa-east-1":"São Paulo, Brazil",
+      "eastus":"Virginia, USA","eastus2":"Virginia, USA","westus":"California, USA","westus2":"Washington, USA",
+      "westus3":"Arizona, USA","centralus":"Iowa, USA","northcentralus":"Illinois, USA",
+      "southcentralus":"Texas, USA","westcentralus":"Wyoming, USA","canadacentral":"Toronto, Canada",
+      "canadaeast":"Quebec, Canada","brazilsouth":"São Paulo, Brazil","northeurope":"Dublin, Ireland",
+      "westeurope":"Amsterdam, Netherlands","uksouth":"London, UK","ukwest":"Cardiff, UK",
+      "francecentral":"Paris, France","francesouth":"Marseille, France","germanywestcentral":"Frankfurt, Germany",
+      "germanynorth":"Berlin, Germany","norwayeast":"Oslo, Norway","norwaywest":"Stavanger, Norway",
+      "switzerlandnorth":"Zurich, Switzerland","switzerlandwest":"Geneva, Switzerland",
+      "eastasia":"Hong Kong","southeastasia":"Singapore","australiaeast":"Sydney, Australia",
+      "australiasoutheast":"Melbourne, Australia","japaneast":"Tokyo, Japan","japanwest":"Osaka, Japan",
+      "koreacentral":"Seoul, South Korea","koreasouth":"Busan, South Korea","centralindia":"Pune, India",
+      "southindia":"Chennai, India","westindia":"Mumbai, India","uaenorth":"Dubai, UAE",
+      "uaecentral":"Abu Dhabi, UAE","southafricanorth":"Johannesburg, South Africa",
+      "southafricawest":"Cape Town, South Africa","qatarcentral":"Doha, Qatar",
+      "polandcentral":"Warsaw, Poland","swedencentral":"Gävle, Sweden","italynorth":"Milan, Italy",
+      "israelcentral":"Tel Aviv, Israel",
+      "us-central1":"Iowa, USA","us-east1":"South Carolina, USA","us-east4":"N. Virginia, USA",
+      "us-west1":"Oregon, USA","europe-west1":"Belgium","europe-west2":"London, UK",
+      "europe-west3":"Frankfurt, Germany","europe-west4":"Netherlands","europe-west6":"Zurich, Switzerland",
+      "asia-east1":"Taiwan","asia-east2":"Hong Kong","asia-northeast1":"Tokyo, Japan",
+      "asia-northeast2":"Osaka, Japan","asia-northeast3":"Seoul, South Korea","asia-south1":"Mumbai, India",
+      "asia-southeast1":"Singapore","asia-southeast2":"Jakarta, Indonesia",
+      "australia-southeast1":"Sydney, Australia","me-west1":"Tel Aviv, Israel",
+      "africa-south1":"Cape Town, South Africa",
+    };
+
+    window._REGION_COORDS = _REGION_COORDS;
+    window._PROVIDER_COLORS = _PROVIDER_COLORS;
+    window._REGION_LABELS = _REGION_LABELS;
+    const _PROVIDER_COLORS = {
+      aws:'#f97316', azure:'#2b7fff', gcp:'#22c55e',
+      alicloud:'#ff6a00', yandex:'#fcdb03', oci:'#c74634'
+    };
+
+    function wafpass() {
+  return {
+    // ── State ──────────────────────────────────────────────────────────
+    page: 'dashboard',
+    sidebarOpen: false,
+    controls: window.__INITIAL_CONTROLS__ || [],
+    waivers: window.__INITIAL_WAIVERS__ || {},
+    results: window.__INITIAL_RESULTS__ || null,
+
+    // Controls filters
+    searchQuery: '',
+    filterPillar: '',
+    filterSeverity: '',
+    filterWaived: false,
+
+    // Findings filters
+    findingFilter: '',
+    findingPillar: '',
+
+    // Modals
+    selectedControl: null,
+    selectedFinding: null,
+    editingWaiver: null,
+    editWaiverForm: { reason: '', owner: '', expires: '' },
+    modalTab: 'overview',
+    waiverForm: { reason: '', owner: '', expires: '' },
+
+    // Scan
+    scanPath: '',
+    scanIac: 'terraform',
+    scanPillar: '',
+    scanning: false,
+    scanError: null,
+
+    // Notifications
+    notification: null,
+    _notifTimer: null,
+
+    // Charts
+    _charts: {},
+
+    // How to Fix
+    copiedFix: null,
+
+    // Sandbox
+    sandboxContent: '',
+    sandboxPillar: '',
+    sandboxScanning: false,
+    sandboxResults: null,
+    sandboxError: null,
+    _roi: { risk: 0, effort: 0, fail: 0, savings: 0 },
+
+    // Risk Acceptances
+    riskAcceptances: window.__INITIAL_RISK_ACCEPTANCES__ || {},
+    raModal: false,
+    raEditId: null,
+    raForm: { id: '', reason: '', approver: '', owner: '', rfc: '', jira_link: '', other_link: '', notes: '', risk_level: 'accepted', residual_risk: 'medium', expires: '', accepted_at: '' },
+
+    // Auto-Fix
+    autoFix: { loading: false, applying: false, error: null, result: null, showModal: false, controlIds: null },
+
+    // ── Init ───────────────────────────────────────────────────────────
+    init() {
+      this.$watch('results', () => {
+        this.$nextTick(() => this.initCharts());
+      });
+      if (this.results) {
+        this.$nextTick(() => this.initCharts());
+      }
+      this._applyHash(window.location.hash);
+      window.addEventListener('hashchange', () => this._applyHash(window.location.hash));
+      this.$watch('sandboxResults', v => {
+        if (v) { const roi = this.sandboxROI; if (roi) this._animateROI(roi); }
+        else this._roi = { risk: 0, effort: 0, fail: 0, savings: 0 };
+      });
+      this.$watch('riskAcceptances', () => this.$nextTick(() => this.initCharts()));
+    },
+
+    // ── Computed ───────────────────────────────────────────────────────
+    get filteredControls() {
+      return this.controls.filter(c => {
+        if (this.filterPillar && c.pillar !== this.filterPillar) return false;
+        if (this.filterSeverity && c.severity !== this.filterSeverity) return false;
+        if (this.filterWaived && !this.waivers[c.id]) return false;
+        if (this.searchQuery) {
+          const q = this.searchQuery.toLowerCase();
+          return c.id.toLowerCase().includes(q) ||
+                 c.title.toLowerCase().includes(q) ||
+                 (c.description || '').toLowerCase().includes(q);
+        }
+        return true;
+      });
+    },
+
+    get filteredFindings() {
+      if (!this.results) return [];
+      return this.results.results.filter(r => {
+        if (this.findingFilter && r.status !== this.findingFilter) return false;
+        if (this.findingPillar && r.pillar !== this.findingPillar) return false;
+        return true;
+      });
+    },
+
+    get complianceFrameworks() {
+      const fwMap = {};
+      const fwDesc = {
+        'GDPR': 'General Data Protection Regulation (EU) 2016/679',
+        'ISO 27001:2022': 'Information Security Management Systems',
+        'BSI C5:2020': 'Cloud Computing Compliance Criteria Catalogue',
+        'EUCS (ENISA)': 'EU Cybersecurity Certification Scheme for Cloud',
+        'CSRD': 'Corporate Sustainability Reporting Directive',
+      };
+      this.controls.forEach(ctrl => {
+        (ctrl.regulatory_mapping || []).forEach(m => {
+          if (!fwMap[m.framework]) {
+            fwMap[m.framework] = { name: m.framework, description: fwDesc[m.framework] || '', controls: [] };
+          }
+          fwMap[m.framework].controls.push({ id: ctrl.id, title: ctrl.title });
+        });
+      });
+      return Object.values(fwMap).sort((a,b) => b.controls.length - a.controls.length);
+    },
+
+    get checkStats() {
+      if (!this.results) return null;
+      const allChecks = this.results.results.flatMap(r => r.check_results || []);
+      const pass = allChecks.filter(c => c.status === 'PASS').length;
+      const fail = allChecks.filter(c => c.status === 'FAIL').length;
+      const total = pass + fail;
+      const resources = new Set(allChecks.map(c => c.resource).filter(Boolean));
+      const failResources = new Set(allChecks.filter(c => c.status === 'FAIL').map(c => c.resource).filter(Boolean));
+      return { total, pass, fail, passRate: total ? Math.round(pass / total * 100) : 100, resources: resources.size, failResources: failResources.size };
+    },
+
+    get categoryBreakdown() {
+      if (!this.results) return [];
+      const cats = {};
+      this.results.results.forEach(r => {
+        if (r.status === 'SKIP' || r.status === 'WAIVED') return;
+        const cat = r.category || 'other';
+        if (!cats[cat]) cats[cat] = { pass: 0, fail: 0 };
+        if (r.status === 'PASS') cats[cat].pass++; else cats[cat].fail++;
+      });
+      return Object.entries(cats)
+        .map(([cat, { pass, fail }]) => ({ cat, pass, fail, total: pass + fail, pct: Math.round(pass / (pass + fail) * 100) }))
+        .sort((a, b) => b.fail - a.fail);
+    },
+
+    get regulatoryReadiness() {
+      if (!this.results) return [];
+      const fw = {};
+      this.results.results.forEach(r => {
+        if (r.status === 'SKIP' || r.status === 'WAIVED') return;
+        (r.regulatory_mapping || []).forEach(m => {
+          if (!fw[m.framework]) fw[m.framework] = { pass: 0, total: 0 };
+          fw[m.framework].total++;
+          if (r.status === 'PASS') fw[m.framework].pass++;
+        });
+      });
+      return Object.entries(fw)
+        .map(([framework, { pass, total }]) => ({ framework, pass, total, pct: Math.round(pass / total * 100) }))
+        .sort((a, b) => b.total - a.total);
+    },
+
+    get quickWins() {
+      if (!this.results) return [];
+      return this.results.results
+        .filter(r => r.status === 'FAIL' && ['medium', 'low'].includes(r.severity))
+        .slice(0, 6);
+    },
+
+    get effectiveScore() {
+      if (!this.results) return 0;
+      const W = { critical: 10, high: 5, medium: 2, low: 1 };
+      let totalW = 0, passW = 0;
+      for (const r of this.results.results) {
+        if (['SKIP', 'WAIVED'].includes(r.status)) continue;
+        if (this.riskAcceptances[r.control_id]) continue;
+        const w = W[r.severity] || 2;
+        totalW += w;
+        if (r.status === 'PASS') passW += w;
+      }
+      return totalW ? Math.round(passW / totalW * 100) : 100;
+    },
+
+    get debtHeatmap() {
+      const PILLARS = ['security','cost','reliability','operations','sovereignty','sustainability','performance'];
+      const SEVS = ['critical','high','medium','low'];
+      const src = this.results ? this.results.results : null;
+      let max = 1;
+      const rows = PILLARS.map(p => {
+        const cells = SEVS.map(s => {
+          const n = src
+            ? src.filter(r => r.pillar === p && r.severity === s && r.status === 'FAIL').length
+            : this.controls.filter(c => c.pillar === p && c.severity === s).length;
+          if (n > max) max = n;
+          return { sev: s, count: n };
+        });
+        return { pillar: p, cells };
+      });
+      return { rows, sevs: SEVS, max, hasResults: !!src };
+    },
+
+    get sandboxROI() {
+      if (!this.sandboxResults) return null;
+      const RISK   = { critical: 50000, high: 15000, medium: 5000, low: 1000 };
+      const EFFORT = { critical: 8,     high: 4,     medium: 2,    low: 0.5 };
+      let risk = 0, effort = 0, fail = 0;
+      for (const r of this.sandboxResults.results) {
+        if (r.status !== 'FAIL') continue;
+        fail++;
+        risk   += RISK[r.severity]   ?? 5000;
+        effort += EFFORT[r.severity] ?? 2;
+      }
+      return { risk, effort: Math.round(effort * 10) / 10, fail, savings: Math.round(risk * 0.9) };
+    },
+
+    heatColor(count, max) {
+      if (!count) return '#f8fafc';
+      const r = Math.min(count / Math.max(max, 1), 1);
+      if (r <= 0.25) return '#fee2e2';
+      if (r <= 0.5)  return '#fca5a5';
+      if (r <= 0.75) return '#f87171';
+      return '#dc2626';
+    },
+
+    _animateROI(target) {
+      const steps = 50, ms = 20;
+      let step = 0;
+      const t0 = { ...this._roi };
+      const iv = setInterval(() => {
+        step++;
+        const p = Math.min(step / steps, 1);
+        const e = p < 0.5 ? 2*p*p : -1+(4-2*p)*p;
+        this._roi = {
+          risk:    Math.round(t0.risk    + (target.risk    - t0.risk)    * e),
+          effort:  Math.round((t0.effort + (target.effort  - t0.effort)  * e) * 10) / 10,
+          fail:    Math.round(t0.fail    + (target.fail    - t0.fail)    * e),
+          savings: Math.round(t0.savings + (target.savings - t0.savings) * e),
+        };
+        if (step >= steps) clearInterval(iv);
+      }, ms);
+    },
+
+    // ── Risk Acceptances ───────────────────────────────────────────────
+    openRAModal(id) {
+      this.raEditId = id || null;
+      if (id && this.riskAcceptances[id]) {
+        this.raForm = { ...this.riskAcceptances[id] };
+      } else {
+        this.raForm = { id: id || '', reason: '', approver: '', owner: '', rfc: '', jira_link: '', other_link: '', notes: '', risk_level: 'accepted', residual_risk: 'medium', expires: '', accepted_at: new Date().toISOString().slice(0,10) };
+      }
+      this.raModal = true;
+    },
+
+    async saveRiskAcceptance() {
+      if (!this.raForm.id || !this.raForm.reason || !this.raForm.approver) return;
+      this.riskAcceptances = { ...this.riskAcceptances, [this.raForm.id]: { ...this.raForm } };
+      try {
+        await fetch('/api/risk-acceptances', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ acceptances: Object.values(this.riskAcceptances) }),
+        });
+      } catch(e) {}
+      this.raModal = false;
+      this.notify('Risk acceptance saved for ' + this.raForm.id);
+    },
+
+    async deleteRiskAcceptance(id) {
+      const acc = { ...this.riskAcceptances };
+      delete acc[id];
+      this.riskAcceptances = acc;
+      try { await fetch('/api/risk-acceptances/' + id, { method: 'DELETE' }); } catch(e) {}
+      this.notify('Risk acceptance removed for ' + id);
+    },
+
+    exportRiskAcceptances() {
+      window.location.href = '/api/risk-acceptances/export';
+    },
+
+    raIsExpired(ra) {
+      return ra.expires && new Date(ra.expires) < new Date();
+    },
+
+    raExpiresSoon(ra) {
+      if (!ra.expires) return false;
+      const d = new Date(ra.expires);
+      return d >= new Date() && d <= new Date(Date.now() + 30 * 86400000);
+    },
+
+    // ── Waivers ────────────────────────────────────────────────────────
+    toggleWaiver(ctrl) {
+      if (this.waivers[ctrl.id]) {
+        this.removeWaiver(ctrl.id);
+      } else {
+        this.selectedControl = ctrl;
+        this.modalTab = 'waiver';
+        this.waiverForm = { reason: '', owner: '', expires: '' };
+      }
+    },
+
+    async saveWaiver(controlId) {
+      if (!this.waiverForm.reason) return;
+      this.waivers = {
+        ...this.waivers,
+        [controlId]: {
+          id: controlId,
+          reason: this.waiverForm.reason,
+          owner: this.waiverForm.owner,
+          expires: this.waiverForm.expires,
+        }
+      };
+      await this._persistWaivers();
+      this.selectedControl = null;
+      this.notify('Waiver saved for ' + controlId);
+    },
+
+    async removeWaiver(controlId) {
+      const w = { ...this.waivers };
+      delete w[controlId];
+      this.waivers = w;
+      await this._persistWaivers();
+      if (this.selectedControl && this.selectedControl.id === controlId) this.selectedControl = null;
+      if (this.editingWaiver === controlId) this.editingWaiver = null;
+      this.notify('Waiver removed for ' + controlId);
+    },
+
+    editWaiver(controlId) {
+      const w = this.waivers[controlId] || {};
+      this.editWaiverForm = { reason: w.reason || '', owner: w.owner || '', expires: w.expires || '' };
+      this.editingWaiver = controlId;
+    },
+
+    async saveEditedWaiver() {
+      if (!this.editingWaiver) return;
+      this.waivers = {
+        ...this.waivers,
+        [this.editingWaiver]: {
+          id: this.editingWaiver,
+          ...this.editWaiverForm,
+        }
+      };
+      await this._persistWaivers();
+      this.editingWaiver = null;
+      this.notify('Waiver updated');
+    },
+
+    async _persistWaivers() {
+      if (window.__MODE__ !== 'internal') return; // demo: only in-memory
+      try {
+        const payload = { waivers: Object.values(this.waivers) };
+        await fetch('/api/waivers', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch(e) {
+        console.warn('Could not persist waivers:', e);
+      }
+    },
+
+    exportWaivers() {
+      if (window.__MODE__ === 'internal') {
+        window.location.href = '/api/waivers/export';
+        return;
+      }
+      // Demo: generate YAML client-side
+      const entries = Object.values(this.waivers);
+      let yaml = 'version: "1"\nwaivers:\n';
+      entries.forEach(w => {
+        yaml += `  - id: ${w.id}\n    reason: "${w.reason}"`;
+        if (w.owner) yaml += `\n    owner: "${w.owner}"`;
+        if (w.expires) yaml += `\n    expires: "${w.expires}"`;
+        yaml += '\n';
+      });
+      const blob = new Blob([yaml], { type: 'text/yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = '.wafpass-skip.yml'; a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    // ── Scan ───────────────────────────────────────────────────────────
+    async runScan() {
+      if (!this.scanPath) return;
+      this.scanning = true;
+      this.scanError = null;
+      try {
+        if (window.__MODE__ === 'internal') {
+          const resp = await fetch('/api/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: this.scanPath, iac: this.scanIac, pillar: this.scanPillar || null }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || 'Scan failed');
+          }
+          this.results = await resp.json();
+          this.page = 'dashboard';
+          this.notify('Scan complete — ' + this.results.total_fail + ' failure(s)');
+        } else {
+          // Demo mode: simulate scan
+          await new Promise(r => setTimeout(r, 1500));
+          this.results = window.__DEMO_RESULTS__;
+          this.page = 'dashboard';
+          this.notify('Demo scan complete');
+        }
+      } catch(e) {
+        this.scanError = e.message;
+      } finally {
+        this.scanning = false;
+      }
+    },
+
+    // ── Modals ─────────────────────────────────────────────────────────
+    openControl(ctrl) {
+      if (!ctrl) return;
+      this.selectedControl = ctrl;
+      this.modalTab = 'overview';
+      this.waiverForm = this.waivers[ctrl.id]
+        ? { ...this.waivers[ctrl.id] }
+        : { reason: '', owner: '', expires: '' };
+    },
+
+    openFinding(r) {
+      this.selectedFinding = r;
+    },
+
+    // ── Helpers ────────────────────────────────────────────────────────
+    controlTitle(id) {
+      const ctrl = this.controls.find(c => c.id === id);
+      return ctrl ? ctrl.title : id;
+    },
+
+    navTo(p) {
+      this.page = p;
+      this.sidebarOpen = false;
+      history.replaceState(null, '', '#' + p);
+      if (p === 'regions') this.$nextTick(() => this.renderWorldMap());
+    },
+
+    _applyHash(hash) {
+      if (!hash || hash === '#') return;
+      const raw = hash.slice(1);
+      const qmark = raw.indexOf('?');
+      const pageName = qmark === -1 ? raw : raw.slice(0, qmark);
+      const validPages = ['dashboard','controls','findings','compliance','waivers','risk-acceptance','scan','sandbox','regions'];
+      if (!validPages.includes(pageName)) return;
+      this.page = pageName;
+      if (pageName === 'regions') this.$nextTick(() => this.renderWorldMap());
+      if (pageName === 'sandbox' && qmark !== -1) {
+        const params = new URLSearchParams(raw.slice(qmark + 1));
+        const code = params.get('code');
+        const pillar = params.get('pillar');
+        if (code) {
+          try { this.sandboxContent = decodeURIComponent(escape(atob(code))); } catch(e) {}
+        }
+        if (pillar) this.sandboxPillar = pillar;
+      }
+    },
+
+    shareSandbox() {
+      if (!this.sandboxContent.trim()) { this.notify('Nothing to share — write some Terraform first.'); return; }
+      const encoded = btoa(unescape(encodeURIComponent(this.sandboxContent)));
+      let frag = 'sandbox?code=' + encoded;
+      if (this.sandboxPillar) frag += '&pillar=' + encodeURIComponent(this.sandboxPillar);
+      history.replaceState(null, '', '#' + frag);
+      const url = window.location.href;
+      navigator.clipboard.writeText(url).then(() => this.notify('Shareable link copied!')).catch(() => {
+        prompt('Copy this link:', url);
+      });
+    },
+
+    pillarColor(pillar) {
+      const map = {
+        security: 'bg-red-100 text-red-700',
+        cost: 'bg-green-100 text-green-700',
+        reliability: 'bg-blue-100 text-blue-700',
+        operations: 'bg-orange-100 text-orange-700',
+        sovereignty: 'bg-purple-100 text-purple-700',
+        sustainable: 'bg-teal-100 text-teal-700',
+        sustainability: 'bg-teal-100 text-teal-700',
+        performance: 'bg-indigo-100 text-indigo-700',
+      };
+      return map[pillar] || 'bg-slate-100 text-slate-600';
+    },
+
+    severityColor(sev) {
+      const map = {
+        critical: 'bg-red-100 text-red-800',
+        high: 'bg-orange-100 text-orange-800',
+        medium: 'bg-yellow-100 text-yellow-800',
+        low: 'bg-blue-100 text-blue-800',
+      };
+      return map[sev] || 'bg-slate-100 text-slate-600';
+    },
+
+    statusColor(status) {
+      const map = {
+        PASS: 'bg-green-100 text-green-800',
+        FAIL: 'bg-red-100 text-red-800',
+        SKIP: 'bg-slate-100 text-slate-600',
+        WAIVED: 'bg-purple-100 text-purple-700',
+        ERROR: 'bg-orange-100 text-orange-700',
+      };
+      return map[status] || 'bg-slate-100 text-slate-600';
+    },
+
+    // ── Sandbox ────────────────────────────────────────────────────────
+    _sandboxTemplates: {
+      weak_iam: `resource "aws_iam_account_password_policy" "weak" {\n  minimum_password_length        = 6\n  require_symbols                = false\n  require_numbers                = false\n  require_uppercase_characters   = false\n  require_lowercase_characters   = false\n  allow_users_to_change_password = true\n}\n`,
+      open_storage: `resource "aws_s3_bucket" "data" {\n  bucket = "unprotected-data-lake"\n}\n\nresource "aws_db_instance" "database" {\n  identifier        = "prod-db"\n  engine            = "postgres"\n  instance_class    = "db.t3.medium"\n  allocated_storage = 20\n  username          = "admin"\n  password          = "MyPassword123!"\n  skip_final_snapshot = true\n  # Missing: storage_encrypted, backup_retention_period, multi_az\n}\n`,
+      open_sg: `resource "aws_security_group" "open" {\n  name        = "allow-all"\n  description = "Wide-open security group"\n\n  ingress {\n    from_port   = 22\n    to_port     = 22\n    protocol    = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]  # Unrestricted SSH\n  }\n\n  ingress {\n    from_port   = 3389\n    to_port     = 3389\n    protocol    = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]  # Unrestricted RDP\n  }\n\n  egress {\n    from_port   = 0\n    to_port     = 0\n    protocol    = "-1"\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n`,
+      compliant_s3: `resource "aws_s3_bucket" "secure" {\n  bucket = "my-secure-bucket"\n}\n\nresource "aws_s3_bucket_server_side_encryption_configuration" "secure" {\n  bucket = aws_s3_bucket.secure.id\n  rule {\n    apply_server_side_encryption_by_default {\n      sse_algorithm     = "aws:kms"\n      kms_master_key_id = aws_kms_key.bucket.arn\n    }\n    bucket_key_enabled = true\n  }\n}\n\nresource "aws_s3_bucket_versioning" "secure" {\n  bucket = aws_s3_bucket.secure.id\n  versioning_configuration { status = "Enabled" }\n}\n\nresource "aws_s3_bucket_public_access_block" "secure" {\n  bucket                  = aws_s3_bucket.secure.id\n  block_public_acls       = true\n  block_public_policy     = true\n  ignore_public_acls      = true\n  restrict_public_buckets = true\n}\n`,
+      compliant_rds: `resource "aws_db_instance" "secure" {\n  identifier             = "prod-db"\n  engine                 = "postgres"\n  engine_version         = "15.4"\n  instance_class         = "db.t3.medium"\n  allocated_storage      = 20\n  username               = "admin"\n  manage_master_user_password = true  # Use Secrets Manager\n  storage_encrypted      = true\n  kms_key_id             = aws_kms_key.rds.arn\n  multi_az               = true\n  backup_retention_period = 14\n  deletion_protection    = true\n  skip_final_snapshot    = false\n  final_snapshot_identifier = "prod-db-final"\n}\n`,
+    },
+
+    loadSandboxTemplate(tpl) {
+      if (!tpl || !this._sandboxTemplates[tpl]) return;
+      this.sandboxContent = this._sandboxTemplates[tpl];
+      this.sandboxResults = null;
+      this.sandboxError = null;
+    },
+
+    sandboxHandleTab(e) {
+      const ta = e.target;
+      const s = ta.selectionStart;
+      ta.value = ta.value.substring(0, s) + '  ' + ta.value.substring(ta.selectionEnd);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      this.sandboxContent = ta.value;
+    },
+
+    async runSandboxScan() {
+      if (!this.sandboxContent.trim()) return;
+      this.sandboxScanning = true;
+      this.sandboxError = null;
+      this.sandboxResults = null;
+      try {
+        const resp = await fetch('/api/scan/sandbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: this.sandboxContent, pillar: this.sandboxPillar || null }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.detail || 'Sandbox scan failed');
+        }
+        this.sandboxResults = await resp.json();
+      } catch(e) {
+        this.sandboxError = e.message;
+      } finally {
+        this.sandboxScanning = false;
+      }
+    },
+
+    copyFix(text) {
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        this.copiedFix = text;
+        setTimeout(() => { this.copiedFix = null; }, 2000);
+      });
+    },
+
+    // ── Auto-Fix ───────────────────────────────────────────────────────
+    async runAutoFix(controlIds = null) {
+      if (!this.results || !this.results.path || this.results.path === 'sandbox') {
+        this.notify('Auto-fix requires a real scan path — not available in sandbox mode', 'error');
+        return;
+      }
+      this.autoFix.loading = true;
+      this.autoFix.error = null;
+      this.autoFix.result = null;
+      this.autoFix.controlIds = controlIds;
+      try {
+        const resp = await fetch('/api/auto-fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: this.results.path, iac: 'terraform', control_ids: controlIds, apply: false }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.detail || 'Auto-fix failed');
+        }
+        this.autoFix.result = await resp.json();
+        if (this.autoFix.result.patches_count === 0) {
+          this.notify('No auto-fixable issues found in current results');
+          this.autoFix.showModal = false;
+        } else {
+          this.autoFix.showModal = true;
+        }
+      } catch(e) {
+        this.autoFix.error = e.message;
+        this.notify(e.message, 'error');
+      } finally {
+        this.autoFix.loading = false;
+      }
+    },
+
+    async applyAutoFix() {
+      if (!this.results || !this.autoFix.result) return;
+      this.autoFix.applying = true;
+      try {
+        const resp = await fetch('/api/auto-fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: this.results.path, iac: 'terraform', control_ids: this.autoFix.controlIds, apply: true }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.detail || 'Apply failed');
+        }
+        const applied = await resp.json();
+        this.autoFix.showModal = false;
+        this.notify('Applied ' + applied.patches_count + ' patch(es) across ' + applied.files_modified.length + ' file(s). Backups created (.tf.bak)');
+      } catch(e) {
+        this.notify(e.message, 'error');
+      } finally {
+        this.autoFix.applying = false;
+      }
+    },
+
+    autoFixDiffColor(line) {
+      if (line.startsWith('+') && !line.startsWith('+++')) return '#15803d';
+      if (line.startsWith('-') && !line.startsWith('---')) return '#dc2626';
+      if (line.startsWith('@@')) return '#6366f1';
+      return '#94a3b8';
+    },
+
+    tfDocUrl(resourceType) {
+      if (!resourceType) return '#';
+      const parts = resourceType.split('_');
+      const provider = parts[0];
+      const name = parts.slice(1).join('_');
+      const p = {aws:'hashicorp/aws', azurerm:'hashicorp/azurerm', google:'hashicorp/google', oci:'oracle/oci'}[provider] || `hashicorp/${provider}`;
+      return `https://registry.terraform.io/providers/${p}/latest/docs/resources/${name}`;
+    },
+
+    notify(message, type = 'success') {
+      if (this._notifTimer) clearTimeout(this._notifTimer);
+      this.notification = { message, type };
+      this._notifTimer = setTimeout(() => { this.notification = null; }, 3000);
+    },
+
+    // ── Charts ─────────────────────────────────────────────────────────
+
+    async renderWorldMap() {
+      const el = document.getElementById('worldmap');
+      const legendEl = document.getElementById('worldmap-legend');
+      if (!el || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
+      const regions = (this.results && this.results.detected_regions) || [];
+      if (!regions.length) return;
+
+      // Resolve coordinates, skip unknowns
+      const pts = regions.map(([r,p]) => ({region:r, provider:p, coords:_REGION_COORDS[r]})).filter(d=>d.coords);
+      if (!pts.length) return;
+
+      let world;
+      try { world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'); }
+      catch(e) { el.innerHTML='<div style="color:#64748b;padding:1rem;font-size:0.75rem;">Map unavailable</div>'; return; }
+
+      el.innerHTML = '';
+      const W = el.clientWidth || 640, H = el.clientHeight || 220;
+      const svg = d3.select(el).append('svg').attr('width',W).attr('height',H);
+
+      // Ocean background
+      svg.append('rect').attr('width',W).attr('height',H).attr('fill','#0a162e');
+
+      const proj = d3.geoNaturalEarth1().fitSize([W, H], {type:'Sphere'});
+      const path = d3.geoPath().projection(proj);
+
+      // Graticule
+      svg.append('path').datum(d3.geoGraticule()()).attr('d',path)
+        .attr('fill','none').attr('stroke','#102037').attr('stroke-width','0.3');
+
+      // Land
+      svg.append('g').selectAll('path')
+        .data(topojson.feature(world, world.objects.countries).features)
+        .join('path').attr('d',path).attr('fill','#26355f').attr('stroke','#3a5c84').attr('stroke-width','0.4');
+
+      // Glow filters
+      const defs = svg.append('defs');
+      Object.entries(_PROVIDER_COLORS).forEach(([p,c]) => {
+        const f = defs.append('filter').attr('id','glow-'+p).attr('x','-80%').attr('y','-80%').attr('width','260%').attr('height','260%');
+        f.append('feGaussianBlur').attr('in','SourceGraphic').attr('stdDeviation','4').attr('result','blur');
+        const m = f.append('feMerge');
+        m.append('feMergeNode').attr('in','blur');
+        m.append('feMergeNode').attr('in','SourceGraphic');
+      });
+
+      // Markers
+      pts.forEach(({provider, coords}) => {
+        const [lat,lng] = coords;
+        const xy = proj([lng,lat]);
+        if (!xy) return;
+        const [x,y] = xy;
+        const c = _PROVIDER_COLORS[provider] || '#fff';
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',14)
+          .attr('fill',c).attr('opacity',0.18).attr('filter','url(#glow-'+provider+')');
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',5)
+          .attr('fill','#fff').attr('opacity',0.85);
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',4).attr('fill',c);
+        svg.append('circle').attr('cx',x).attr('cy',y).attr('r',1.5).attr('fill','#fff');
+      });
+
+      // Legend
+      if (legendEl) {
+        const provs = [...new Set(pts.map(d=>d.provider))];
+        legendEl.innerHTML = provs.map(p =>
+          `<span style="display:inline-flex;align-items:center;gap:5px;font-size:0.7rem;color:#64748b;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${_PROVIDER_COLORS[p]||'#888'};display:inline-block;"></span>
+            ${p.toUpperCase()}
+          </span>`
+        ).join('');
+      }
+    },
+
+    initCharts() {
+      if (!this.results) return;
+
+      const destroy = id => { if (this._charts[id]) { this._charts[id].destroy(); delete this._charts[id]; } };
+
+      // Score donut
+      const scoreEl = document.getElementById('scoreChart');
+      if (scoreEl) {
+        destroy('score');
+        const s = this.effectiveScore;
+        this._charts['score'] = new Chart(scoreEl, {
+          type: 'doughnut',
+          data: {
+            datasets: [{
+              data: [s, 100 - s],
+              backgroundColor: [s >= 80 ? '#16a34a' : s >= 60 ? '#ca8a04' : '#dc2626', '#e2e8f0'],
+              borderWidth: 0,
+            }]
+          },
+          options: { cutout: '78%', plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+        });
+      }
+
+      // Pillar bar chart
+      const pillarEl = document.getElementById('pillarChart');
+      if (pillarEl && this.results.pillar_scores) {
+        destroy('pillar');
+        const ps = this.results.pillar_scores;
+        const labels = Object.keys(ps).map(p => p.charAt(0).toUpperCase() + p.slice(1));
+        const values = Object.values(ps);
+        const colors = values.map(v => v >= 80 ? '#16a34a' : v >= 60 ? '#ca8a04' : '#dc2626');
+        this._charts['pillar'] = new Chart(pillarEl, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{ data: values, backgroundColor: colors, borderRadius: 4 }]
+          },
+          options: {
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            scales: {
+              x: { min: 0, max: 100, grid: { color: '#f1f5f9' }, ticks: { callback: v => v + '%', font: { size: 11 } } },
+              y: { grid: { display: false }, ticks: { font: { size: 11 } } }
+            },
+            plugins: { legend: { display: false } },
+          }
+        });
+      }
+
+      // Severity distribution of FAIL
+      const sevEl = document.getElementById('severityChart');
+      if (sevEl && this.results.results) {
+        destroy('severity');
+        const fails = this.results.results.filter(r => r.status === 'FAIL');
+        const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+        fails.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++; });
+        this._charts['severity'] = new Chart(sevEl, {
+          type: 'doughnut',
+          data: {
+            labels: ['Critical', 'High', 'Medium', 'Low'],
+            datasets: [{
+              data: [counts.critical, counts.high, counts.medium, counts.low],
+              backgroundColor: ['#dc2626', '#ea580c', '#ca8a04', '#3b82f6'],
+              borderWidth: 2,
+              borderColor: '#fff',
+            }]
+          },
+          options: {
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12 } }
+            }
+          }
+        });
+      }
+    },
+  };
+}
+</script>
+
+</body>
+</html>

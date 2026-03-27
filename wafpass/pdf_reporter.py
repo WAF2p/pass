@@ -1174,6 +1174,14 @@ def _styles() -> dict[str, ParagraphStyle]:
         "tbl_header_left": ParagraphStyle("tbl_header_left", **{**base,
             "fontName": "Helvetica-Bold", "fontSize": 8,
             "leading": 11, "textColor": C_WHITE}),
+        "kpi_number": ParagraphStyle("kpi_number", **{**base,
+            "fontName": "Helvetica-Bold", "fontSize": 22,
+            "leading": 26, "textColor": C_WHITE, "alignment": TA_CENTER}),
+        "kpi_label": ParagraphStyle("kpi_label", **{**base,
+            "fontSize": 8, "leading": 11, "textColor": C_WHITE, "alignment": TA_CENTER}),
+        "alert_text": ParagraphStyle("alert_text", **{**base,
+            "fontName": "Helvetica-Bold", "fontSize": 9, "leading": 12,
+            "textColor": C_ORANGE}),
     }
 
 
@@ -1311,7 +1319,7 @@ def _severity_para(severity: str, S: dict) -> Paragraph:
     return Paragraph(severity.upper(), S[style_key])
 
 
-def _section_header(title: str, S: dict, toc_level: int | None = 0) -> list:
+def _section_header(title: str, S: dict, toc_level: int | None = 1) -> list:
     """Blue left-bordered section header. Auto-registers a TOC entry unless toc_level is None."""
     entries: list = []
     if toc_level is not None:
@@ -3233,6 +3241,878 @@ def _changes_section(diff: dict, S: dict) -> list:
     return elems
 
 
+# ── Part divider ─────────────────────────────────────────────────────────────
+
+_PART_ACCENT: dict[str, tuple] = {
+    "I":   (colors.HexColor("#c0392b"), colors.HexColor("#fadbd8")),   # red  — alerts
+    "II":  (colors.HexColor("#2b7fff"), colors.HexColor("#dbeafe")),   # blue — executive
+    "III": (colors.HexColor("#059669"), colors.HexColor("#d1fae5")),   # green — risk/sustain
+    "IV":  (colors.HexColor("#7c3aed"), colors.HexColor("#ede9fe")),   # purple — technical
+    "V":   (colors.HexColor("#f97316"), colors.HexColor("#ffedd5")),   # orange — remediation
+    "APP": (colors.HexColor("#64748b"), colors.HexColor("#f1f5f9")),   # grey — appendix
+}
+
+
+class _PartDivider(Flowable):
+    """Full-page dark background part divider (rendered in a full-page, margin-free frame).
+
+    The "divider" PageTemplate uses a zero-margin Frame that covers the entire
+    page, so this flowable fills the page edge-to-edge with no white borders.
+    A blank onPage callback suppresses the normal header/footer chrome.
+    """
+
+    def __init__(self, part_id: str, title: str, subtitle: str, audience: str) -> None:
+        Flowable.__init__(self)
+        # Dimensions match the full-page Frame used by the "divider" template
+        self.width  = PAGE_W
+        self.height = PAGE_H
+        self._part_id  = part_id
+        self._title    = title
+        self._subtitle = subtitle
+        self._audience = audience
+
+    def getPlainText(self) -> str:  # picked up by _WAFDocTemplate → TOC
+        return f"{self._part_id}  {self._title}"
+
+    def draw(self) -> None:
+        c = self.canv
+        accent, _accent_lt = _PART_ACCENT.get(self._part_id, (C_NAVY, C_BLUE_LT))
+
+        c.saveState()
+
+        # Full-page navy background (no rounded corners — fills edge-to-edge)
+        c.setFillColor(C_NAVY)
+        c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+
+        # Accent left stripe (full height)
+        c.setFillColor(accent)
+        c.rect(0, 0, 8, PAGE_H, fill=1, stroke=0)
+
+        # Vertical centre point for the text block
+        mid_y = PAGE_H / 2
+
+        # "PART  X" label
+        c.setFillColor(accent)
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(MARGIN + 8, mid_y + 55 * mm, f"PART  {self._part_id}")
+
+        # Separator line
+        c.setStrokeColor(colors.HexColor("#2d3d5a"))
+        c.setLineWidth(1)
+        c.line(MARGIN + 8, mid_y + 48 * mm, PAGE_W - MARGIN, mid_y + 48 * mm)
+
+        # Large title
+        c.setFillColor(C_WHITE)
+        c.setFont("Helvetica-Bold", 32)
+        c.drawString(MARGIN + 8, mid_y + 22 * mm, self._title)
+
+        # Subtitle
+        c.setFillColor(colors.HexColor("#94a3b8"))
+        c.setFont("Helvetica", 13)
+        # Wrap subtitle if it's long
+        max_w = PAGE_W - 2 * MARGIN - 20
+        words = self._subtitle.split()
+        lines, current = [], ""
+        for word in words:
+            test = (current + " " + word).strip()
+            if c.stringWidth(test, "Helvetica", 13) <= max_w:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        for i, line in enumerate(lines[:2]):
+            c.drawString(MARGIN + 8, mid_y + 4 * mm - i * 17, line)
+
+        # Audience badge pill
+        badge_text = f"  For:  {self._audience}  "
+        badge_y = mid_y - 25 * mm
+        c.setFont("Helvetica", 9)
+        bw = c.stringWidth(badge_text, "Helvetica", 9) + 10
+        c.setFillColor(accent)
+        c.roundRect(MARGIN + 8, badge_y, bw, 18, 5, fill=1, stroke=0)
+        c.setFillColor(C_WHITE)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(MARGIN + 13, badge_y + 5, badge_text)
+
+        # WAF++ wordmark at bottom-right
+        c.setFillColor(colors.HexColor("#2d3d5a"))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawRightString(PAGE_W - MARGIN, 12 * mm, "WAF")
+        waf_w = c.stringWidth("WAF", "Helvetica-Bold", 10)
+        c.setFillColor(accent)
+        c.drawString(PAGE_W - MARGIN - c.stringWidth("++", "Helvetica-Bold", 10), 12 * mm, "++")
+
+        c.restoreState()
+
+
+def _part_divider(part_id: str, title: str, subtitle: str, audience: str) -> list:
+    """Return story elements for a full-page part divider.
+
+    Wraps the divider with ``NextPageTemplate`` switches so the page has:
+    - no normal header/footer chrome (uses the "divider" template)
+    - full-page navy background edge-to-edge
+    The following page automatically reverts to the "normal" template.
+    """
+    return [
+        NextPageTemplate("divider"),
+        PageBreak(),
+        _TOCEntry(0, f"{part_id}  ·  {title}"),
+        _PartDivider(part_id, title, subtitle, audience),
+        NextPageTemplate("normal"),
+    ]
+
+
+# ── Carbon Footprint section ──────────────────────────────────────────────────
+
+_C_GREEN_DARK  = colors.HexColor("#059669")
+_C_GREEN_MID   = colors.HexColor("#34d399")
+_C_GREEN_PALE  = colors.HexColor("#d1fae5")
+_C_AMBER       = colors.HexColor("#f59e0b")
+_C_AMBER_PALE  = colors.HexColor("#fef3c7")
+
+
+def _carbon_section(carbon: "CarbonResult", S: dict) -> list:
+    """Build the Carbon Footprint & Sustainability section."""
+    from wafpass.carbon import CarbonResult  # local import – optional feature
+
+    # Build the region disclaimer dynamically
+    _all_region_names = [r for r, _p in carbon.detected_regions] if carbon.detected_regions else []
+    _other_regions = [r for r in _all_region_names if r != carbon.primary_region]
+    if _other_regions:
+        _region_note = (
+            f"<b>Region used for calculations: {carbon.primary_region}</b> "
+            f"(grid intensity: {carbon.primary_intensity:.3f} kgCO2e/kWh). "
+            f"Additional regions detected in the IaC code — "
+            + ", ".join(f"<i>{r}</i>" for r in _other_regions)
+            + " — are not included in this estimate because emission factors for "
+            "all provider regions are not available in the current dataset. "
+            "Only regions with a known grid intensity factor are eligible; "
+            "the highest-priority major-provider region is selected when multiple "
+            "eligible regions are present."
+        )
+    elif carbon.detected_regions:
+        _region_note = (
+            f"<b>Region used for calculations: {carbon.primary_region}</b> "
+            f"(grid intensity: {carbon.primary_intensity:.3f} kgCO2e/kWh). "
+            "This is the only region detected in the IaC code that has a known "
+            "grid emission intensity factor in the current dataset."
+        )
+    else:
+        _region_note = (
+            f"<b>Region used for calculations: {carbon.primary_region}</b> "
+            f"(grid intensity: {carbon.primary_intensity:.3f} kgCO2e/kWh) — "
+            "no deployment region could be detected from the IaC code; "
+            "the EU Central default was applied."
+        )
+
+    elems: list = [
+        *_section_header("Carbon Footprint & Sustainability", S),
+        Paragraph(
+            "Estimated monthly cloud infrastructure carbon footprint derived from "
+            "resource types, instance counts, and the grid emission factor of the "
+            "detected deployment region. "
+            "Figures are directional estimates — actual emissions depend on workload "
+            "utilisation and cloud provider renewable-energy purchases.",
+            S["muted"],
+        ),
+        Spacer(1, 2 * mm),
+        Paragraph(_region_note, S["muted"]),
+        Spacer(1, 4 * mm),
+    ]
+
+    # ── KPI strip ─────────────────────────────────────────────────────────────
+    def _co2_style(name: str, color) -> ParagraphStyle:
+        return ParagraphStyle(name, fontName="Helvetica-Bold", fontSize=18,
+                              leading=22, textColor=color, alignment=TA_CENTER)
+
+    monthly_label = f"{carbon.total_monthly_co2e_kg:,.1f} kg"
+    annual_label  = f"{carbon.total_annual_co2e_kg / 1000:,.2f} t"
+    kwh_label     = f"{carbon.total_monthly_kwh:,.0f} kWh"
+
+    kpi_data = [
+        [Paragraph("Monthly CO2e", S["tbl_header"]),
+         Paragraph("Annual CO2e", S["tbl_header"]),
+         Paragraph("Monthly Energy", S["tbl_header"]),
+         Paragraph("Region Intensity", S["tbl_header"])],
+        [Paragraph(monthly_label, _co2_style("c1", _C_GREEN_DARK)),
+         Paragraph(annual_label,  _co2_style("c2", _C_GREEN_DARK)),
+         Paragraph(kwh_label,     _co2_style("c3", C_BLUE)),
+         Paragraph(f"{carbon.primary_intensity:.3f}\nkgCO2e/kWh",
+                   ParagraphStyle("c4", fontName="Helvetica-Bold", fontSize=13,
+                                  leading=17, textColor=C_GREY, alignment=TA_CENTER))],
+        [Paragraph(f"Region: {carbon.primary_region}", S["muted"]),
+         Paragraph("12-month projection", S["muted"]),
+         Paragraph(f"{carbon.total_monthly_kwh * 12:,.0f} kWh/year", S["muted"]),
+         Paragraph("Grid emission factor", S["muted"])],
+    ]
+    kpi_col = CONTENT_W / 4
+    kpi_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("BACKGROUND",    (0, 1), (-1, 1),  _C_GREEN_PALE),
+        ("BACKGROUND",    (0, 2), (-1, 2),  C_GREY_LT),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    elems.append(Table(kpi_data, colWidths=[kpi_col] * 4, style=kpi_ts))
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Waste impact (if applicable) ──────────────────────────────────────────
+    if carbon.waste_applied:
+        elems.append(Paragraph(
+            f"⚠  <b>Over-provisioning detected (+{carbon.waste_co2e_kg:,.1f} kg CO2e/month).</b>  "
+            f"Failing WAF-COST controls (rightsizing, lifecycle, FinOps review) indicate "
+            f"unoptimised workloads consuming an estimated {int((carbon.waste_multiplier - 1) * 100)}% "
+            f"more energy than necessary. Fixing these controls could eliminate "
+            f"<b>{carbon.savings_if_optimised_kg:,.1f} kg CO2e/month</b> of waste.",
+            ParagraphStyle("waste_warn", fontName="Helvetica", fontSize=9, leading=13,
+                           textColor=C_ORANGE, borderPadding=(4, 8, 4, 8),
+                           backColor=C_ORANGE_LT),
+        ))
+        elems.append(Spacer(1, 4 * mm))
+
+    # ── Real-world equivalences ───────────────────────────────────────────────
+    elems.append(Paragraph("Monthly footprint — real-world equivalences", S["h3"]))
+    elems.append(Spacer(1, 2 * mm))
+
+    eq_data = [
+        [Paragraph("🚗  Car miles", S["tbl_header"]),
+         Paragraph("🌳  Trees to offset", S["tbl_header"]),
+         Paragraph("📱  Phone charges", S["tbl_header"]),
+         Paragraph("✈️  Flight hours", S["tbl_header"])],
+        [Paragraph(f"{carbon.eq_car_miles:,.0f}",
+                   _co2_style("eq1", C_RED if carbon.eq_car_miles > 500 else C_DARK)),
+         Paragraph(f"{carbon.eq_trees_needed:,.1f}",
+                   _co2_style("eq2", _C_GREEN_DARK)),
+         Paragraph(f"{carbon.eq_smartphone_charges:,.0f}",
+                   _co2_style("eq3", C_DARK)),
+         Paragraph(f"{carbon.eq_flight_hours:,.1f}",
+                   _co2_style("eq4", C_DARK))],
+        [Paragraph("passenger vehicle", S["muted"]),
+         Paragraph("per year (annual footprint)", S["muted"]),
+         Paragraph("smartphone charges", S["muted"]),
+         Paragraph("economy class", S["muted"])],
+    ]
+    eq_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  _C_GREEN_DARK),
+        ("BACKGROUND",    (0, 1), (-1, 1),  C_GREY_LT),
+        ("BACKGROUND",    (0, 2), (-1, 2),  C_WHITE),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    elems.append(Table(eq_data, colWidths=[kpi_col] * 4, style=eq_ts))
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Region comparison bar ─────────────────────────────────────────────────
+    if carbon.savings_vs_greenest_kg > 0.5:
+        elems.append(Paragraph("Region optimisation opportunity", S["h3"]))
+        elems.append(Spacer(1, 2 * mm))
+        elems.append(Paragraph(
+            f"Deploying to <b>{carbon.greenest_region_label}</b> "
+            f"(grid intensity {carbon.greenest_intensity:.3f} kgCO2e/kWh) "
+            f"instead of <b>{carbon.primary_region}</b> "
+            f"({carbon.primary_intensity:.3f} kgCO2e/kWh) "
+            f"would reduce monthly emissions by "
+            f"<b>{carbon.savings_vs_greenest_kg:,.1f} kg CO2e "
+            f"({carbon.savings_vs_greenest_kg / carbon.total_monthly_co2e_kg * 100:.0f}%)</b>.",
+            S["body"],
+        ))
+        elems.append(Spacer(1, 3 * mm))
+
+        # Simple horizontal comparison table
+        curr_pct = 100.0
+        green_pct = (carbon.greenest_monthly_co2e_kg / carbon.total_monthly_co2e_kg * 100
+                     if carbon.total_monthly_co2e_kg > 0 else 0)
+        reg_data = [
+            [Paragraph("Region", S["tbl_header_left"]),
+             Paragraph("Monthly CO2e", S["tbl_header"]),
+             Paragraph("Intensity", S["tbl_header"]),
+             Paragraph("vs. Current", S["tbl_header"])],
+            [Paragraph(f"<b>{carbon.primary_region}</b> (current)", S["body_sm"]),
+             Paragraph(f"{carbon.total_monthly_co2e_kg:,.1f} kg", S["body_sm"]),
+             Paragraph(f"{carbon.primary_intensity:.3f}", S["body_sm"]),
+             Paragraph("—", S["body_sm"])],
+            [Paragraph(f"{carbon.greenest_region_label}", S["body_sm"]),
+             Paragraph(f"{carbon.greenest_monthly_co2e_kg:,.1f} kg",
+                       ParagraphStyle("grn", fontName="Helvetica-Bold", fontSize=9,
+                                      leading=12, textColor=_C_GREEN_DARK)),
+             Paragraph(f"{carbon.greenest_intensity:.3f}", S["body_sm"]),
+             Paragraph(f"−{curr_pct - green_pct:.0f}%",
+                       ParagraphStyle("grn2", fontName="Helvetica-Bold", fontSize=9,
+                                      leading=12, textColor=_C_GREEN_DARK,
+                                      alignment=TA_CENTER))],
+        ]
+        reg_ts = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, _C_GREEN_PALE]),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("LEADING",       (0, 0), (-1, -1), 12),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
+        ])
+        reg_col_ws = [CONTENT_W * 0.38, CONTENT_W * 0.22, CONTENT_W * 0.20, CONTENT_W * 0.20]
+        elems.append(Table(reg_data, colWidths=reg_col_ws, style=reg_ts))
+        elems.append(Spacer(1, 5 * mm))
+
+    # ── Per-resource-type breakdown ───────────────────────────────────────────
+    if carbon.breakdown:
+        elems.append(Paragraph("Footprint by resource type", S["h3"]))
+        elems.append(Spacer(1, 2 * mm))
+
+        top_n = carbon.breakdown[:15]   # top 15 by CO2e
+        hdr = ["Resource Type", "Count", "W / instance", "kWh / month", "kgCO2e / month"]
+        col_ws = [CONTENT_W * 0.38, CONTENT_W * 0.08, CONTENT_W * 0.14,
+                  CONTENT_W * 0.18, CONTENT_W * 0.22]
+        rows: list[list] = [[
+            Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"])
+            for i, h in enumerate(hdr)
+        ]]
+        total_co2 = carbon.total_monthly_co2e_kg or 1.0
+        for rf in top_n:
+            pct = rf.monthly_co2e_kg / total_co2 * 100
+            bar = "█" * max(1, int(pct / 5))   # simple ASCII bar
+            rows.append([
+                Paragraph(rf.resource_type, S["body_sm"]),
+                Paragraph(str(rf.count), S["body_sm"]),
+                Paragraph(f"{rf.watts_each:.0f} W", S["body_sm"]),
+                Paragraph(f"{rf.monthly_kwh:,.1f}", S["body_sm"]),
+                Paragraph(f"{rf.monthly_co2e_kg:,.2f}  <font color='#059669' size='7'>{bar} {pct:.0f}%</font>",
+                          S["body_sm"]),
+            ])
+        if len(carbon.breakdown) > 15:
+            rows.append([Paragraph(f"… and {len(carbon.breakdown) - 15} more types",
+                                   S["muted"]), *[""] * 4])
+
+        br_ts = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",         (1, 0), (-1, 0),  "CENTER"),
+            ("ALIGN",         (1, 1), (-1, -1), "CENTER"),
+        ])
+        elems.append(Table(rows, colWidths=col_ws, style=br_ts))
+
+    return elems
+
+
+# ── Blast Radius section ──────────────────────────────────────────────────────
+
+_BR_IMPACT_COLORS: dict[str, tuple] = {
+    "CRITICAL": (C_RED,    C_RED_LT),
+    "HIGH":     (C_ORANGE, C_ORANGE_LT),
+    "MEDIUM":   (C_YELLOW, C_YELLOW_LT),
+    "LOW":      (C_GREY,   C_GREY_LT),
+}
+
+
+def _blast_radius_section(br_result: "BlastResult", S: dict) -> list:
+    """Build the Blast Radius Analysis section for the PDF report."""
+    from wafpass.blast_radius import BlastResult  # local import – optional feature
+
+    if not br_result.roots:
+        return []
+
+    elems: list = [
+        *_section_header("Blast Radius Analysis", S),
+        Paragraph(
+            "Resources that failed one or more controls and the downstream resources "
+            "that reference them and are therefore indirectly exposed. "
+            "Hop 0 = root cause; Hop 1 = directly dependent (HIGH); "
+            "Hop 2 = secondary (MEDIUM); Hop 3+ = residual (LOW).",
+            S["muted"],
+        ),
+        Spacer(1, 3 * mm),
+    ]
+
+    # ── Summary KPI strip ─────────────────────────────────────────────────────
+    kpi_data = [
+        [
+            Paragraph("Root-cause resources", S["tbl_header"]),
+            Paragraph("Downstream affected", S["tbl_header"]),
+            Paragraph("Total impacted", S["tbl_header"]),
+        ],
+        [
+            Paragraph(str(len(br_result.roots)), ParagraphStyle(
+                "br_kpi", fontName="Helvetica-Bold", fontSize=20,
+                leading=24, textColor=C_RED, alignment=TA_CENTER)),
+            Paragraph(str(len(br_result.affected)), ParagraphStyle(
+                "br_kpi2", fontName="Helvetica-Bold", fontSize=20,
+                leading=24, textColor=C_ORANGE, alignment=TA_CENTER)),
+            Paragraph(str(br_result.total_affected), ParagraphStyle(
+                "br_kpi3", fontName="Helvetica-Bold", fontSize=20,
+                leading=24, textColor=C_NAVY, alignment=TA_CENTER)),
+        ],
+    ]
+    kpi_col_w = CONTENT_W / 3
+    kpi_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("BACKGROUND",    (0, 1), (-1, 1),  C_GREY_LT),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    elems.append(Table(kpi_data, colWidths=[kpi_col_w] * 3, style=kpi_ts))
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Root cause table ──────────────────────────────────────────────────────
+    elems.append(Paragraph("Root-cause resources (Hop 0)", S["h3"]))
+    elems.append(Spacer(1, 2 * mm))
+
+    root_hdr = ["Resource", "Severity", "Impact", "Failed Controls"]
+    root_col_ws = [
+        CONTENT_W * 0.35,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.10,
+        CONTENT_W * 0.45,
+    ]
+    root_rows: list[list] = [
+        [Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"])
+         for i, h in enumerate(root_hdr)]
+    ]
+
+    for node in sorted(br_result.roots, key=lambda n: (
+            -{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(n.impact_label, 0),
+            n.address)):
+        sev = (node.failed_severity or "low").lower()
+        fg, bg = _BR_IMPACT_COLORS.get(node.impact_label, (C_GREY, C_GREY_LT))
+        sev_style = ParagraphStyle(
+            f"br_sev_{sev}", fontName="Helvetica-Bold", fontSize=8,
+            leading=11, textColor=fg, alignment=TA_CENTER)
+        impact_style = ParagraphStyle(
+            f"br_imp_{node.impact_label}", fontName="Helvetica-Bold", fontSize=8,
+            leading=11, textColor=fg, alignment=TA_CENTER)
+        ctrls = ", ".join(node.failed_controls) if node.failed_controls else "—"
+        root_rows.append([
+            Paragraph(f'<font size="8">{node.address}</font>', S["code"]),
+            Paragraph(sev.upper(), sev_style),
+            Paragraph(node.impact_label, impact_style),
+            Paragraph(f'<font size="8">{ctrls}</font>', S["body_sm"]),
+        ])
+
+    root_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("LEADING",       (0, 0), (-1, -1), 11),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("ALIGN",         (1, 0), (-1, 0),  "CENTER"),
+        ("ALIGN",         (1, 1), (-1, -1), "CENTER"),
+        ("ALIGN",         (0, 0), (0, -1),  "LEFT"),
+    ])
+    elems.append(Table(root_rows, colWidths=root_col_ws, style=root_ts))
+
+    # ── Downstream affected table ─────────────────────────────────────────────
+    if br_result.affected:
+        elems.append(Spacer(1, 5 * mm))
+        elems.append(Paragraph("Downstream affected resources", S["h3"]))
+        elems.append(Spacer(1, 2 * mm))
+
+        aff_hdr = ["Resource", "Hop", "Impact", "Depends on"]
+        aff_col_ws = [
+            CONTENT_W * 0.35,
+            CONTENT_W * 0.06,
+            CONTENT_W * 0.10,
+            CONTENT_W * 0.49,
+        ]
+        aff_rows: list[list] = [
+            [Paragraph(h, S["tbl_header_left"] if i == 0 else S["tbl_header"])
+             for i, h in enumerate(aff_hdr)]
+        ]
+
+        for node in br_result.affected:
+            fg, _bg = _BR_IMPACT_COLORS.get(node.impact_label, (C_GREY, C_GREY_LT))
+            impact_style = ParagraphStyle(
+                f"br_aff_{node.impact_label}_{node.address[:8]}", fontName="Helvetica-Bold",
+                fontSize=8, leading=11, textColor=fg, alignment=TA_CENTER)
+            parents_str = ", ".join(node.parents) if node.parents else "—"
+            aff_rows.append([
+                Paragraph(f'<font size="8">{node.address}</font>', S["code"]),
+                Paragraph(str(node.hop), S["body_sm"]),
+                Paragraph(node.impact_label, impact_style),
+                Paragraph(f'<font size="8">{parents_str}</font>', S["body_sm"]),
+            ])
+
+        aff_ts = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",         (1, 0), (-1, 0),  "CENTER"),
+            ("ALIGN",         (1, 1), (-1, -1), "CENTER"),
+            ("ALIGN",         (0, 0), (0, -1),  "LEFT"),
+            ("ALIGN",         (3, 1), (3, -1),  "LEFT"),
+        ])
+        elems.append(Table(aff_rows, colWidths=aff_col_ws, style=aff_ts))
+
+    return elems
+
+
+# ── Hardcoded Secrets section ─────────────────────────────────────────────────
+
+_SECRET_SEV_COLORS: dict[str, tuple] = {
+    "critical": (C_RED,    C_RED_LT),
+    "high":     (C_ORANGE, C_ORANGE_LT),
+    "medium":   (C_YELLOW, C_YELLOW_LT),
+}
+
+
+def _secrets_section(findings: list, S: dict) -> list:
+    """Build the Hardcoded Secrets section for the PDF report."""
+    active = [f for f in findings if not f.suppressed]
+    suppressed = [f for f in findings if f.suppressed]
+
+    if not active and not suppressed:
+        return []
+
+    elems: list = [
+        *_section_header("Hardcoded Secrets", S),
+        Paragraph(
+            "The following IaC source files contain hardcoded credential material "
+            "(passwords, API keys, tokens, private keys, or connection strings). "
+            "Hardcoded secrets committed to version control persist in git history "
+            "indefinitely and represent a critical attack surface. "
+            "All findings must be remediated before deployment.",
+            S["muted"],
+        ),
+        Spacer(1, 3 * mm),
+    ]
+
+    # ── KPI strip ─────────────────────────────────────────────────────────────
+    n_crit = sum(1 for f in active if f.severity == "critical")
+    n_high = sum(1 for f in active if f.severity == "high")
+    n_med  = sum(1 for f in active if f.severity == "medium")
+    kpi_data = [
+        [
+            Paragraph("Critical", S["tbl_header"]),
+            Paragraph("High", S["tbl_header"]),
+            Paragraph("Medium", S["tbl_header"]),
+            Paragraph("Suppressed", S["tbl_header"]),
+        ],
+        [
+            Paragraph(str(n_crit), ParagraphStyle("sec_k1", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_RED, alignment=TA_CENTER)),
+            Paragraph(str(n_high), ParagraphStyle("sec_k2", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_ORANGE, alignment=TA_CENTER)),
+            Paragraph(str(n_med), ParagraphStyle("sec_k3", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_YELLOW, alignment=TA_CENTER)),
+            Paragraph(str(len(suppressed)), ParagraphStyle("sec_k4", fontName="Helvetica-Bold",
+                fontSize=18, leading=22, textColor=C_GREY, alignment=TA_CENTER)),
+        ],
+    ]
+    kpi_col_w = CONTENT_W / 4
+    kpi_ts = TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+        ("BACKGROUND",    (0, 1), (-1, 1),  C_GREY_LT),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    elems.append(Table(kpi_data, colWidths=[kpi_col_w] * 4, style=kpi_ts))
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Findings table ────────────────────────────────────────────────────────
+    if active:
+        hdr = ["Severity", "File : Line", "Finding", "Attribute", "Value (masked)"]
+        col_ws = [
+            CONTENT_W * 0.09,
+            CONTENT_W * 0.28,
+            CONTENT_W * 0.22,
+            CONTENT_W * 0.17,
+            CONTENT_W * 0.24,
+        ]
+        rows: list[list] = [
+            [Paragraph(h, S["tbl_header_left"] if i == 1 else S["tbl_header"])
+             for i, h in enumerate(hdr)]
+        ]
+
+        for f in active:
+            fg, bg = _SECRET_SEV_COLORS.get(f.severity, (C_GREY, C_GREY_LT))
+            sev_style = ParagraphStyle(
+                f"sec_{f.severity}", fontName="Helvetica-Bold", fontSize=8,
+                leading=11, textColor=fg, alignment=TA_CENTER)
+            rows.append([
+                Paragraph(f.severity.upper(), sev_style),
+                Paragraph(f'<font size="7">{f.file}:{f.line_no}</font>', S["code"]),
+                Paragraph(f.pattern_name, S["body_sm"]),
+                Paragraph(f.matched_key or "—", S["body_sm"]),
+                Paragraph(f'<font name="Courier">{f.masked_value}</font>', S["body_sm"]),
+            ])
+
+        ts = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0),  C_NAVY),
+            ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LEADING",       (0, 0), (-1, -1), 11),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_GREY_LT]),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",         (0, 1), (0, -1),  "CENTER"),
+        ])
+        elems.append(Table(rows, colWidths=col_ws, style=ts))
+        elems.append(Spacer(1, 5 * mm))
+
+    # ── Remediation guidance box ───────────────────────────────────────────────
+    from wafpass.secret_scanner import REMEDIATION_GUIDANCE
+    guide_rows = []
+    for line in REMEDIATION_GUIDANCE.splitlines():
+        guide_rows.append(Paragraph(
+            line if line.strip() else "&nbsp;",
+            S["code"] if line.startswith("  ") else S["body_sm"],
+        ))
+    elems.append(Table(
+        [[col] for col in guide_rows],
+        colWidths=[CONTENT_W],
+        style=TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C_GREY_LT),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("BOX",           (0, 0), (-1, -1), 0.5, C_ORANGE),
+        ]),
+    ))
+
+    return elems
+
+
+# ── Risk Acceptance Register (one-pager) ─────────────────────────────────────
+
+def _risk_acceptance_section(report: Report, S: dict, generated_at: str) -> list:
+    """Standalone Risk Acceptance Register page.
+
+    Renders a printable register of all intentionally waived controls, suitable
+    for sign-off by a CISO or Risk Owner.  Each entry shows the control ID,
+    title, pillar, severity, justification, expiry date, and current status.
+    """
+    from datetime import date as _date
+
+    waived = [cr for cr in report.results if cr.status == "WAIVED"]
+    if not waived:
+        return []
+
+    today = _date.today()
+    elems = [*_section_header("Risk Acceptance Register", S)]
+
+    # ── Summary banner ──────────────────────────────────────────────────────
+    active     = sum(1 for cr in waived if not (cr.waived_expires and cr.waived_expires < today))
+    expired    = sum(1 for cr in waived if cr.waived_expires and cr.waived_expires < today)
+    permanent  = sum(1 for cr in waived if not cr.waived_expires)
+    expiring_soon = sum(
+        1 for cr in waived
+        if cr.waived_expires and not (cr.waived_expires < today)
+        and (cr.waived_expires - today).days <= 30
+    )
+
+    intro = (
+        "This register records all WAF++ controls for which the organisation has made a "
+        "conscious, documented decision to accept residual risk.  Each waiver requires a "
+        "written justification and an optional review date.  Waivers without an expiry date "
+        "are treated as permanent until explicitly revoked."
+    )
+    elems.append(Paragraph(intro, S["muted"]))
+    elems.append(Spacer(1, 4 * mm))
+
+    # KPI summary row
+    kpi_data = [
+        [
+            Paragraph(str(len(waived)), S["kpi_number"]),
+            Paragraph(str(active),      S["kpi_number"]),
+            Paragraph(str(expired),     S["kpi_number"]),
+            Paragraph(str(permanent),   S["kpi_number"]),
+        ],
+        [
+            Paragraph("Total Waivers",   S["kpi_label"]),
+            Paragraph("Active",          S["kpi_label"]),
+            Paragraph("Expired",         S["kpi_label"]),
+            Paragraph("Permanent",       S["kpi_label"]),
+        ],
+    ]
+    kpi_colors = [C_PURPLE, C_GREEN, C_RED, C_GREY]
+    kpi_w = CONTENT_W / 4
+    kpi_ts = TableStyle([
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+    ])
+    for col_idx, col_color in enumerate(kpi_colors):
+        kpi_ts.add("BACKGROUND", (col_idx, 0), (col_idx, 1), col_color)
+        kpi_ts.add("TEXTCOLOR",  (col_idx, 0), (col_idx, 1), C_WHITE)
+    elems.append(Table(kpi_data, colWidths=[kpi_w] * 4, style=kpi_ts))
+
+    if expiring_soon:
+        elems.append(Spacer(1, 3 * mm))
+        elems.append(Paragraph(
+            f"⚠  {expiring_soon} waiver(s) expire within 30 days — review required.",
+            S["alert_text"],
+        ))
+
+    elems.append(Spacer(1, 5 * mm))
+
+    # ── Main register table ──────────────────────────────────────────────────
+    sev_fg = {
+        "critical": C_RED, "high": C_ORANGE, "medium": C_YELLOW, "low": C_BLUE,
+    }
+
+    header = ["Control", "Title", "Pillar", "Sev.", "Justification", "Expires", "Status"]
+    col_widths = [
+        2.6 * cm,          # Control ID
+        CONTENT_W * 0.22,  # Title
+        2.0 * cm,          # Pillar
+        1.4 * cm,          # Severity
+        CONTENT_W * 0.30,  # Justification
+        2.0 * cm,          # Expires
+        1.8 * cm,          # Status
+    ]
+
+    def _row_status(cr: "ControlResult") -> tuple[str, colors.Color]:
+        if cr.waived_expires and cr.waived_expires < today:
+            return "EXPIRED", C_RED
+        if cr.waived_expires:
+            days = (cr.waived_expires - today).days
+            if days <= 30:
+                return f"≤30d", C_ORANGE
+            return "ACTIVE", C_GREEN
+        return "PERM.", C_GREY
+
+    rows: list = [
+        [Paragraph(h, S["tbl_header"]) for h in header]
+    ]
+    row_status_colors: list[colors.Color] = []
+
+    for cr in waived:
+        exp_str = str(cr.waived_expires) if cr.waived_expires else "—"
+        status_label, status_color = _row_status(cr)
+        row_status_colors.append(status_color)
+        pillar = cr.control.pillar.capitalize()[:6]
+        sev    = cr.control.severity[:4].capitalize()
+        reason = (cr.waived_reason or "")
+        rows.append([
+            Paragraph(cr.control.id, S["body_sm"]),
+            Paragraph(cr.control.title[:60] + ("…" if len(cr.control.title) > 60 else ""), S["body_sm"]),
+            Paragraph(pillar, S["body_sm"]),
+            Paragraph(sev, ParagraphStyle(
+                "sev_cell", parent=S["body_sm"],
+                textColor=sev_fg.get(cr.control.severity.lower(), C_GREY),
+                fontName="Helvetica-Bold",
+            )),
+            Paragraph(reason[:160] + ("…" if len(reason) > 160 else ""), S["body_sm"]),
+            Paragraph(exp_str, S["body_sm"]),
+            Paragraph(status_label, ParagraphStyle(
+                "status_cell", parent=S["body_sm"],
+                textColor=status_color, fontName="Helvetica-Bold",
+            )),
+        ])
+
+    ts = TableStyle([
+        ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 7),
+        ("LEADING",       (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+        ("BACKGROUND",    (0, 0), (-1, 0),  C_PURPLE),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  C_WHITE),
+        ("GRID",          (0, 0), (-1, -1), 0.4, C_BORDER),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_PURPLE_LT]),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+    ])
+    elems.append(Table(rows, colWidths=col_widths, style=ts, repeatRows=1))
+
+    # ── Sign-off block ───────────────────────────────────────────────────────
+    elems.append(Spacer(1, 8 * mm))
+    elems.append(_hr(C_BORDER, 0.5))
+    elems.append(Spacer(1, 4 * mm))
+    elems.append(Paragraph("Sign-off &amp; Approval", S["h3"]))
+    elems.append(Spacer(1, 3 * mm))
+    elems.append(Paragraph(
+        "This Risk Acceptance Register was generated automatically from the "
+        f"<b>risk_acceptance.yml</b> waiver file as part of a WAF++ PASS scan on "
+        f"<b>{generated_at}</b>.  The Risk Owner below confirms that each waiver "
+        "reflects a current, informed decision and that compensating controls are in place.",
+        S["muted"],
+    ))
+    elems.append(Spacer(1, 6 * mm))
+
+    signoff_rows = [
+        ["Risk Owner / CISO", "___________________________________________", "Date", "________________"],
+        ["Approved by",       "___________________________________________", "Date", "________________"],
+    ]
+    signoff_ts = TableStyle([
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("LEADING",       (0, 0), (-1, -1), 14),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ("TEXTCOLOR",     (0, 0), (0, -1),  C_GREY),
+        ("TEXTCOLOR",     (2, 0), (2, -1),  C_GREY),
+    ])
+    signoff_widths = [3.5 * cm, CONTENT_W * 0.45, 1.5 * cm, CONTENT_W * 0.25]
+    elems.append(Table(
+        [[Paragraph(c, S["muted"] if i % 2 == 0 else S["body"]) for i, c in enumerate(row)]
+         for row in signoff_rows],
+        colWidths=signoff_widths,
+        style=signoff_ts,
+    ))
+
+    return elems
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_pdf(
@@ -3240,8 +4120,23 @@ def generate_pdf(
     output_path: Path,
     baseline: dict | None = None,
     diff: dict | None = None,
+    blast_radius_result: "BlastResult | None" = None,
+    secret_findings: list | None = None,
+    carbon_result: "CarbonResult | None" = None,
+    waivers: list | None = None,
 ) -> None:
-    """Generate a fully structured PDF report with TOC, risk scoring, and financial impact."""
+    """Generate a structured, audience-segmented PDF report.
+
+    The report is divided into five parts plus an appendix, each introduced by
+    a full-page divider that identifies the intended audience:
+
+    PART I   — Security Alerts       (DevSecOps, Engineering leads)
+    PART II  — Executive Briefing    (C-Suite, Board)
+    PART III — Risk & Sustainability (CISO, CTO, CFO, Sustainability team)
+    PART IV  — Technical Deep Dive   (Architects, Senior engineers)
+    PART V   — Remediation           (Engineering teams)
+    Appendix — Compliance evidence + Risk Acceptance Register (Auditors, GRC)
+    """
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     S = _styles()
 
@@ -3261,10 +4156,20 @@ def generate_pdf(
     cover_template  = PageTemplate(id="cover",  frames=[content_frame], onPage=cover_on_page)
     normal_template = PageTemplate(id="normal", frames=[content_frame], onPage=normal_on_page)
 
+    # Full-page, zero-margin frame for part-divider pages — no header/footer chrome
+    def _blank_canvas(canvas, doc):  # noqa: ARG001
+        pass
+
+    divider_frame = Frame(
+        0, 0, PAGE_W, PAGE_H,
+        leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
+    )
+    divider_template = PageTemplate(id="divider", frames=[divider_frame], onPage=_blank_canvas)
+
     doc = _WAFDocTemplate(
         str(output_path),
         pagesize=A4,
-        pageTemplates=[cover_template, normal_template],
+        pageTemplates=[cover_template, normal_template, divider_template],
         leftMargin=MARGIN, rightMargin=MARGIN,
         topMargin=MARGIN,  bottomMargin=MARGIN,
         title="WAF++ Architecture Review Report",
@@ -3275,63 +4180,134 @@ def generate_pdf(
 
     story: list = []
 
-    # ── 1. Cover ───────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # Cover & TOC
+    # ══════════════════════════════════════════════════════════════════════════
     story += _cover_content(report, S, generated_at)
-
-    # ── 2. Table of Contents ───────────────────────────────────────────────────
     story += [NextPageTemplate("normal"), PageBreak()]
     story += _toc_section(S)
 
-    # ── 3. Executive Decision Brief ────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # PART I — SECURITY ALERTS
+    # Audience: DevSecOps, Engineering Leads, Security Team
+    # ══════════════════════════════════════════════════════════════════════════
+    _has_sec_alerts = bool(secret_findings)
+    if _has_sec_alerts:
+        story += _part_divider(
+            "I", "Security Alerts",
+            "Critical pre-deployment security gates requiring immediate action",
+            "DevSecOps · Engineering Leads · Security Team",
+        )
+
+        sec_elems = _secrets_section(secret_findings, S)
+        if sec_elems:
+            story += [PageBreak()]
+            story += sec_elems
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PART II — EXECUTIVE BRIEFING
+    # Audience: C-Suite, Board Members, Programme Sponsors
+    # ══════════════════════════════════════════════════════════════════════════
+    story += _part_divider(
+        "II", "Executive Briefing",
+        "Risk posture, trend analysis, and strategic decision context",
+        "C-Suite · Board Members · Programme Sponsors",
+    )
+
     story += [PageBreak()]
     story += _executive_decision_brief(report, S, baseline=baseline)
 
-    # ── 4. Run Change Tracking (only when a previous run exists) ───────────────
     if diff is not None:
         story += [PageBreak()]
         story += _changes_section(diff, S)
 
-    # ── 5. Executive Risk Dashboard ────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # PART III — RISK & SUSTAINABILITY
+    # Audience: CISO, CTO, CFO, Sustainability / ESG team
+    # ══════════════════════════════════════════════════════════════════════════
+    story += _part_divider(
+        "III", "Risk & Sustainability",
+        "Financial exposure, carbon footprint, and data sovereignty",
+        "CISO · CTO · CFO · Sustainability / ESG Team",
+    )
+
     story += [PageBreak()]
     story += _risk_financial_section(report, S, baseline=baseline)
 
-    # ── 6. Remediation Roadmap ─────────────────────────────────────────────────
-    roadmap_elems = _remediation_roadmap_section(report, S)
-    if roadmap_elems:
+    if carbon_result is not None:
         story += [PageBreak()]
-        story += roadmap_elems
+        story += _carbon_section(carbon_result, S)
 
-    # ── 7. Root Cause Analysis ─────────────────────────────────────────────────
+    story += [PageBreak()]
+    story += _data_geography_section(report, S)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PART IV — TECHNICAL DEEP DIVE
+    # Audience: Architects, Senior Engineers, Platform Team
+    # ══════════════════════════════════════════════════════════════════════════
+    story += _part_divider(
+        "IV", "Technical Deep Dive",
+        "Root causes, blast radius, and regulatory control mapping",
+        "Architects · Senior Engineers · Platform Team",
+    )
+
     root_cause_elems = _root_cause_section(report, S)
     if root_cause_elems:
         story += [PageBreak()]
         story += root_cause_elems
 
-    # ── 8. Data Geography & Sovereignty ───────────────────────────────────────
-    story += [PageBreak()]
-    story += _data_geography_section(report, S)
+    if blast_radius_result is not None:
+        br_elems = _blast_radius_section(blast_radius_result, S)
+        if br_elems:
+            story += [PageBreak()]
+            story += br_elems
 
-    # ── 9. Executive Summary ───────────────────────────────────────────────────
     story += [PageBreak()]
     story += _executive_summary(report, S)
 
-    # ── 10. Controls Overview ──────────────────────────────────────────────────
-    story += [PageBreak()]
-    story += _controls_overview(report, S)
-
-    # ── 11. Regulatory Alignment ────────────────────────────────────────────────
     reg_elems = _regulatory_alignment(report, S)
     if reg_elems:
         story += [PageBreak()]
         story += reg_elems
 
-    # ── 12. Detailed Findings ───────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # PART V — REMEDIATION
+    # Audience: Engineering Teams, DevOps, Cloud Ops
+    # ══════════════════════════════════════════════════════════════════════════
+    story += _part_divider(
+        "V", "Remediation",
+        "Prioritised roadmap and per-control action items",
+        "Engineering Teams · DevOps · Cloud Operations",
+    )
+
+    roadmap_elems = _remediation_roadmap_section(report, S)
+    if roadmap_elems:
+        story += [PageBreak()]
+        story += roadmap_elems
+
     story += [PageBreak()]
     story += _findings_section(report, S)
 
-    # ── 13. Appendix: Passed & Skipped Controls ─────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # APPENDIX — Compliance Evidence
+    # Audience: Auditors, GRC, Legal
+    # ══════════════════════════════════════════════════════════════════════════
+    story += _part_divider(
+        "APP", "Appendix",
+        "Controls inventory, passed checks, and compliance evidence",
+        "Auditors · GRC · Legal · Compliance Team",
+    )
+
+    story += [PageBreak()]
+    story += _controls_overview(report, S)
+
     story += [PageBreak()]
     story += _passed_section(report, S)
+
+    risk_acc_elems = _risk_acceptance_section(report, S, generated_at)
+    if risk_acc_elems:
+        story += [PageBreak()]
+        story += risk_acc_elems
 
     # multiBuild runs two passes so the TableOfContents can resolve page numbers
     doc.multiBuild(story)

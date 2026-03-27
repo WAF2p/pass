@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Optional
 
 
@@ -43,6 +44,7 @@ class Check:
     assertions: list[Assertion]
     on_fail: str
     remediation: str
+    example: dict | None = None
 
 
 @dataclass
@@ -58,6 +60,8 @@ class Control:
     checks: list[Check]
     regulatory_mapping: list[dict] = field(default_factory=list)
     # Each entry: {"framework": str, "controls": list[str]}
+    rationale: str = ""
+    threat: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -72,6 +76,7 @@ class CheckResult:
     resource: str        # e.g. "aws_s3_bucket.example"
     message: str
     remediation: str
+    example: dict | None = None
 
 
 @dataclass
@@ -82,6 +87,8 @@ class ControlResult:
     results: list[CheckResult] = field(default_factory=list)
     waived_reason: str | None = None
     # Set by the waiver system; non-None means the control is intentionally waived.
+    waived_expires: date | None = None
+    # Expiry date of the waiver (None = permanent waiver).
 
     @property
     def status(self) -> str:
