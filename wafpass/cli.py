@@ -256,6 +256,16 @@ def check(
         "--no-secrets",
         help="Disable the hardcoded-secret scanner (enabled by default).",
     ),
+    plan_file: Path = typer.Option(
+        None,
+        "--plan-file",
+        help=(
+            "Path to a JSON file produced by 'terraform show -json <plan>' or "
+            "'terraform plan -json'. When provided the parsed resource-change "
+            "summary is embedded in the JSON output and pushed to the dashboard "
+            "as 'plan_changes', enabling Change Overview analysis."
+        ),
+    ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
 
@@ -624,6 +634,26 @@ def check(
                 checks=_ctrl_checks,
             ))
 
+        # ── Parse terraform plan file if provided ─────────────────────────────
+        _plan_changes: dict | None = None
+        if plan_file:
+            if not plan_file.exists():
+                typer.echo(f"ERROR: --plan-file path does not exist: {plan_file}", err=True)
+                raise typer.Exit(code=2)
+            try:
+                from wafpass.plan_parser import parse_plan_file as _parse_plan
+                _plan_changes = _parse_plan(plan_file)
+                _total_changes = sum(
+                    v for k, v in _plan_changes.get("summary", {}).items() if k != "no_op"
+                )
+                typer.echo(
+                    f"Plan file parsed: {_total_changes} resource change(s) detected "
+                    f"({plan_file})",
+                    err=True,
+                )
+            except Exception as exc:
+                typer.echo(f"WARNING: Could not parse --plan-file '{plan_file}': {exc}", err=True)
+
         _result = WafpassResultSchema(
             project=project,
             branch=_branch,
@@ -639,6 +669,7 @@ def check(
             source_paths=report.source_paths,
             controls_meta=_controls_meta,
             findings=_findings,
+            plan_changes=_plan_changes,
         )
 
         _json_str = _result.model_dump_json(indent=2)

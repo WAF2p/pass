@@ -148,3 +148,13 @@ class WafpassResultSchema(BaseModel):
 
     # ── Findings ──────────────────────────────────────────────────────────────
     findings: list[FindingSchema] = Field(default_factory=list)
+
+    # ── Terraform plan changes (optional, populated via --plan-file) ──────────
+    plan_changes: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Normalised terraform plan change summary. "
+            "Populated when --plan-file is passed to wafpass check. "
+            "Shape: {terraform_version, format_version, scanned_at, summary, changes}."
+        ),
+    )
