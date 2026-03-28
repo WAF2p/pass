@@ -1,21 +1,27 @@
-# WAF++ PASS
+# WAF++ PASS — wafpass-core
 
-**WAF++ PASS** is a CLI tool that checks IaC (Infrastructure-as-Code) files against the [WAF++ framework](https://waf2p.dev) YAML control definitions and produces a structured compliance report.
+**WAF++ PASS** (`wafpass-core` v0.3.0) is the compliance engine, CLI tool, and result schema contract for the [WAF++ framework](https://waf2p.dev).
+
+It checks IaC (Infrastructure-as-Code) files against YAML control definitions and produces a structured compliance report. As of v0.3.0 it is the core library in a three-component monorepo:
+
+| Component | Package | Description |
+|-----------|---------|-------------|
+| **`pass/`** | `wafpass-core` | Engine, CLI, IaC adapters, result schema ← **this module** |
+| **`wafpass-server/`** | `wafpass-server` | FastAPI + PostgreSQL API for persisting scan results |
+| **`wafpass-dashboard/`** | — (React) | Standalone dashboard consuming the server API |
 
 Supported IaC frameworks are loaded as **plugins** — Terraform and AWS CDK are fully implemented; Bicep and Pulumi are available as stubs ready for contribution.
 
 ## Installation
-
-WAFPass is available via **GitHub release artifacts** or directly **from source**. PyPI is in preparation and will follow.
 
 ### Option A — GitHub release artifact (recommended for users)
 
 Download the latest `.whl` from the [GitHub Releases page](https://github.com/WAF2p/pass/releases) and install it:
 
 ```bash
-pip install wafpass-*.whl
+pip install wafpass_core-*.whl
 # or with uv (recommended)
-uv pip install wafpass-*.whl
+uv pip install wafpass_core-*.whl
 ```
 
 ### Option B — From source
@@ -30,30 +36,109 @@ uv pip install -e .
 # Using pip
 pip install -e .
 
+# With PDF support
+pip install -e ".[pdf]"
+
 # With dev dependencies
-uv pip install -e ".[dev]"
 pip install -e ".[dev]"
 ```
 
 ### macOS (Apple M-series)
 
-Homebrew, Git, Python and uv are the only prerequisites. Run the following once in Terminal:
-
 ```bash
-# Prerequisites
 brew install git python uv
-
-# Clone and install
 git clone https://github.com/WAF2p/pass.git
 cd pass
-uv pip install -e .   # recommended
-# or: pip install -e .
+uv pip install -e .
 
 # Verify
 wafpass -V
 ```
 
-> **Rosetta not required.** WAF++ PASS is pure Python and runs natively on arm64 — no x86 emulation needed.
+> **Rosetta not required.** WAF++ PASS is pure Python and runs natively on arm64.
+
+## Python library API
+
+`wafpass-core` can be used as a library as well as a CLI:
+
+```python
+from wafpass import run_scan, WafpassResultSchema
+
+result: WafpassResultSchema = run_scan(
+    paths=["infra/"],
+    controls_dir="controls/",
+)
+
+print(result.score)                        # overall compliance score (0–100)
+print(result.pillar_scores)                # {"SEC": 90, "OPS": 75, ...}
+print(result.model_dump_json(indent=2))    # wafpass-result.json payload
+
+# Post to wafpass-server
+import httpx
+httpx.post("http://localhost:8000/runs", content=result.model_dump_json(),
+           headers={"Content-Type": "application/json"})
+```
+
+Public symbols exported from `wafpass`:
+
+| Symbol | Type | Description |
+|--------|------|-------------|
+| `run_scan()` | function | Run a compliance scan, return `WafpassResultSchema` |
+| `WafpassResultSchema` | Pydantic model | Top-level `wafpass-result.json` contract |
+| `FindingSchema` | Pydantic model | Single finding within a result |
+| `Report` | dataclass | Internal report (used by CLI, PDF reporter) |
+| `IaCPlugin`, `IaCBlock`, `IaCState` | Protocol types | IaC adapter interfaces |
+
+## Result schema
+
+`wafpass-result.json` is the contract between `wafpass-core` and all consumers (CI pipelines, `wafpass-server`, dashboards). It is defined in `wafpass/schema.py` and is the **single source of truth** — never duplicated.
+
+```json
+{
+  "schema_version": "1.0",
+  "project":        "my-infra",
+  "branch":         "main",
+  "git_sha":        "abc1234",
+  "triggered_by":   "github-actions",
+  "iac_framework":  "terraform",
+  "score":          82,
+  "pillar_scores":  {"SEC": 90, "OPS": 75},
+  "controls_loaded": 70,
+  "controls_run":    65,
+  "findings": [
+    {
+      "check_id":    "WAF-SEC-010-01",
+      "control_id":  "WAF-SEC-010",
+      "pillar":      "SEC",
+      "severity":    "CRITICAL",
+      "status":      "FAIL",
+      "resource":    "aws_iam_account_password_policy.main",
+      "message":     "mfa_delete is false",
+      "remediation": "Set mfa_delete = true"
+    }
+  ]
+}
+```
+
+Generate from the CLI:
+
+```bash
+wafpass check ./infra/ --output json > wafpass-result.json
+
+# Enrich with VCS metadata before posting to the server
+python - <<'EOF'
+import json, subprocess, httpx
+
+result = json.load(open("wafpass-result.json"))
+result.update({
+    "project":      "my-infra",
+    "branch":       subprocess.check_output(["git","rev-parse","--abbrev-ref","HEAD"]).decode().strip(),
+    "git_sha":      subprocess.check_output(["git","rev-parse","HEAD"]).decode().strip(),
+    "triggered_by": "github-actions",
+})
+httpx.post("http://localhost:8000/runs", json=result)
+EOF
+```
 
 ## Controls directory setup
 
@@ -705,7 +790,7 @@ Each run file is a self-contained JSON document:
   "schema_version": 1,
   "run_id": "20260321-152251-a1e136bd",
   "generated_at": "2026-03-21T15:22:51+00:00",
-  "tool_version": "0.1.0",
+  "tool_version": "0.3.0",
   "iac_plugin": "terraform",
   "source_paths": ["./infra"],
   "score": 45,
@@ -1306,7 +1391,7 @@ Run state is saved to `.wafpass-state/` by default. Persist this directory betwe
 
 - name: Run WAF++ PASS
   run: |
-    pip install -e .
+    pip install wafpass_core-*.whl     # or: pip install -e . from source
     wafpass check infra/aws infra/azure infra/gcp \
       --iac terraform \
       --fail-on fail \
@@ -1388,23 +1473,23 @@ Releases are published automatically on every merge to `main` via the GitHub Act
 The `VERSION` file in the repository root controls the **major.minor** part:
 
 ```
-0.1
+0.3
 ```
 
 The pipeline reads this file, finds the highest existing git tag matching `vMAJOR.MINOR.*`, and increments the patch number automatically. The first release for a given major.minor is always patch `0`.
 
 | Merge content | Result |
 |---|---|
-| Any code change | `v0.1.0` → `v0.1.1` → `v0.1.2` … |
-| Edit `VERSION`: `0.1` → `0.2` | Next release becomes `v0.2.0` |
-| Edit `VERSION`: `0.1` → `1.0` | Next release becomes `v1.0.0` |
+| Any code change | `v0.3.0` → `v0.3.1` → `v0.3.2` … |
+| Edit `VERSION`: `0.3` → `0.4` | Next release becomes `v0.4.0` |
+| Edit `VERSION`: `0.3` → `1.0` | Next release becomes `v1.0.0` |
 
 ### What each release does
 
 1. Reads `VERSION` and computes the next `vMAJOR.MINOR.PATCH`
-2. Updates `pyproject.toml` and `wafpass/__init__.py` with the new version
-3. Builds a Python wheel (`.whl`) and source distribution (`.tar.gz`)
-4. Commits the version bump back to `main` with `[skip ci]` to prevent a loop
+2. Updates `pyproject.toml` with the new version (the package reads it from metadata at runtime)
+3. Runs `pytest`
+4. Builds a Python wheel (`.whl`) and source distribution (`.tar.gz`)
 5. Creates a git tag and a GitHub release with auto-generated notes and both dist files attached
 
 ### Bumping the major or minor version
@@ -1413,14 +1498,44 @@ Edit `VERSION` and merge to `main` — no other file needs changing:
 
 ```bash
 # bump minor
-echo "0.2" > VERSION
-git commit -am "chore: start 0.2 release series"
+echo "0.4" > VERSION
+git commit -am "chore: start 0.4 release series"
 git push
 ```
 
 The patch counter resets to `0` automatically because no tags exist yet for the new major.minor.
 
-## Web UI
+## Full stack (docker-compose)
+
+The WAF++ monorepo ships a `docker-compose.yml` at the repo root that starts the complete stack:
+
+```bash
+# From the waf++ repo root
+cp .env.example .env    # fill in POSTGRES_PASSWORD
+docker compose up
+```
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| wafpass-dashboard | http://localhost:3000 | React dashboard (wafpass-dashboard/) |
+| wafpass-server | http://localhost:8000 | FastAPI results API (wafpass-server/) |
+| postgres | localhost:5432 | PostgreSQL results store |
+
+Post a result from `wafpass-core`:
+
+```bash
+wafpass check ./infra/ --output json \
+  | python -c "
+import json,sys,httpx
+r=json.load(sys.stdin)
+r.update({'project':'my-infra','branch':'main'})
+httpx.post('http://localhost:8000/runs',json=r)
+"
+```
+
+## Web UI (embedded, legacy)
+
+> **Note:** As of v0.3.0 the standalone `wafpass-dashboard` (Vite + React) is the recommended dashboard. The embedded web UI below remains available for local quick-start use without requiring Docker.
 
 WAF++ PASS ships with a browser-based dashboard that lets CISOs and security teams interact with controls, manage waivers, and view findings — **no YAML knowledge required**.
 
