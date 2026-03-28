@@ -169,6 +169,15 @@ def _pillar_scores(results: list[dict]) -> dict[str, int]:
     }
 
 
+def _policy_version() -> str:
+    """Return the wafpass package version, used as the policy/controls version."""
+    try:
+        from importlib.metadata import version
+        return version("wafpass")
+    except Exception:
+        return "0.2.0"
+
+
 def _report_to_dict(report: Any) -> dict:
     from wafpass.models import Report
     results = []
@@ -202,6 +211,7 @@ def _report_to_dict(report: Any) -> dict:
         "path": report.path,
         "run_id": datetime.now().strftime("%Y%m%d-%H%M%S"),
         "timestamp": datetime.now().isoformat(),
+        "policy_version": _policy_version(),
         "controls_loaded": report.controls_loaded,
         "controls_run": report.controls_run,
         "total_pass": report.total_pass,

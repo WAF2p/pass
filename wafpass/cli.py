@@ -146,7 +146,36 @@ def check(
     output: str = typer.Option(
         "console",
         "--output",
-        help="Output format: console, pdf.",
+        help="Output format: console, pdf, json.",
+    ),
+    push: str | None = typer.Option(
+        None,
+        "--push",
+        help=(
+            "POST the result as wafpass-result.json to this URL "
+            "(e.g. http://localhost:8000/runs). "
+            "Requires 'httpx': pip install httpx."
+        ),
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Project / repo name to embed in the result (used by wafpass-server).",
+    ),
+    branch: str = typer.Option(
+        "",
+        "--branch",
+        help="VCS branch name (auto-detected from git if not set).",
+    ),
+    git_sha: str = typer.Option(
+        "",
+        "--git-sha",
+        help="Commit SHA (auto-detected from git if not set).",
+    ),
+    triggered_by: str = typer.Option(
+        "",
+        "--triggered-by",
+        help="Trigger source: local, github-actions, gitlab-ci, … (auto-detected if not set).",
     ),
     pdf_out: Path = typer.Option(
         None,
@@ -226,6 +255,16 @@ def check(
         False,
         "--no-secrets",
         help="Disable the hardcoded-secret scanner (enabled by default).",
+    ),
+    plan_file: Path = typer.Option(
+        None,
+        "--plan-file",
+        help=(
+            "Path to a JSON file produced by 'terraform show -json <plan>' or "
+            "'terraform plan -json'. When provided the parsed resource-change "
+            "summary is embedded in the JSON output and pushed to the dashboard "
+            "as 'plan_changes', enabling Change Overview analysis."
+        ),
     ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
@@ -503,9 +542,172 @@ def check(
             typer.echo(f"Baseline saved to: {save_baseline_path}")
         # Also print summary to console so CI pipelines see the result
         print_summary_only(report)
+    elif output == "json":
+        import json as _json
+        from wafpass.schema import ControlCheckMetaSchema, ControlMetaSchema, FindingSchema, WafpassResultSchema
+
+        # Auto-detect git metadata when flags are not provided
+        def _git(cmd: list[str]) -> str:
+            try:
+                return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+            except Exception:
+                return ""
+
+        _branch = branch or _git(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        _sha = git_sha or _git(["git", "rev-parse", "HEAD"])
+
+        _triggered = triggered_by
+        if not _triggered:
+            if os.environ.get("GITHUB_ACTIONS"):
+                _triggered = "github-actions"
+            elif os.environ.get("GITLAB_CI"):
+                _triggered = "gitlab-ci"
+            elif os.environ.get("CI"):
+                _triggered = "ci"
+            else:
+                _triggered = "local"
+
+        # Build findings list
+        _findings: list[FindingSchema] = []
+        for cr in report.results:
+            for chk in cr.results:
+                _findings.append(FindingSchema(
+                    check_id=chk.check_id,
+                    check_title=chk.check_title,
+                    control_id=chk.control_id,
+                    pillar=cr.control.pillar,
+                    severity=chk.severity,
+                    status=chk.status,
+                    resource=chk.resource,
+                    message=chk.message,
+                    remediation=chk.remediation,
+                    example=chk.example,
+                ))
+            if cr.status == "WAIVED" and not cr.results:
+                _findings.append(FindingSchema(
+                    check_id=f"{cr.control.id}-WAIVED",
+                    check_title=cr.control.title,
+                    control_id=cr.control.id,
+                    pillar=cr.control.pillar,
+                    severity=cr.control.severity,
+                    status="WAIVED",
+                    resource="",
+                    message=cr.waived_reason or "",
+                    remediation="",
+                ))
+
+        # Compute scores
+        _pillar_totals: dict[str, list[int]] = {}
+        for cr in report.results:
+            _pillar_totals.setdefault(cr.control.pillar, []).append(
+                1 if cr.status == "PASS" else 0
+            )
+        _pillar_scores = {
+            p: int(sum(v) / len(v) * 100) if v else 0
+            for p, v in _pillar_totals.items()
+        }
+        _score = int(sum(_pillar_scores.values()) / len(_pillar_scores)) if _pillar_scores else 0
+
+        # Serialize loaded controls into lightweight metadata
+        _controls_meta: list[ControlMetaSchema] = []
+        for _ctrl in controls:
+            _ctrl_checks = [
+                ControlCheckMetaSchema(
+                    id=_chk.id,
+                    title=_chk.title,
+                    severity=_chk.severity,
+                    remediation=_chk.remediation,
+                    example=_chk.example,
+                )
+                for _chk in _ctrl.checks
+            ]
+            _controls_meta.append(ControlMetaSchema(
+                id=_ctrl.id,
+                title=_ctrl.title,
+                pillar=_ctrl.pillar,
+                severity=_ctrl.severity,
+                category=_ctrl.category,
+                description=_ctrl.description,
+                rationale=_ctrl.rationale,
+                threat=_ctrl.threat,
+                regulatory_mapping=_ctrl.regulatory_mapping,
+                checks=_ctrl_checks,
+            ))
+
+        # ── Parse terraform plan file if provided ─────────────────────────────
+        _plan_changes: dict | None = None
+        if plan_file:
+            if not plan_file.exists():
+                typer.echo(f"ERROR: --plan-file path does not exist: {plan_file}", err=True)
+                raise typer.Exit(code=2)
+            try:
+                from wafpass.plan_parser import parse_plan_file as _parse_plan
+                _plan_changes = _parse_plan(plan_file)
+                _total_changes = sum(
+                    v for k, v in _plan_changes.get("summary", {}).items() if k != "no_op"
+                )
+                typer.echo(
+                    f"Plan file parsed: {_total_changes} resource change(s) detected "
+                    f"({plan_file})",
+                    err=True,
+                )
+            except Exception as exc:
+                typer.echo(f"WARNING: Could not parse --plan-file '{plan_file}': {exc}", err=True)
+
+        _result = WafpassResultSchema(
+            project=project,
+            branch=_branch,
+            git_sha=_sha,
+            triggered_by=_triggered,
+            iac_framework=iac.lower(),
+            score=_score,
+            pillar_scores=_pillar_scores,
+            path=report.path,
+            controls_loaded=report.controls_loaded,
+            controls_run=report.controls_run,
+            detected_regions=[list(r) for r in report.detected_regions],
+            source_paths=report.source_paths,
+            controls_meta=_controls_meta,
+            findings=_findings,
+            plan_changes=_plan_changes,
+        )
+
+        _json_str = _result.model_dump_json(indent=2)
+        typer.echo(_json_str)
+
+        if push:
+            try:
+                import httpx as _httpx
+            except ImportError:
+                typer.echo(
+                    "ERROR: --push requires 'httpx'. Install with: pip install httpx",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
+            try:
+                _resp = _httpx.post(
+                    push,
+                    content=_json_str,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
+                _resp.raise_for_status()
+                typer.echo(f"Pushed to {push}  →  HTTP {_resp.status_code}", err=True)
+            except Exception as exc:
+                typer.echo(f"ERROR: Push to '{push}' failed: {exc}", err=True)
+                raise typer.Exit(code=2)
+
     else:
         typer.echo(f"Output format '{output}' is not yet supported.", err=True)
         raise typer.Exit(code=2)
+
+    # ── Push for non-JSON output modes (--push without --output json) ──────────
+    if push and output != "json":
+        typer.echo(
+            "NOTE: --push only works with --output json. "
+            "Re-run with --output json --push <url>.",
+            err=True,
+        )
 
     # ── Export to monitoring systems ───────────────────────────────────────────
     if export and _state_enabled and snapshot is not None:
