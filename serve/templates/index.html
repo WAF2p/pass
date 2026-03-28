@@ -212,6 +212,10 @@
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
       Settings
     </button>
+    <button @click="navTo('exploitpath')" :class="page==='exploitpath' ? 'active' : ''" class="sidebar-link w-full" :style="page==='exploitpath'?'':'color:#f87171;'">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Exploit Paths
+    </button>
   </nav>
 
   <!-- Maturity level badge -->
@@ -260,7 +264,8 @@
         sandbox: 'Architect Sandbox',
         regions: 'Deployed Regions',
         changelog: 'Changelog &amp; Installation',
-        settings: 'Settings'
+        settings: 'Settings',
+        exploitpath: 'Exploit Path Analysis'
       }[page]"></h1>
       <p class="text-xs text-slate-500" x-text="{
         dashboard: 'Risk posture overview across all WAF++ pillars',
@@ -272,7 +277,8 @@
         scan: 'Execute a WAF++ PASS scan against your IaC directory',
         sandbox: 'Write Terraform and instantly evaluate it against all WAF++ controls',
         changelog: 'WAFPass release history and setup instructions',
-        settings: 'General configuration, feature defaults, and maturity model'
+        settings: 'General configuration, feature defaults, and maturity model',
+        exploitpath: 'Attack chain visualization · internet-facing surfaces are highest criticality'
       }[page]"></p>
       </div>
     </div>
@@ -1694,6 +1700,301 @@
 
     </section>
 
+    <!-- ══ EXPLOIT PATH ANALYSIS ════════════════════════════════════════════ -->
+    <section x-show="page === 'exploitpath'" x-transition>
+
+      <!-- No scan yet placeholder -->
+      <div x-show="!results" style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:3rem 2rem;text-align:center;margin-bottom:1.5rem;">
+        <svg style="width:40px;height:40px;color:var(--muted);margin:0 auto 1rem;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <div style="font-size:1rem;font-weight:600;color:var(--text);margin-bottom:0.4rem;">No Scan Results Yet</div>
+        <div style="font-size:0.82rem;color:var(--muted);">Run a scan first — exploit paths are derived from your actual failing controls and affected resources.</div>
+        <button @click="navTo('scan')" style="margin-top:1rem;font-size:0.8rem;padding:0.5rem 1.25rem;border-radius:8px;border:none;background:var(--accent);color:white;cursor:pointer;font-weight:600;">Go to Scan</button>
+      </div>
+
+      <!-- Summary cards -->
+      <div x-show="results"><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
+        <div style="background:var(--surface);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:1rem;">
+          <div style="font-size:0.68rem;color:#ef4444;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;font-weight:600;">Critical Paths</div>
+          <div style="font-size:2rem;font-weight:800;color:#ef4444;line-height:1;" x-text="computedExploitPaths.filter(p=>p.criticality==='critical').length"></div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem;">Internet-facing entry</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid rgba(249,115,22,0.3);border-radius:12px;padding:1rem;">
+          <div style="font-size:0.68rem;color:#f97316;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;font-weight:600;">High Severity</div>
+          <div style="font-size:2rem;font-weight:800;color:#f97316;line-height:1;" x-text="computedExploitPaths.filter(p=>p.criticality==='high').length"></div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem;">Significant risk paths</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid rgba(0,148,255,0.25);border-radius:12px;padding:1rem;">
+          <div style="font-size:0.68rem;color:#60a5fa;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;font-weight:600;">Affected Resources</div>
+          <div style="font-size:2rem;font-weight:800;color:#60a5fa;line-height:1;" x-text="[...new Set(computedExploitPaths.flatMap(p=>p.affectedResources||[]))].length"></div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem;">Unique failing resources</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid rgba(168,85,247,0.3);border-radius:12px;padding:1rem;">
+          <div style="font-size:0.68rem;color:#c084fc;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;font-weight:600;">Active Chains</div>
+          <div style="font-size:2rem;font-weight:800;color:#c084fc;line-height:1;" x-text="computedExploitPaths.length"></div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem;">Based on current scan</div>
+        </div>
+      </div></div>
+
+      <!-- Criticality gradient bar (only when scan data available) -->
+      <div x-show="results && computedExploitPaths.length === 0" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.5rem;display:flex;align-items:center;gap:0.6rem;">
+        <svg style="width:14px;height:14px;color:#22c55e;flex-shrink:0;" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+        <p style="font-size:0.8rem;color:var(--text);margin:0;">No active exploit chains detected — no relevant security controls are currently failing in this scan.</p>
+      </div>
+      <div x-show="results">
+      <!-- Criticality gradient bar -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0.875rem 1.25rem;margin-bottom:1.5rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+        <span style="font-size:0.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap;font-weight:600;">Attack Surface ←→</span>
+        <div style="flex:1;min-width:120px;height:6px;border-radius:3px;background:linear-gradient(90deg,#ef4444 0%,#f97316 25%,#eab308 50%,#c084fc 75%,#2dd4bf 100%);"></div>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+          <span style="font-size:0.68rem;color:#ef4444;font-weight:700;">INTERNET</span>
+          <span style="font-size:0.68rem;color:#f97316;font-weight:600;">PERIMETER</span>
+          <span style="font-size:0.68rem;color:#eab308;font-weight:600;">APPLICATION</span>
+          <span style="font-size:0.68rem;color:#c084fc;font-weight:600;">DATA STORE</span>
+          <span style="font-size:0.68rem;color:#2dd4bf;font-weight:600;">CORE</span>
+        </div>
+      </div>
+
+      <!-- Attack graph -->
+      <div style="background:#0c1526;border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:1.25rem;margin-bottom:1.5rem;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+          <div>
+            <div style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">Attack Graph</div>
+            <div style="font-size:0.72rem;color:#64748b;">Select a path card below to highlight its attack chain</div>
+          </div>
+          <button x-show="selectedExploitPath" @click="selectedExploitPath=null" style="font-size:0.72rem;padding:0.3rem 0.8rem;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#94a3b8;cursor:pointer;">Clear selection</button>
+        </div>
+
+        <div style="overflow-x:auto;">
+        <svg viewBox="0 0 900 390" width="100%" style="min-width:520px;display:block;" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="ep-m" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="rgba(71,85,105,0.5)"/></marker>
+            <marker id="ep-mc" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#ef4444"/></marker>
+            <marker id="ep-mh" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#f97316"/></marker>
+            <marker id="ep-mm" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="#eab308"/></marker>
+          </defs>
+
+          <!-- Zone backgrounds -->
+          <rect x="2" y="30" width="86" height="350" rx="5" fill="rgba(239,68,68,0.07)" stroke="rgba(239,68,68,0.18)" stroke-width="1"/>
+          <rect x="92" y="30" width="186" height="350" rx="5" fill="rgba(249,115,22,0.05)" stroke="rgba(249,115,22,0.14)" stroke-width="1"/>
+          <rect x="282" y="30" width="216" height="350" rx="5" fill="rgba(59,130,246,0.05)" stroke="rgba(59,130,246,0.12)" stroke-width="1"/>
+          <rect x="502" y="30" width="196" height="350" rx="5" fill="rgba(168,85,247,0.05)" stroke="rgba(168,85,247,0.12)" stroke-width="1"/>
+          <rect x="702" y="30" width="196" height="350" rx="5" fill="rgba(45,212,191,0.05)" stroke="rgba(45,212,191,0.12)" stroke-width="1"/>
+
+          <!-- Zone labels -->
+          <text x="45"  y="22" text-anchor="middle" font-size="8.5" fill="#ef4444" font-weight="700" letter-spacing="1.2">INTERNET</text>
+          <text x="185" y="22" text-anchor="middle" font-size="8.5" fill="#f97316" font-weight="700" letter-spacing="1.2">PERIMETER</text>
+          <text x="390" y="22" text-anchor="middle" font-size="8.5" fill="#60a5fa" font-weight="700" letter-spacing="1.2">APPLICATION</text>
+          <text x="600" y="22" text-anchor="middle" font-size="8.5" fill="#c084fc" font-weight="700" letter-spacing="1.2">DATA STORE</text>
+          <text x="800" y="22" text-anchor="middle" font-size="8.5" fill="#2dd4bf" font-weight="700" letter-spacing="1.2">CORE</text>
+
+          <!-- ── Edges ── -->
+          <path :d="getExploitEdgePath('inet','s3pub')" fill="none" :stroke="isExploitEdgeActive('inet','s3pub')?'#ef4444':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('inet','s3pub')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('inet','s3pub')?'none':'5 3'" :marker-end="isExploitEdgeActive('inet','s3pub')?'url(#ep-mc)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('inet','alb')"   fill="none" :stroke="isExploitEdgeActive('inet','alb')  ?(selectedExploitPath?.criticality==='critical'?'#ef4444':'#f97316'):'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('inet','alb')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('inet','alb')?'none':'5 3'" :marker-end="isExploitEdgeActive('inet','alb')?(selectedExploitPath?.criticality==='critical'?'url(#ep-mc)':'url(#ep-mh)'):'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('inet','ec2pub')" fill="none" :stroke="isExploitEdgeActive('inet','ec2pub')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('inet','ec2pub')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('inet','ec2pub')?'none':'5 3'" :marker-end="isExploitEdgeActive('inet','ec2pub')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('s3pub','iam')"  fill="none" :stroke="isExploitEdgeActive('s3pub','iam') ?'#ef4444':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('s3pub','iam')?2.5:1.5"  :stroke-dasharray="isExploitEdgeActive('s3pub','iam')?'none':'5 3'"  :marker-end="isExploitEdgeActive('s3pub','iam')?'url(#ep-mc)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('alb','ec2app')" fill="none" :stroke="isExploitEdgeActive('alb','ec2app')?(selectedExploitPath?.criticality==='critical'?'#ef4444':'#f97316'):'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('alb','ec2app')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('alb','ec2app')?'none':'5 3'" :marker-end="isExploitEdgeActive('alb','ec2app')?(selectedExploitPath?.criticality==='critical'?'url(#ep-mc)':'url(#ep-mh)'):'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('alb','lambda')" fill="none" :stroke="isExploitEdgeActive('alb','lambda')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('alb','lambda')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('alb','lambda')?'none':'5 3'" :marker-end="isExploitEdgeActive('alb','lambda')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('ec2pub','ec2app')" fill="none" :stroke="isExploitEdgeActive('ec2pub','ec2app')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('ec2pub','ec2app')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('ec2pub','ec2app')?'none':'5 3'" :marker-end="isExploitEdgeActive('ec2pub','ec2app')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('ec2pub','ecs')"  fill="none" :stroke="isExploitEdgeActive('ec2pub','ecs')?'#f97316':'rgba(71,85,105,0.3)'"  :stroke-width="isExploitEdgeActive('ec2pub','ecs')?2.5:1.5"  :stroke-dasharray="isExploitEdgeActive('ec2pub','ecs')?'none':'5 3'"  :marker-end="isExploitEdgeActive('ec2pub','ecs')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('ec2app','rds')"  fill="none" :stroke="isExploitEdgeActive('ec2app','rds')?'#ef4444':'rgba(71,85,105,0.3)'"  :stroke-width="isExploitEdgeActive('ec2app','rds')?2.5:1.5"  :stroke-dasharray="isExploitEdgeActive('ec2app','rds')?'none':'5 3'"  :marker-end="isExploitEdgeActive('ec2app','rds')?'url(#ep-mc)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('ec2app','iam')"  fill="none" :stroke="isExploitEdgeActive('ec2app','iam')?'#ef4444':'rgba(71,85,105,0.3)'"  :stroke-width="isExploitEdgeActive('ec2app','iam')?2.5:1.5"  :stroke-dasharray="isExploitEdgeActive('ec2app','iam')?'none':'5 3'"  :marker-end="isExploitEdgeActive('ec2app','iam')?'url(#ep-mc)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('lambda','dynamo')" fill="none" :stroke="isExploitEdgeActive('lambda','dynamo')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('lambda','dynamo')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('lambda','dynamo')?'none':'5 3'" :marker-end="isExploitEdgeActive('lambda','dynamo')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('lambda','secrets')" fill="none" :stroke="isExploitEdgeActive('lambda','secrets')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('lambda','secrets')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('lambda','secrets')?'none':'5 3'" :marker-end="isExploitEdgeActive('lambda','secrets')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('ecs','s3data')"  fill="none" :stroke="isExploitEdgeActive('ecs','s3data')?'#f97316':'rgba(71,85,105,0.3)'"  :stroke-width="isExploitEdgeActive('ecs','s3data')?2.5:1.5"  :stroke-dasharray="isExploitEdgeActive('ecs','s3data')?'none':'5 3'"  :marker-end="isExploitEdgeActive('ecs','s3data')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('ec2app','s3data')" fill="none" :stroke="isExploitEdgeActive('ec2app','s3data')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('ec2app','s3data')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('ec2app','s3data')?'none':'5 3'" :marker-end="isExploitEdgeActive('ec2app','s3data')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('rds','iam')"    fill="none" :stroke="isExploitEdgeActive('rds','iam')  ?'#ef4444':'rgba(71,85,105,0.3)'"    :stroke-width="isExploitEdgeActive('rds','iam')?2.5:1.5"    :stroke-dasharray="isExploitEdgeActive('rds','iam')?'none':'5 3'"    :marker-end="isExploitEdgeActive('rds','iam')?'url(#ep-mc)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('s3data','iam')" fill="none" :stroke="isExploitEdgeActive('s3data','iam')?'#f97316':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('s3data','iam')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('s3data','iam')?'none':'5 3'" :marker-end="isExploitEdgeActive('s3data','iam')?'url(#ep-mh)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('iam','secrets')" fill="none" :stroke="isExploitEdgeActive('iam','secrets')?'#ef4444':'rgba(71,85,105,0.3)'" :stroke-width="isExploitEdgeActive('iam','secrets')?2.5:1.5" :stroke-dasharray="isExploitEdgeActive('iam','secrets')?'none':'5 3'" :marker-end="isExploitEdgeActive('iam','secrets')?'url(#ep-mc)':'url(#ep-m)'"/>
+          <path :d="getExploitEdgePath('iam','kms')"    fill="none" :stroke="isExploitEdgeActive('iam','kms')  ?'#ef4444':'rgba(71,85,105,0.3)'"    :stroke-width="isExploitEdgeActive('iam','kms')?2.5:1.5"    :stroke-dasharray="isExploitEdgeActive('iam','kms')?'none':'5 3'"    :marker-end="isExploitEdgeActive('iam','kms')?'url(#ep-mc)':'url(#ep-m)'"/>
+
+          <!-- ── Node macro (reused via SVG <g> groups) ── -->
+          <!-- inet (45,190) -->
+          <g transform="translate(45,190)" style="cursor:pointer" @click="selectedExploitPath=null">
+            <circle r="27" :fill="isExploitNodeActive('inet')?'rgba(239,68,68,0.18)':'transparent'" :stroke="isExploitNodeActive('inet')?'#ef4444':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('inet')?'#ef4444':'#141b2d'" stroke="#ef4444" :stroke-width="isExploitNodeActive('inet')?2:1" :stroke-opacity="isExploitNodeActive('inet')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="10" fill="white" font-weight="700">NET</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">Internet</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#ef4444">Attacker</text>
+          </g>
+          <!-- s3pub (185,80) -->
+          <g transform="translate(185,80)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('s3pub'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('s3pub')?'rgba(239,68,68,0.18)':'transparent'" :stroke="isExploitNodeActive('s3pub')?'#ef4444':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('s3pub')?'#ef4444':'#141b2d'" stroke="#ef4444" :stroke-width="isExploitNodeActive('s3pub')?2:1" :stroke-opacity="isExploitNodeActive('s3pub')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="10" fill="white" font-weight="700">S3</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">S3 Bucket</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#ef4444">Public ACL</text>
+          </g>
+          <!-- alb (185,190) -->
+          <g transform="translate(185,190)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('alb'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('alb')?'rgba(249,115,22,0.18)':'transparent'" :stroke="isExploitNodeActive('alb')?'#f97316':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('alb')?'#f97316':'#141b2d'" stroke="#f97316" :stroke-width="isExploitNodeActive('alb')?2:1" :stroke-opacity="isExploitNodeActive('alb')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9" fill="white" font-weight="700">ALB</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">Load Balancer</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#f97316">Public</text>
+          </g>
+          <!-- ec2pub (185,305) -->
+          <g transform="translate(185,305)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('ec2pub'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('ec2pub')?'rgba(249,115,22,0.18)':'transparent'" :stroke="isExploitNodeActive('ec2pub')?'#f97316':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('ec2pub')?'#f97316':'#141b2d'" stroke="#f97316" :stroke-width="isExploitNodeActive('ec2pub')?2:1" :stroke-opacity="isExploitNodeActive('ec2pub')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9" fill="white" font-weight="700">EC2</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">EC2 Instance</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#f97316">Public IP</text>
+          </g>
+          <!-- ec2app (390,120) -->
+          <g transform="translate(390,120)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('ec2app'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('ec2app')?'rgba(234,179,8,0.18)':'transparent'" :stroke="isExploitNodeActive('ec2app')?'#eab308':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('ec2app')?'#ca8a04':'#141b2d'" stroke="#eab308" :stroke-width="isExploitNodeActive('ec2app')?2:1" :stroke-opacity="isExploitNodeActive('ec2app')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="8.5" fill="white" font-weight="700">APP</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">App Server</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#eab308">EC2/ECS</text>
+          </g>
+          <!-- lambda (390,230) -->
+          <g transform="translate(390,230)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('lambda'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('lambda')?'rgba(234,179,8,0.18)':'transparent'" :stroke="isExploitNodeActive('lambda')?'#eab308':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('lambda')?'#ca8a04':'#141b2d'" stroke="#eab308" :stroke-width="isExploitNodeActive('lambda')?2:1" :stroke-opacity="isExploitNodeActive('lambda')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="13" fill="white" font-weight="700">λ</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">Lambda</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#eab308">Function</text>
+          </g>
+          <!-- ecs (390,335) -->
+          <g transform="translate(390,335)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('ecs'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('ecs')?'rgba(234,179,8,0.18)':'transparent'" :stroke="isExploitNodeActive('ecs')?'#eab308':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('ecs')?'#ca8a04':'#141b2d'" stroke="#eab308" :stroke-width="isExploitNodeActive('ecs')?2:1" :stroke-opacity="isExploitNodeActive('ecs')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9" fill="white" font-weight="700">ECS</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">Container</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#eab308">ECS/Fargate</text>
+          </g>
+          <!-- rds (600,85) -->
+          <g transform="translate(600,85)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('rds'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('rds')?'rgba(239,68,68,0.18)':'transparent'" :stroke="isExploitNodeActive('rds')?'#ef4444':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('rds')?'#ef4444':'#141b2d'" stroke="#ef4444" :stroke-width="isExploitNodeActive('rds')?2:1" :stroke-opacity="isExploitNodeActive('rds')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9" fill="white" font-weight="700">RDS</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">Database</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#ef4444">Critical Data</text>
+          </g>
+          <!-- s3data (600,195) -->
+          <g transform="translate(600,195)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('s3data'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('s3data')?'rgba(249,115,22,0.18)':'transparent'" :stroke="isExploitNodeActive('s3data')?'#f97316':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('s3data')?'#f97316':'#141b2d'" stroke="#f97316" :stroke-width="isExploitNodeActive('s3data')?2:1" :stroke-opacity="isExploitNodeActive('s3data')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9.5" fill="white" font-weight="700">S3</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">S3 Data</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#f97316">Private</text>
+          </g>
+          <!-- dynamo (600,305) -->
+          <g transform="translate(600,305)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('dynamo'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('dynamo')?'rgba(234,179,8,0.18)':'transparent'" :stroke="isExploitNodeActive('dynamo')?'#eab308':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('dynamo')?'#ca8a04':'#141b2d'" stroke="#eab308" :stroke-width="isExploitNodeActive('dynamo')?2:1" :stroke-opacity="isExploitNodeActive('dynamo')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="8.5" fill="white" font-weight="700">DDB</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">DynamoDB</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#eab308">Table</text>
+          </g>
+          <!-- iam (810,115) -->
+          <g transform="translate(810,115)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('iam'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('iam')?'rgba(239,68,68,0.22)':'transparent'" :stroke="isExploitNodeActive('iam')?'#ef4444':'transparent'" stroke-width="1.5"/>
+            <circle r="21" :fill="isExploitNodeActive('iam')?'#ef4444':'#141b2d'" stroke="#ef4444" :stroke-width="isExploitNodeActive('iam')?2:1" :stroke-opacity="isExploitNodeActive('iam')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9" fill="white" font-weight="700">IAM</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">IAM</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#ef4444">Full Access</text>
+          </g>
+          <!-- secrets (810,225) -->
+          <g transform="translate(810,225)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('secrets'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('secrets')?'rgba(249,115,22,0.18)':'transparent'" :stroke="isExploitNodeActive('secrets')?'#f97316':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('secrets')?'#f97316':'#141b2d'" stroke="#f97316" :stroke-width="isExploitNodeActive('secrets')?2:1" :stroke-opacity="isExploitNodeActive('secrets')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="8.5" fill="white" font-weight="700">SM</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">Secrets Mgr</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#f97316">Credentials</text>
+          </g>
+          <!-- kms (810,335) -->
+          <g transform="translate(810,335)" style="cursor:pointer" @click="selectedExploitPath=computedExploitPaths.find(p=>p.nodeIds.includes('kms'))||selectedExploitPath">
+            <circle r="27" :fill="isExploitNodeActive('kms')?'rgba(234,179,8,0.18)':'transparent'" :stroke="isExploitNodeActive('kms')?'#eab308':'transparent'" stroke-width="1"/>
+            <circle r="21" :fill="isExploitNodeActive('kms')?'#ca8a04':'#141b2d'" stroke="#eab308" :stroke-width="isExploitNodeActive('kms')?2:1" :stroke-opacity="isExploitNodeActive('kms')?1:0.45"/>
+            <text text-anchor="middle" dy="0.4em" font-size="9" fill="white" font-weight="700">KMS</text>
+            <text text-anchor="middle" y="36" font-size="8.5" fill="rgba(226,232,240,0.9)" font-weight="600">KMS Keys</text>
+            <text text-anchor="middle" y="46" font-size="7.5" fill="#eab308">Encryption</text>
+          </g>
+        </svg>
+        </div><!-- /overflow-x:auto -->
+      </div>
+
+      <!-- Attack chains list -->
+      <div style="margin-bottom:1.5rem;">
+        <div style="font-size:0.9rem;font-weight:600;color:var(--text);margin-bottom:0.75rem;">Attack Chains</div>
+        <div style="display:flex;flex-direction:column;gap:0.6rem;">
+          <template x-for="path in computedExploitPaths" :key="path.id">
+            <div @click="selectedExploitPath = selectedExploitPath?.id===path.id ? null : path"
+                 style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1rem 1.25rem;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s;"
+                 :style="selectedExploitPath?.id===path.id ? `border-color:${epCritColor(path.criticality)};box-shadow:0 0 0 3px ${path.criticality==='critical'?'rgba(239,68,68,0.10)':path.criticality==='high'?'rgba(249,115,22,0.10)':'rgba(234,179,8,0.10)'};` : 'border-color:var(--border);'">
+              <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:nowrap;overflow:hidden;">
+                <span style="font-size:0.63rem;font-weight:700;letter-spacing:0.07em;border-radius:999px;padding:0.2rem 0.65rem;text-transform:uppercase;flex-shrink:0;"
+                      :style="`background:${path.criticality==='critical'?'rgba(239,68,68,0.15)':path.criticality==='high'?'rgba(249,115,22,0.15)':'rgba(234,179,8,0.15)'};color:${epCritColor(path.criticality)};border:1px solid ${path.criticality==='critical'?'rgba(239,68,68,0.3)':path.criticality==='high'?'rgba(249,115,22,0.3)':'rgba(234,179,8,0.3)'};`"
+                      x-text="path.criticality.toUpperCase()"></span>
+                <span style="font-size:0.72rem;font-weight:700;flex-shrink:0;" :style="`color:${epCritColor(path.criticality)}`" x-text="`CVSS ${path.score}`"></span>
+                <span style="font-size:0.85rem;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="path.name"></span>
+                <span x-show="path.entry==='Internet-Facing'" style="font-size:0.68rem;padding:0.15rem 0.5rem;border-radius:6px;background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2);white-space:nowrap;flex-shrink:0;">Internet-Facing</span>
+                <span x-show="path.entry==='Internal'" style="font-size:0.68rem;padding:0.15rem 0.5rem;border-radius:6px;background:rgba(234,179,8,0.1);color:#fbbf24;border:1px solid rgba(234,179,8,0.2);white-space:nowrap;flex-shrink:0;">Internal</span>
+                <svg width="15" height="15" style="width:15px;height:15px;min-width:15px;max-width:15px;color:var(--muted);transition:transform 0.2s;flex-shrink:0;" :style="selectedExploitPath?.id===path.id?'transform:rotate(180deg);':''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              </div>
+              <!-- Expanded details -->
+              <div x-show="selectedExploitPath?.id===path.id" x-transition style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+                <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem;line-height:1.65;" x-text="path.description"></p>
+                <!-- Affected Resources — the key value-add for architects -->
+                <template x-if="path.affectedResources && path.affectedResources.length">
+                  <div style="margin-bottom:1rem;">
+                    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.45rem;font-weight:600;">Affected Resources (from this scan)</div>
+                    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                      <template x-for="res in path.affectedResources" :key="res">
+                        <span style="font-family:monospace;font-size:0.68rem;padding:0.18rem 0.5rem;border-radius:5px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.22);color:#f87171;" x-text="res"></span>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+                  <div>
+                    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.3rem;">Impact</div>
+                    <div style="font-size:0.8rem;font-weight:600;color:var(--text);" x-text="path.impact"></div>
+                  </div>
+                  <div>
+                    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.3rem;">Failing Controls</div>
+                    <div style="display:flex;gap:0.3rem;flex-wrap:wrap;">
+                      <template x-for="ctrl in path.controls" :key="ctrl">
+                        <span @click.stop="selectedControl = controls.find(c=>c.id===ctrl); modalTab='overview'" style="font-size:0.68rem;padding:0.1rem 0.45rem;border-radius:4px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.22);color:#f87171;cursor:pointer;" :title="controls.find(c=>c.id===ctrl)?.title||ctrl" x-text="ctrl"></span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+                <div style="font-size:0.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.7rem;font-weight:600;">Attack Steps</div>
+                <div style="display:flex;flex-direction:column;gap:0;">
+                  <template x-for="(step, idx) in path.steps" :key="step.n">
+                    <div style="display:flex;gap:0.8rem;">
+                      <div style="display:flex;flex-direction:column;align-items:center;width:22px;flex-shrink:0;">
+                        <div style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:white;flex-shrink:0;"
+                             :style="`background:${epSevColor(step.sev)};`"
+                             x-text="step.n"></div>
+                        <div x-show="idx < path.steps.length - 1" style="width:2px;flex:1;min-height:10px;margin:2px 0;background:rgba(100,116,139,0.2);"></div>
+                      </div>
+                      <div style="padding-bottom:0.8rem;">
+                        <div style="font-size:0.8rem;font-weight:600;color:var(--text);margin-bottom:0.2rem;" x-text="step.title"></div>
+                        <div style="font-size:0.75rem;color:var(--muted);line-height:1.55;" x-text="step.desc"></div>
+                        <span style="display:inline-block;margin-top:0.3rem;font-size:0.64rem;padding:0.1rem 0.4rem;border-radius:4px;background:rgba(0,148,255,0.1);border:1px solid rgba(0,148,255,0.2);color:#60a5fa;" x-text="step.control"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+      </div><!-- /x-show="results" -->
+
+      <!-- Disclaimer -->
+      <div x-show="results" style="background:rgba(234,179,8,0.05);border:1px solid rgba(234,179,8,0.2);border-radius:10px;padding:0.75rem 1rem;display:flex;align-items:flex-start;gap:0.6rem;">
+        <svg style="width:14px;height:14px;color:#eab308;flex-shrink:0;margin-top:0.15rem;" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+        <p style="font-size:0.72rem;color:var(--muted);line-height:1.55;margin:0;">Exploit chains are derived from controls that are <strong>actively failing</strong> in your scan. Affected resources shown are the specific Terraform resources that triggered failures. Exploitability depends on your runtime compensating controls and network configuration beyond IaC scope.</p>
+      </div>
+
+    </section>
+
   </div><!-- /p-6 -->
 </main>
 
@@ -2265,6 +2566,9 @@
     // Auto-Fix
     autoFix: { loading: false, applying: false, error: null, result: null, showModal: false, controlIds: null },
 
+    // Exploit path analysis
+    selectedExploitPath: null,
+
     // Settings & Maturity
     maturityLevel: 1,
     settings: {
@@ -2435,6 +2739,177 @@
         effort += EFFORT[r.severity] ?? 2;
       }
       return { risk, effort: Math.round(effort * 10) / 10, fail, savings: Math.round(risk * 0.9) };
+    },
+
+    get computedExploitPaths() {
+      if (!this.results) return [];
+
+      // Build category → [{id, title, severity, resources, remediation}] for FAIL controls only
+      const failsByCat = {};
+      for (const cr of this.results.results) {
+        if (cr.status !== 'FAIL') continue;
+        const cat = cr.category || 'other';
+        if (!failsByCat[cat]) failsByCat[cat] = [];
+        const res = (cr.check_results || [])
+          .filter(r => r.status === 'FAIL' && r.resource)
+          .map(r => r.resource)
+          .filter((v, i, a) => a.indexOf(v) === i);
+        failsByCat[cat].push({ id: cr.control_id, title: cr.control_title, severity: cr.severity, resources: res });
+      }
+
+      const F = (cat) => failsByCat[cat] || [];
+      const resOf = (...cats) => [...new Set(cats.flatMap(c => F(c).flatMap(x => x.resources)))].slice(0, 6);
+      const sevOf = (...cats) => {
+        const all = cats.flatMap(c => F(c).map(x => x.severity));
+        if (all.includes('critical')) return 'critical';
+        if (all.includes('high')) return 'high';
+        if (all.includes('medium')) return 'medium';
+        return all.length ? 'low' : null;
+      };
+      const scoreOf = (crit, n) => {
+        const base = {critical:9.0,high:7.5,medium:5.5,low:3.0}[crit] || 5.0;
+        return parseFloat((base + Math.min(n * 0.1, 0.9)).toFixed(1));
+      };
+      const resText = (cats) => { const r = resOf(...cats); return r.length ? r.map(x => '`'+x+'`').join(', ') : null; };
+
+      const chains = [];
+
+      // ── Chain 1: Network weakness → lateral movement → IAM takeover ──────────
+      if (F('network-security').length && F('iam').length) {
+        const crit = sevOf('network-security', 'iam');
+        const controls = [...F('network-security').map(c=>c.id), ...F('iam').map(c=>c.id)];
+        chains.push({
+          id: 'ep-r1', criticality: crit,
+          score: scoreOf(crit, controls.length),
+          entry: 'Internet-Facing',
+          name: 'Network Exposure → Lateral Movement → IAM Takeover',
+          impact: 'Privilege Escalation · Account Compromise',
+          description: `Network segmentation gaps (${F('network-security').map(c=>c.title).join('; ')}) combined with IAM policy weaknesses (${F('iam').map(c=>c.title).join('; ')}) create a path from internet entry points to full account takeover.`,
+          controls,
+          affectedResources: resOf('network-security', 'iam'),
+          nodeIds: ['inet','ec2pub','ec2app','iam'],
+          edgePairs: [['inet','ec2pub'],['ec2pub','ec2app'],['ec2app','iam']],
+          steps: [
+            { n:1, title:'Network Perimeter Breach', sev: F('network-security')[0]?.severity||'high',
+              desc: `${F('network-security').map(c=>c.title).join(' + ')} failing. ${resText(['network-security']) || 'Overly permissive security groups or missing WAF detected.'}`,
+              control: F('network-security')[0]?.id||'' },
+            { n:2, title:'Pivot to Application Tier', sev:'high',
+              desc: 'Inadequate segmentation allows movement from the perimeter into the internal compute tier without triggering detection.',
+              control: F('network-security').slice(-1)[0]?.id||'' },
+            { n:3, title:'IAM Privilege Escalation', sev: F('iam')[0]?.severity||'critical',
+              desc: `${F('iam').map(c=>c.title).join(' + ')} failing. ${resText(['iam']) || 'Over-privileged IAM roles accessible from compromised compute.'}`,
+              control: F('iam')[0]?.id||'' },
+            { n:4, title:'Account Takeover', sev:'critical',
+              desc: 'IAM misconfiguration escalated to administrator-level access. Persistent backdoor created. All resources reachable.',
+              control: F('iam').slice(-1)[0]?.id||'' },
+          ],
+        });
+      }
+
+      // ── Chain 2: Secrets exposure → credential abuse → data breach ────────────
+      if (F('secrets').length) {
+        const crit = sevOf('secrets','data-protection','encryption');
+        const extra = [...F('data-protection'), ...F('encryption')];
+        const controls = [...F('secrets').map(c=>c.id), ...extra.map(c=>c.id)];
+        const steps = [
+          { n:1, title:'Secret Discovery', sev: F('secrets')[0]?.severity||'critical',
+            desc: `${F('secrets').map(c=>c.title).join(' + ')} failing. ${resText(['secrets']) || 'Plaintext credentials found in IaC code or config files.'}`,
+            control: F('secrets')[0]?.id||'' },
+          { n:2, title:'Credential Extraction & Validation', sev:'critical',
+            desc: 'Hardcoded AWS access keys or database credentials extracted from source code, environment variables, or config backups. Keys valid without rotation.',
+            control: F('secrets').slice(-1)[0]?.id||'' },
+        ];
+        if (extra.length) steps.push({ n:3, title:'Data Store Access', sev: extra[0]?.severity||'high',
+          desc: `${extra.map(c=>c.title).join(' + ')} failing. ${resText(['data-protection','encryption']) || 'Unprotected or unencrypted data stores directly accessible with extracted credentials.'}`,
+          control: extra[0]?.id||'' });
+        steps.push({ n: steps.length+1, title:'Full Data Exfiltration', sev:'critical',
+          desc: 'All data accessible via stolen credentials exfiltrated. No encryption, rotation, or MFA to stop the attacker.',
+          control: F('secrets').slice(-1)[0]?.id||'' });
+        chains.push({
+          id: 'ep-r2', criticality: crit,
+          score: scoreOf(crit, controls.length),
+          entry: 'Internet-Facing',
+          name: 'Hardcoded Secrets → Credential Abuse → Data Exfiltration',
+          impact: 'Credential Theft · Data Breach · Compliance Failure',
+          description: `Secrets management failures (${F('secrets').map(c=>c.title).join('; ')}) expose credentials that enable direct access to data stores, bypassing all perimeter controls.`,
+          controls,
+          affectedResources: resOf('secrets','data-protection','encryption'),
+          nodeIds: ['inet','s3pub','iam','secrets'],
+          edgePairs: [['inet','s3pub'],['s3pub','iam'],['iam','secrets']],
+          steps,
+        });
+      }
+
+      // ── Chain 3: Container/vuln → compute breakout → internal data ───────────
+      if (F('container-security').length || F('vulnerability-management').length) {
+        const cats = ['container-security','vulnerability-management'];
+        const crit = sevOf(...cats) || 'high';
+        const all = cats.flatMap(c => F(c));
+        const controls = all.map(c => c.id);
+        const steps = [
+          { n:1, title:'Internet-Facing Entry Point', sev:'medium',
+            desc: 'Public load balancer or directly exposed EC2 instance provides the initial internet-accessible attack surface.',
+            control: all[0]?.id||'' },
+        ];
+        if (F('vulnerability-management').length) steps.push({ n:2, title:'Vulnerability Exploitation', sev: F('vulnerability-management')[0]?.severity||'high',
+          desc: `${F('vulnerability-management').map(c=>c.title).join(' + ')} failing. ${resText(['vulnerability-management']) || 'Known CVEs in deployed software or OS versions not remediated within SLA.'}`,
+          control: F('vulnerability-management')[0]?.id||'' });
+        if (F('container-security').length) steps.push({ n: steps.length+1, title:'Container / Runtime Breakout', sev: F('container-security')[0]?.severity||'high',
+          desc: `${F('container-security').map(c=>c.title).join(' + ')} failing. ${resText(['container-security']) || 'Container misconfiguration (host network, privileged, root) enables privilege escalation to EC2 host.'}`,
+          control: F('container-security')[0]?.id||'' });
+        steps.push({ n: steps.length+1, title:'Internal Storage Exfiltration', sev:'high',
+          desc: 'Host IAM instance profile leveraged to enumerate and download internal S3 buckets, EFS shares, or EBS snapshots.',
+          control: all.slice(-1)[0]?.id||'' });
+        chains.push({
+          id: 'ep-r3', criticality: crit,
+          score: scoreOf(crit, controls.length),
+          entry: 'Internet-Facing',
+          name: `Unpatched Compute → ${F('container-security').length ? 'Container Breakout' : 'Code Execution'} → Internal Access`,
+          impact: 'Runtime Compromise · Internal Data Access',
+          description: `${all.map(c=>c.title).join('; ')} create an attack path from internet-facing compute resources through to internal data stores and services.`,
+          controls,
+          affectedResources: resOf(...cats),
+          nodeIds: ['inet','ec2pub','ecs','s3data'],
+          edgePairs: [['inet','ec2pub'],['ec2pub','ecs'],['ecs','s3data']],
+          steps,
+        });
+      }
+
+      // ── Chain 4: Monitoring blind spot → undetected persistence ──────────────
+      const monAll = [...F('monitoring'), ...F('incident-response')];
+      if (monAll.length && (F('iam').length || F('secrets').length)) {
+        const crit = sevOf('monitoring','incident-response') || 'high';
+        const controls = monAll.map(c => c.id);
+        const steps = [
+          { n:1, title:'Initial Foothold (Via Other Chain)', sev:'medium',
+            desc: 'Attacker achieves initial access via a network, secrets, or compute vulnerability described in the chains above.',
+            control: controls[0]||'' },
+        ];
+        if (F('monitoring').length) steps.push({ n:2, title:'Detection Gap', sev: F('monitoring')[0]?.severity||'high',
+          desc: `${F('monitoring').map(c=>c.title).join(' + ')} failing. ${resText(['monitoring']) || 'No CloudTrail, GuardDuty, or SIEM alerting configured for anomalous API activity.'}`,
+          control: F('monitoring')[0]?.id||'' });
+        if (F('incident-response').length) steps.push({ n: steps.length+1, title:'No Response Playbook Triggered', sev: F('incident-response')[0]?.severity||'medium',
+          desc: `${F('incident-response').map(c=>c.title).join(' + ')} failing. ${resText(['incident-response']) || 'No automated IR playbooks; manual review cadence misses the intrusion window.'}`,
+          control: F('incident-response')[0]?.id||'' });
+        steps.push({ n: steps.length+1, title:'Persistent Silent Exfiltration', sev:'high',
+          desc: 'Attacker maintains access for weeks. Data exfiltrated slowly. Mean-time-to-detect exceeds regulatory breach notification thresholds.',
+          control: controls.slice(-1)[0]||'' });
+        chains.push({
+          id: 'ep-r4', criticality: crit,
+          score: scoreOf(crit, controls.length),
+          entry: 'Internal',
+          name: 'Monitoring Blind Spot → Persistent Access → Silent Data Loss',
+          impact: 'Undetected Long-Term Breach · Compliance Violation',
+          description: `${monAll.map(c=>c.title).join('; ')} mean that once initial access is achieved, attackers persist and exfiltrate data indefinitely without triggering any alerts or IR workflows.`,
+          controls,
+          affectedResources: resOf('monitoring','incident-response'),
+          nodeIds: ['ec2app','s3data','iam','kms'],
+          edgePairs: [['ec2app','s3data'],['s3data','iam'],['iam','kms']],
+          steps,
+        });
+      }
+
+      return chains.sort((a, b) => b.score - a.score);
     },
 
     heatColor(count, max) {
@@ -2682,12 +3157,44 @@
       }
     },
 
+    // ── Exploit path helpers ──────────────────────────────────────────────
+    isExploitNodeActive(nodeId) {
+      return !!(this.selectedExploitPath && this.selectedExploitPath.nodeIds.includes(nodeId));
+    },
+    isExploitEdgeActive(from, to) {
+      if (!this.selectedExploitPath) return false;
+      return this.selectedExploitPath.edgePairs.some(([f,t]) => f===from && t===to);
+    },
+    epSevColor(sev) {
+      return {critical:'#ef4444',high:'#f97316',medium:'#eab308',low:'#22c55e'}[sev] || '#64748b';
+    },
+    epCritColor(crit) {
+      return {critical:'#ef4444',high:'#f97316',medium:'#eab308',low:'#22c55e'}[crit] || '#64748b';
+    },
+    getExploitEdgePath(fromId, toId) {
+      const pos = {
+        inet:{cx:45,cy:190}, s3pub:{cx:185,cy:80}, alb:{cx:185,cy:190},
+        ec2pub:{cx:185,cy:305}, ec2app:{cx:390,cy:120}, lambda:{cx:390,cy:230},
+        ecs:{cx:390,cy:335}, rds:{cx:600,cy:85}, s3data:{cx:600,cy:195},
+        dynamo:{cx:600,cy:305}, iam:{cx:810,cy:115}, secrets:{cx:810,cy:225}, kms:{cx:810,cy:335}
+      };
+      const n1 = pos[fromId], n2 = pos[toId];
+      if (!n1 || !n2) return '';
+      const dx = n2.cx - n1.cx, dy = n2.cy - n1.cy;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const r = 23;
+      const sx = +(n1.cx + r*dx/len).toFixed(1), sy = +(n1.cy + r*dy/len).toFixed(1);
+      const ex = +(n2.cx - r*dx/len).toFixed(1), ey = +(n2.cy - r*dy/len).toFixed(1);
+      const cdx = Math.max(Math.abs(ex-sx)*0.44, 28);
+      return `M ${sx} ${sy} C ${+(sx+cdx).toFixed(1)} ${sy} ${+(ex-cdx).toFixed(1)} ${ey} ${ex} ${ey}`;
+    },
+
     _applyHash(hash) {
       if (!hash || hash === '#') return;
       const raw = hash.slice(1);
       const qmark = raw.indexOf('?');
       const pageName = qmark === -1 ? raw : raw.slice(0, qmark);
-      const validPages = ['dashboard','controls','findings','compliance','waivers','risk-acceptance','scan','sandbox','regions','changelog','settings'];
+      const validPages = ['dashboard','controls','findings','compliance','waivers','risk-acceptance','scan','sandbox','regions','changelog','settings','exploitpath'];
       if (!validPages.includes(pageName)) return;
       this.page = pageName;
       if (pageName === 'regions') this.$nextTick(() => this.renderWorldMap());
