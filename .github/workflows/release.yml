@@ -22,7 +22,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # ── Compute the next version ───────────────────────────────────────────────
-      # VERSION file contains MAJOR.MINOR (e.g. "0.1").
+      # VERSION file contains MAJOR.MINOR (e.g. "0.3").
       # Patch is derived from the highest existing git tag for that MAJOR.MINOR
       # and incremented by 1.  If no tags exist yet, patch starts at 0.
       - name: Compute version
@@ -49,8 +49,6 @@ jobs:
           echo "tag=${TAG}"   >> $GITHUB_OUTPUT
 
       # ── Bump version in pyproject.toml (build-time only, not committed back) ──
-      # wafpass/__init__.py reads the version from installed package metadata at
-      # runtime, so only pyproject.toml needs to be patched before the build.
       - name: Bump version in pyproject.toml
         run: |
           VER="${{ steps.ver.outputs.full }}"
@@ -68,12 +66,19 @@ jobs:
       - name: Build
         run: python -m build
 
+      # ── Run tests ─────────────────────────────────────────────────────────────
+      - name: Install package + test deps
+        run: pip install ".[dev]"
+
+      - name: Test
+        run: pytest
+
       # ── Tag & publish GitHub release ──────────────────────────────────────────
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name:              ${{ steps.ver.outputs.tag }}
-          name:                  WAF++ PASS ${{ steps.ver.outputs.tag }}
+          name:                  WAF++ PASS (wafpass-core) ${{ steps.ver.outputs.tag }}
           generate_release_notes: true
           files: |
             dist/*.whl

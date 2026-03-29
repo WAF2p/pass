@@ -76,3 +76,4 @@ controls/*.yaml
 /.wafpass-state/runs/
 /tf_report.pdf
 /blast_radius.md
+/serve/last_results.json
