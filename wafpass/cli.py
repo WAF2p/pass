@@ -72,6 +72,13 @@ ui_app = typer.Typer(
 )
 app.add_typer(ui_app, name="ui")
 
+control_app = typer.Typer(
+    name="control",
+    help="Author, validate, and manage WAF++ PASS controls.",
+    add_completion=False,
+)
+app.add_typer(control_app, name="control")
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -1312,3 +1319,208 @@ def ui_stop() -> None:
 
     _pid_file_remove()
     rc.print(f"[green]✓  Server stopped[/green]  (was PID {pid})")
+
+
+# ── wafpass control * ──────────────────────────────────────────────────────────
+
+
+@control_app.command("generate")
+def control_generate(
+    non_interactive: Path = typer.Option(
+        None,
+        "--non-interactive",
+        "-n",
+        help=(
+            "Path to a JSON or YAML spec file.  Skips the interactive wizard — "
+            "validates the spec, exports files, and optionally pushes to the server."
+        ),
+        metavar="SPEC_FILE",
+    ),
+    controls_dir: Path = typer.Option(
+        Path("controls"),
+        "--controls-dir",
+        help="Root controls directory.  Wizard output goes to <controls-dir>/<pillar>/<id>.yml.",
+    ),
+    checkov_dir: Path = typer.Option(
+        Path("checkov_checks"),
+        "--checkov-dir",
+        help="Directory for Checkov Python stubs.  Default: ./checkov_checks/",
+    ),
+    server_url: str = typer.Option(
+        "",
+        "--server-url",
+        help=(
+            "wafpass-server base URL for step 7 push "
+            "(overrides WAFPASS_SERVER_URL env var)."
+        ),
+    ),
+) -> None:
+    """Interactive wizard to author a new WAF++ control (7 steps)."""
+    from wafpass.wizard import run_wizard, run_wizard_non_interactive
+
+    effective_url: str | None = server_url or os.environ.get("WAFPASS_SERVER_URL") or None
+
+    if non_interactive:
+        result = run_wizard_non_interactive(
+            non_interactive,
+            controls_dir=controls_dir,
+            checkov_dir=checkov_dir,
+            server_url=effective_url,
+        )
+    else:
+        result = run_wizard(
+            controls_dir=controls_dir,
+            checkov_dir=checkov_dir,
+            server_url=effective_url,
+        )
+
+    if result is None:
+        raise typer.Exit(code=1)
+
+
+@control_app.command("validate")
+def control_validate(
+    file: Path = typer.Argument(..., help="Path to the YAML control file to validate."),
+) -> None:
+    """Validate a YAML control file against the WizardControl Pydantic schema."""
+    import yaml
+    from pydantic import ValidationError
+    from rich.console import Console
+    from wafpass.control_schema import WizardControl
+
+    rc = Console()
+
+    if not file.exists():
+        rc.print(f"[red]File not found: {file}[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        raw = yaml.safe_load(file.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        rc.print(f"[red]YAML parse error: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    if not isinstance(raw, dict):
+        rc.print("[red]File does not contain a YAML mapping.[/red]")
+        raise typer.Exit(code=1)
+
+    # Strip header comment keys that might appear if file was hand-edited
+    try:
+        control = WizardControl.model_validate(raw)
+    except ValidationError as exc:
+        rc.print(f"[red]Validation failed:[/red] {file}")
+        for e in exc.errors():
+            loc = " → ".join(str(x) for x in e["loc"])
+            rc.print(f"  • [bold]{loc}[/bold]: {e['msg']}")
+        raise typer.Exit(code=1)
+
+    rc.print(f"[green]✓ Valid[/green]  {control.id}  ({control.pillar} / {control.severity})")
+
+
+@control_app.command("list")
+def control_list(
+    controls_dir: Path = typer.Option(
+        Path("controls"),
+        "--controls-dir",
+        help="Root controls directory to scan.",
+    ),
+    pillar: str = typer.Option(
+        "",
+        "--pillar",
+        help="Filter by pillar name.",
+    ),
+) -> None:
+    """List all controls found under the controls directory."""
+    import yaml
+    from rich.console import Console
+    from rich.table import Table
+
+    rc = Console()
+
+    if not controls_dir.exists():
+        rc.print(f"[red]Controls directory not found: {controls_dir}[/red]")
+        raise typer.Exit(code=2)
+
+    yml_files = sorted(controls_dir.rglob("*.yml")) + sorted(controls_dir.rglob("*.yaml"))
+    if not yml_files:
+        rc.print(f"[yellow]No YAML files found in {controls_dir}[/yellow]")
+        return
+
+    table = Table(title=f"WAF++ Controls — {controls_dir}", show_lines=False)
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Pillar", style="magenta")
+    table.add_column("Severity", style="bold")
+    table.add_column("Description")
+
+    count = 0
+    for yml_path in yml_files:
+        try:
+            raw = yaml.safe_load(yml_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(raw, dict):
+            continue
+
+        ctrl_id = str(raw.get("id", yml_path.stem))
+        ctrl_pillar = str(raw.get("pillar", ""))
+        ctrl_severity = str(raw.get("severity", ""))
+        ctrl_desc = str(raw.get("description", "")).strip().split("\n")[0][:80]
+
+        if pillar and ctrl_pillar.lower() != pillar.lower():
+            continue
+
+        sev_color = {
+            "critical": "red",
+            "high": "orange3",
+            "medium": "yellow",
+            "low": "green",
+        }.get(ctrl_severity.lower(), "white")
+        table.add_row(
+            ctrl_id,
+            ctrl_pillar,
+            f"[{sev_color}]{ctrl_severity}[/{sev_color}]",
+            ctrl_desc,
+        )
+        count += 1
+
+    rc.print(table)
+    rc.print(f"[dim]{count} control(s) found[/dim]")
+
+
+@control_app.command("show")
+def control_show(
+    control_id: str = typer.Argument(..., help="Control ID to display (e.g. SOV-011)."),
+    controls_dir: Path = typer.Option(
+        Path("controls"),
+        "--controls-dir",
+        help="Root controls directory to search.",
+    ),
+) -> None:
+    """Print a control by ID."""
+    import yaml
+    from rich.console import Console
+    from rich.syntax import Syntax
+
+    rc = Console()
+
+    if not controls_dir.exists():
+        rc.print(f"[red]Controls directory not found: {controls_dir}[/red]")
+        raise typer.Exit(code=2)
+
+    target_id = control_id.strip().upper()
+    for yml_path in sorted(controls_dir.rglob("*.yml")) + sorted(controls_dir.rglob("*.yaml")):
+        # Fast check on filename stem before loading
+        if yml_path.stem.upper() == target_id:
+            rc.print(Syntax(yml_path.read_text(encoding="utf-8"), "yaml", theme="monokai"))
+            return
+        # Slower: check id field inside file
+        try:
+            raw = yaml.safe_load(yml_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(raw, dict) and str(raw.get("id", "")).upper() == target_id:
+            rc.print(Syntax(yml_path.read_text(encoding="utf-8"), "yaml", theme="monokai"))
+            return
+
+    rc.print(f"[red]Control not found:[/red] {control_id}")
+    raise typer.Exit(code=1)
