@@ -8,7 +8,10 @@ version = "0.3.0"
 description = "WAF++ PASS – IaC compliance engine, CLI, and result schema for the WAF++ framework"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+]
 dependencies = [
     "python-hcl2>=4.3",
     "pyyaml>=6.0",
