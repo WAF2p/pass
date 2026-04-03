@@ -12,6 +12,7 @@ jobs:
     # Needed to create tags and publish the release.
     permissions:
       contents: write
+      id-token: write   # required for PyPI trusted publishing (OIDC)
 
     steps:
       # ── Checkout ──────────────────────────────────────────────────────────────
@@ -72,6 +73,10 @@ jobs:
 
       - name: Test
         run: pytest
+
+      # ── Publish to PyPI (trusted publishing / OIDC) ───────────────────────────
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
       # ── Tag & publish GitHub release ──────────────────────────────────────────
       - name: Create GitHub release
