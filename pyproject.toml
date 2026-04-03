@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wafpass-core"
-version = "0.3.0"
+version = "0.4.0"
 description = "WAF++ PASS – IaC compliance engine, CLI, and result schema for the WAF++ framework"
 readme = "README.md"
 requires-python = ">=3.11"
