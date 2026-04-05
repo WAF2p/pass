@@ -551,7 +551,7 @@ def check(
         print_summary_only(report)
     elif output == "json":
         import json as _json
-        from wafpass.schema import ControlCheckMetaSchema, ControlMetaSchema, FindingSchema, WafpassResultSchema
+        from wafpass.schema import ControlCheckMetaSchema, ControlMetaSchema, FindingSchema, SecretFindingSchema, WafpassResultSchema
 
         # Auto-detect git metadata when flags are not provided
         def _git(cmd: list[str]) -> str:
@@ -661,6 +661,18 @@ def check(
             except Exception as exc:
                 typer.echo(f"WARNING: Could not parse --plan-file '{plan_file}': {exc}", err=True)
 
+        _secret_schema_findings = [
+            SecretFindingSchema(
+                file=str(_sf.file),
+                line_no=_sf.line_no,
+                pattern_name=_sf.pattern_name,
+                severity=_sf.severity,
+                matched_key=_sf.matched_key,
+                masked_value=_sf.masked_value,
+            )
+            for _sf in (_secret_findings or [])
+        ]
+
         _result = WafpassResultSchema(
             project=project,
             branch=_branch,
@@ -676,6 +688,7 @@ def check(
             source_paths=report.source_paths,
             controls_meta=_controls_meta,
             findings=_findings,
+            secret_findings=_secret_schema_findings,
             plan_changes=_plan_changes,
         )
 
