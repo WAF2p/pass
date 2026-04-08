@@ -51,6 +51,22 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class SecretFindingSchema(BaseModel):
+    """A single hardcoded-secret finding from the WAF++ secret scanner.
+
+    Note: ``raw_value`` is intentionally excluded — only the masked form is
+    persisted so the server never stores live credential material.
+    """
+
+    file: str           # relative path to the source file
+    line_no: int        # 1-based line number
+    pattern_name: str   # human-readable label, e.g. "Hardcoded password"
+    severity: str       # critical | high
+    matched_key: str    # attribute name, e.g. "password" (empty for format patterns)
+    masked_value: str   # first 4 chars + *** — never the full value
+    suppressed: bool = False
+
+
 class FindingSchema(BaseModel):
     """A single check result (one check × one resource)."""
 
@@ -148,6 +164,15 @@ class WafpassResultSchema(BaseModel):
 
     # ── Findings ──────────────────────────────────────────────────────────────
     findings: list[FindingSchema] = Field(default_factory=list)
+
+    # ── Secret scanner findings (optional, populated when --no-secrets is NOT set) ──
+    secret_findings: list[SecretFindingSchema] = Field(
+        default_factory=list,
+        description=(
+            "Hardcoded-secret findings from the WAF++ regex secret scanner. "
+            "Only masked values are stored — raw credential material is never persisted."
+        ),
+    )
 
     # ── Terraform plan changes (optional, populated via --plan-file) ──────────
     plan_changes: dict[str, Any] | None = Field(

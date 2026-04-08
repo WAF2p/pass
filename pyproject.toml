@@ -4,11 +4,33 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wafpass-core"
-version = "0.3.0"
+version = "0.4.0"
 description = "WAF++ PASS – IaC compliance engine, CLI, and result schema for the WAF++ framework"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Artem Lajko" },
+    { name = "Sascha Lewandowski" },
+    { name = "Sebastian Meyer" },
+    { name = "Tim Urlaub" },
+]
+keywords = [
+    "waf++", "iac", "terraform", "compliance", "security", "cloud",
+    "devsecops", "static-analysis", "governance", "multi-cloud",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "python-hcl2>=4.3",
     "pyyaml>=6.0",
@@ -16,6 +38,13 @@ dependencies = [
     "typer>=0.12",
     "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://waf2p.dev"
+Documentation = "https://waf2p.dev/docs/"
+Repository = "https://github.com/WAF2p/pass"
+"Bug Tracker" = "https://github.com/WAF2p/pass/issues"
+Community = "https://github.com/WAF2p"
 
 [project.scripts]
 wafpass = "wafpass.cli:app"
