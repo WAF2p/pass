@@ -80,6 +80,9 @@ def _parse_structured(data: dict[str, Any]) -> dict[str, Any]:
             "name":           rc.get("name", ""),
             "provider":       _provider_short(rc.get("provider_name", "")),
             "action":         action,
+            "before":         change.get("before"),
+            "after":          change.get("after"),
+            "after_unknown":  change.get("after_unknown"),
         }
         changes.append(entry)
 
