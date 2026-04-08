@@ -26,7 +26,7 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 try:
     __version__ = _pkg_version("wafpass-core")
 except PackageNotFoundError:
-    __version__ = "0.3.0-dev"
+    __version__ = "0.4.0"
 
 __name_full__ = "WAF++ PASS"
 
