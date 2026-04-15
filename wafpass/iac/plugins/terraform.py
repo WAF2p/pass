@@ -61,6 +61,31 @@ def _region_from_string(val: str) -> str | None:
     return m.group(1) if m else None
 
 
+# ── HCL2 compatibility helpers ───────────────────────────────────────────────
+
+def _unquote(s: object) -> object:
+    """Strip surrounding quotes that hcl2 v8+ wraps around identifier keys.
+
+    hcl2 >= 8.0 returns block-label keys (resource types, resource names,
+    provider names, etc.) as quoted strings, e.g. ``'"aws_instance"'``.
+    This helper normalises them back to bare identifiers.
+    """
+    if isinstance(s, str) and len(s) >= 2 and s[0] in ('"', "'") and s[-1] == s[0]:
+        return s[1:-1]
+    return s
+
+
+def _unquote_attrs(val: object) -> object:
+    """Recursively strip hcl2 v8+ quote-wrapping from attribute values."""
+    if isinstance(val, str):
+        return _unquote(val)
+    if isinstance(val, dict):
+        return {_unquote(k): _unquote_attrs(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_unquote_attrs(item) for item in val]
+    return val
+
+
 # ── HCL2 block parsers ────────────────────────────────────────────────────────
 
 def _parse_resource_blocks(raw_list: list, state: IaCState) -> None:
@@ -72,10 +97,12 @@ def _parse_resource_blocks(raw_list: list, state: IaCState) -> None:
         if not isinstance(item, dict):
             continue
         for resource_type, names_dict in item.items():
+            resource_type = _unquote(resource_type)
             if not isinstance(names_dict, dict):
                 continue
             for resource_name, attrs_raw in names_dict.items():
-                attrs = attrs_raw if isinstance(attrs_raw, dict) else {}
+                resource_name = _unquote(resource_name)
+                attrs = _unquote_attrs(attrs_raw) if isinstance(attrs_raw, dict) else {}
                 state.resources.append(IaCBlock(
                     block_type="resource",
                     type=resource_type,
@@ -95,7 +122,8 @@ def _parse_provider_blocks(raw_list: list, state: IaCState) -> None:
         if not isinstance(item, dict):
             continue
         for provider_name, attrs_raw in item.items():
-            attrs = attrs_raw if isinstance(attrs_raw, dict) else {}
+            provider_name = _unquote(provider_name)
+            attrs = _unquote_attrs(attrs_raw) if isinstance(attrs_raw, dict) else {}
             state.providers.append(IaCBlock(
                 block_type="provider",
                 type=provider_name,
@@ -115,7 +143,8 @@ def _parse_variable_blocks(raw_list: list, state: IaCState) -> None:
         if not isinstance(item, dict):
             continue
         for var_name, attrs_raw in item.items():
-            attrs = attrs_raw if isinstance(attrs_raw, dict) else {}
+            var_name = _unquote(var_name)
+            attrs = _unquote_attrs(attrs_raw) if isinstance(attrs_raw, dict) else {}
             state.variables.append(IaCBlock(
                 block_type="variable",
                 type=var_name,
@@ -135,7 +164,8 @@ def _parse_module_blocks(raw_list: list, state: IaCState) -> None:
         if not isinstance(item, dict):
             continue
         for mod_name, attrs_raw in item.items():
-            attrs = attrs_raw if isinstance(attrs_raw, dict) else {}
+            mod_name = _unquote(mod_name)
+            attrs = _unquote_attrs(attrs_raw) if isinstance(attrs_raw, dict) else {}
             state.modules.append(IaCBlock(
                 block_type="module",
                 type=mod_name,
@@ -152,7 +182,7 @@ def _parse_terraform_config_blocks(raw_list: list, state: IaCState) -> None:
     HCL2 format: ``[{...attrs...}]``
     """
     for item in raw_list:
-        attrs = item if isinstance(item, dict) else {}
+        attrs = _unquote_attrs(item) if isinstance(item, dict) else {}
         state.config_blocks.append(IaCBlock(
             block_type="terraform",
             type="terraform",
