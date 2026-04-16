@@ -73,7 +73,7 @@ print(result.score)                        # overall compliance score (0–100)
 print(result.pillar_scores)                # {"SEC": 90, "OPS": 75, ...}
 print(result.model_dump_json(indent=2))    # wafpass-result.json payload
 
-# Post to wafpass-server
+# Post to wafpass-server (or set WAFPASS_SERVER_URL=http://localhost:8000/runs to push automatically)
 import httpx
 httpx.post("http://localhost:8000/runs", content=result.model_dump_json(),
            headers={"Content-Type": "application/json"})
