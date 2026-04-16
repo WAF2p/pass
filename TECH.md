@@ -214,6 +214,25 @@ Controls with no `automated: true` checks are still returned by `load_controls()
 
 ---
 
+## Environment variables
+
+`wafpass-core` is stateless and works fully offline without any environment configuration. All variables are optional.
+
+Copy `.env.example` to `.env` and source it (or use direnv) to avoid passing flags on every invocation:
+
+```bash
+cp .env.example .env
+export $(grep -v '^#' .env | xargs)
+```
+
+| Variable | Description |
+|----------|-------------|
+| `WAFPASS_SERVER_URL` | Auto-POST results to wafpass-server after every `wafpass check` run. Equivalent to `--push <url>`. Must include the `/runs` path: `http://localhost:8000/runs`. |
+| `${*}` in `.wafpass-export.yml` | Any `${VAR}` placeholder in export config is expanded from the environment at load time. See `.env.example` for common export plugin secrets. |
+| `EDITOR` | Editor launched by `wafpass wizard` for interactive control authoring. Falls back to `vi` if unset. |
+
+---
+
 ## Release process
 
 1. Bump `VERSION` file and `pyproject.toml` `version` field
