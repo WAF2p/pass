@@ -34,7 +34,7 @@ def generate_run_id() -> str:
     return f"{ts}-{suffix}"
 
 
-def build_run_snapshot(report, run_id: str, iac_plugin: str) -> dict:
+def build_run_snapshot(report, run_id: str, iac_plugin: str, stage: str = "") -> dict:
     """Build a full JSON-serialisable run snapshot from a Report object.
 
     The snapshot is the unit of persistence — one file per run.
@@ -81,6 +81,7 @@ def build_run_snapshot(report, run_id: str, iac_plugin: str) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tool_version": __version__,
         "iac_plugin": iac_plugin,
+        "stage": stage,
         "source_paths": report.source_paths,
         "detected_regions": [
             {"region": r, "provider": p} for r, p in report.detected_regions
@@ -190,6 +191,7 @@ def save_run(snapshot: dict, state_dir: Path) -> Path:
         "generated_at": snapshot["generated_at"],
         "tool_version": snapshot["tool_version"],
         "iac_plugin": snapshot["iac_plugin"],
+        "stage": snapshot.get("stage", ""),
         "score": snapshot["score"],
         "totals": snapshot["totals"],
         "file": run_file.name,

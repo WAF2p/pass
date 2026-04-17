@@ -133,6 +133,10 @@ class WafpassResultSchema(BaseModel):
         default="terraform",
         description="IaC framework scanned: terraform | cdk | bicep | pulumi | …",
     )
+    stage: str = Field(
+        default="",
+        description="Deployment stage this run was executed against, e.g. dev | staging | prod.",
+    )
 
     # ── Aggregate scores ──────────────────────────────────────────────────────
     score: int = Field(

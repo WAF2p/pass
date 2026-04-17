@@ -184,6 +184,11 @@ def check(
         "--triggered-by",
         help="Trigger source: local, github-actions, gitlab-ci, … (auto-detected if not set).",
     ),
+    stage: str = typer.Option(
+        "",
+        "--stage",
+        help="Deployment stage this run targets, e.g. dev, staging, prod.",
+    ),
     pdf_out: Path = typer.Option(
         None,
         "--pdf-out",
@@ -480,7 +485,7 @@ def check(
         )
 
         run_id = generate_run_id()
-        snapshot = build_run_snapshot(report, run_id=run_id, iac_plugin=iac.lower())
+        snapshot = build_run_snapshot(report, run_id=run_id, iac_plugin=iac.lower(), stage=stage)
 
         previous_run = load_latest_run(state_dir)
         if previous_run is not None:
@@ -679,6 +684,7 @@ def check(
             git_sha=_sha,
             triggered_by=_triggered,
             iac_framework=iac.lower(),
+            stage=stage,
             score=_score,
             pillar_scores=_pillar_scores,
             path=report.path,
@@ -698,13 +704,6 @@ def check(
         if push:
             try:
                 import httpx as _httpx
-            except ImportError:
-                typer.echo(
-                    "ERROR: --push requires 'httpx'. Install with: pip install httpx",
-                    err=True,
-                )
-                raise typer.Exit(code=2)
-            try:
                 _resp = _httpx.post(
                     push,
                     content=_json_str,
