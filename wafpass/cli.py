@@ -164,6 +164,15 @@ def check(
             "Requires 'httpx': pip install httpx."
         ),
     ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="WAFPASS_API_KEY",
+        help=(
+            "API key sent as 'X-Api-Key' header when using --push. "
+            "Can also be set via the WAFPASS_API_KEY environment variable."
+        ),
+    ),
     project: str = typer.Option(
         "",
         "--project",
@@ -704,10 +713,13 @@ def check(
         if push:
             try:
                 import httpx as _httpx
+                _push_headers: dict[str, str] = {"Content-Type": "application/json"}
+                if api_key:
+                    _push_headers["X-Api-Key"] = api_key
                 _resp = _httpx.post(
                     push,
                     content=_json_str,
-                    headers={"Content-Type": "application/json"},
+                    headers=_push_headers,
                     timeout=30,
                 )
                 _resp.raise_for_status()
