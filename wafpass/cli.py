@@ -159,9 +159,9 @@ def check(
         None,
         "--push",
         help=(
-            "POST the result as wafpass-result.json to this URL "
-            "(e.g. http://localhost:8000/runs). "
-            "Requires 'httpx': pip install httpx."
+            "POST the result to this URL (e.g. http://localhost:8000/runs). "
+            "Pass [bold]@[/bold] to push to the server from 'wafpass login' using your stored token. "
+            "Requires --output json."
         ),
     ),
     api_key: str | None = typer.Option(
@@ -170,6 +170,7 @@ def check(
         envvar="WAFPASS_API_KEY",
         help=(
             "API key sent as 'X-Api-Key' header when using --push. "
+            "Not needed after 'wafpass login' — Bearer token is used automatically. "
             "Can also be set via the WAFPASS_API_KEY environment variable."
         ),
     ),
@@ -713,17 +714,43 @@ def check(
         if push:
             try:
                 import httpx as _httpx
-                _push_headers: dict[str, str] = {"Content-Type": "application/json"}
+                from wafpass.auth import resolve_push_target, get_valid_credentials
+
+                _push_url, _auto_headers = resolve_push_target(push)
+
+                if push == "@" and _push_url is None:
+                    typer.echo(
+                        "ERROR: --push @ requires an active login session. "
+                        "Run 'wafpass login <server-url>' first.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+
+                _push_headers: dict[str, str] = {
+                    "Content-Type": "application/json",
+                    **_auto_headers,
+                }
+                # Explicit --api-key always wins over the stored Bearer token
                 if api_key:
+                    _push_headers.pop("Authorization", None)
                     _push_headers["X-Api-Key"] = api_key
+
                 _resp = _httpx.post(
-                    push,
+                    _push_url,
                     content=_json_str,
                     headers=_push_headers,
                     timeout=30,
                 )
+                if _resp.status_code == 401:
+                    # Token may have just expired — try one refresh and retry
+                    _creds = get_valid_credentials()
+                    if _creds and not api_key:
+                        _push_headers["Authorization"] = _creds.bearer()
+                        _resp = _httpx.post(_push_url, content=_json_str, headers=_push_headers, timeout=30)
                 _resp.raise_for_status()
-                typer.echo(f"Pushed to {push}  →  HTTP {_resp.status_code}", err=True)
+                typer.echo(f"Pushed to {_push_url}  →  HTTP {_resp.status_code}", err=True)
+            except SystemExit:
+                raise
             except Exception as exc:
                 typer.echo(f"ERROR: Push to '{push}' failed: {exc}", err=True)
                 raise typer.Exit(code=2)
@@ -734,9 +761,10 @@ def check(
 
     # ── Push for non-JSON output modes (--push without --output json) ──────────
     if push and output != "json":
+        _push_hint = push if push != "@" else "@ (stored server)"
         typer.echo(
-            "NOTE: --push only works with --output json. "
-            "Re-run with --output json --push <url>.",
+            f"NOTE: --push only works with --output json. "
+            f"Re-run with --output json --push {_push_hint}.",
             err=True,
         )
 
@@ -1548,3 +1576,174 @@ def control_show(
 
     rc.print(f"[red]Control not found:[/red] {control_id}")
     raise typer.Exit(code=1)
+
+
+# ── wafpass login / logout / whoami ───────────────────────────────────────────
+
+
+@app.command("login")
+def cmd_login(
+    server_url: str = typer.Argument(
+        ...,
+        help="Base URL of the wafpass-server, e.g. https://wafpass.example.com or http://localhost:8000.",
+    ),
+    username: str = typer.Option(
+        None,
+        "--username",
+        "-u",
+        help="Username (prompted if not given).",
+    ),
+    no_verify: bool = typer.Option(
+        False,
+        "--no-verify",
+        help="Disable TLS certificate verification (insecure — development only).",
+    ),
+) -> None:
+    """Authenticate with a wafpass-server and store a session token.
+
+    Your password is never written to disk — only the issued JWT token is saved
+    to ~/.wafpass/credentials.json (chmod 600).
+
+    After login you can push scan results without --api-key:
+
+    \b
+        wafpass check ./infra --output json --push @
+        wafpass check ./infra --output json --push http://my-server:8000/runs
+    """
+    from rich.console import Console
+    from rich.prompt import Prompt
+    import httpx as _httpx
+    from wafpass.auth import do_login, _CREDS_FILE
+
+    rc = Console()
+
+    # Normalise URL — strip trailing slash, add scheme if bare hostname given
+    _url = server_url.rstrip("/")
+    if not _url.startswith(("http://", "https://")):
+        _url = f"https://{_url}"
+
+    # Quick reachability check
+    try:
+        _health_resp = _httpx.get(
+            f"{_url}/health",
+            timeout=8,
+            verify=not no_verify,
+            follow_redirects=True,
+        )
+        if _health_resp.status_code not in (200, 404):
+            rc.print(f"[yellow]Warning: /health returned HTTP {_health_resp.status_code} — check URL.[/yellow]")
+    except _httpx.ConnectError:
+        rc.print(f"[red]Cannot reach {_url} — check the URL and network connectivity.[/red]")
+        raise typer.Exit(code=1)
+    except Exception:
+        pass  # Non-fatal — proceed to login
+
+    if not username:
+        username = Prompt.ask("[bold]Username[/bold]")
+    password = Prompt.ask("[bold]Password[/bold]", password=True)
+
+    rc.print(f"  Authenticating with [cyan]{_url}[/cyan]…")
+
+    try:
+        from wafpass.auth import do_login as _do_login
+        creds = _do_login(_url, username, password)
+    except _httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            rc.print("[red]Login failed: invalid username or password.[/red]")
+        elif exc.response.status_code == 403:
+            rc.print("[red]Login failed: account is disabled.[/red]")
+        else:
+            rc.print(f"[red]Login failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Login failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    # Friendly expiry display
+    from datetime import datetime, timezone
+    try:
+        exp = datetime.fromisoformat(creds.expires_at)
+        _exp_str = exp.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        _exp_str = creds.expires_at
+
+    rc.print(f"[green]✓  Logged in[/green] as [bold]{creds.username}[/bold] ([cyan]{creds.role}[/cyan])")
+    rc.print(f"   Server   : {creds.server_url}")
+    rc.print(f"   Token    : valid until {_exp_str}  [dim](auto-refreshed via refresh token)[/dim]")
+    rc.print(f"   Stored   : {_CREDS_FILE}")
+    rc.print()
+    rc.print("  Push scan results using [bold]--push @[/bold] to use this server automatically:")
+    rc.print(f"  [dim]wafpass check ./infra --output json --push @[/dim]")
+
+
+@app.command("logout")
+def cmd_logout() -> None:
+    """Revoke the stored session and remove local credentials.
+
+    The refresh token is invalidated on the server so the session cannot be
+    silently extended after logout.
+    """
+    from rich.console import Console
+    from wafpass.auth import load, do_logout, clear
+
+    rc = Console()
+    creds = load()
+    if creds is None:
+        rc.print("[yellow]Not logged in — nothing to do.[/yellow]")
+        return
+
+    rc.print(f"  Revoking session for [bold]{creds.username}[/bold] on {creds.server_url}…")
+    do_logout(creds)
+    clear()
+    rc.print("[green]✓  Logged out[/green] — local credentials removed.")
+
+
+@app.command("whoami")
+def cmd_whoami() -> None:
+    """Show the currently stored login session."""
+    from rich.console import Console
+    from rich.table import Table
+    from datetime import datetime, timezone
+    from wafpass.auth import get_valid_credentials, load
+
+    rc = Console()
+    raw = load()
+    if raw is None:
+        rc.print("[yellow]Not logged in.[/yellow]  Run [bold]wafpass login <server-url>[/bold] first.")
+        raise typer.Exit(code=1)
+
+    creds = get_valid_credentials()
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+
+    table.add_row("Server",   raw.server_url)
+    table.add_row("Username", f"[bold]{raw.username}[/bold]")
+    table.add_row("Role",     f"[cyan]{raw.role}[/cyan]")
+
+    try:
+        exp = datetime.fromisoformat(raw.expires_at)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = exp - now
+        if delta.total_seconds() < 0:
+            _exp_label = f"[red]expired {abs(int(delta.total_seconds() // 60))} min ago[/red]"
+        elif delta.total_seconds() < 300:
+            _exp_label = f"[yellow]expires in {int(delta.total_seconds())}s (refreshing…)[/yellow]"
+        else:
+            _exp_label = f"[green]valid for {int(delta.total_seconds() // 60)} min[/green]  ({exp.strftime('%Y-%m-%d %H:%M UTC')})"
+    except Exception:
+        _exp_label = raw.expires_at
+
+    table.add_row("Token",    _exp_label)
+
+    if creds is None:
+        table.add_row("Session", "[red]Refresh failed — run 'wafpass login' again.[/red]")
+    elif creds.access_token != raw.access_token:
+        table.add_row("Session", "[green]Auto-refreshed ✓[/green]")
+
+    rc.print(table)
+    rc.print()
+    rc.print("  Use [bold]--push @[/bold] to push scan results to this server.")
