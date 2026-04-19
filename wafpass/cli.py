@@ -1747,3 +1747,309 @@ def cmd_whoami() -> None:
     rc.print(table)
     rc.print()
     rc.print("  Use [bold]--push @[/bold] to push scan results to this server.")
+
+
+# ── wafpass evidence ───────────────────────────────────────────────────────────
+
+evidence_app = typer.Typer(
+    name="evidence",
+    help="Manage locked, immutable evidence packages on a wafpass-server.",
+    add_completion=False,
+)
+app.add_typer(evidence_app, name="evidence")
+
+
+def _require_creds():
+    """Return valid credentials or exit with a helpful message."""
+    from wafpass.auth import get_valid_credentials
+    from rich.console import Console
+    creds = get_valid_credentials()
+    if creds is None:
+        Console().print(
+            "[red]Not logged in.[/red]  Run [bold]wafpass login <server-url>[/bold] first."
+        )
+        raise typer.Exit(code=1)
+    return creds
+
+
+@evidence_app.command("lock")
+def evidence_lock(
+    run_id: str = typer.Option(
+        None,
+        "--run-id",
+        help="UUID of the run to lock as evidence (required).",
+    ),
+    title: str = typer.Option(
+        "",
+        "--title",
+        help="Evidence package title (auto-generated from run if omitted).",
+    ),
+    note: str = typer.Option(
+        "",
+        "--note",
+        help="Auditor-facing note to embed in the evidence package.",
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Project name tag.",
+    ),
+    prepared_by: str = typer.Option(
+        "",
+        "--prepared-by",
+        help="Name of the person preparing this evidence package.",
+    ),
+    organization: str = typer.Option(
+        "",
+        "--organization",
+        help="Organization name for the evidence package.",
+    ),
+    audit_period: str = typer.Option(
+        "",
+        "--audit-period",
+        help="Audit period description, e.g. 'Q1 2026'.",
+    ),
+    frameworks: str = typer.Option(
+        "",
+        "--frameworks",
+        help="Comma-separated compliance frameworks, e.g. 'ISO 27001,SOC 2'.",
+    ),
+) -> None:
+    """Lock a server-side run as an immutable evidence package.
+
+    Requires an active login session (run 'wafpass login <url>' first).
+
+    \b
+    Example:
+        wafpass evidence lock --run-id <uuid> --title "Q1 2026 Audit"
+    """
+    import httpx as _httpx
+    from rich.console import Console
+
+    rc = Console()
+
+    if not run_id:
+        rc.print("[red]--run-id is required.[/red]")
+        raise typer.Exit(code=2)
+
+    creds = _require_creds()
+
+    _frameworks = [f.strip() for f in frameworks.split(",") if f.strip()] if frameworks else []
+
+    payload: dict = {
+        "run_id": run_id,
+        "snapshot": {},  # server will load the run's stored data
+    }
+    if title:
+        payload["title"] = title
+    if note:
+        payload["note"] = note
+    if project:
+        payload["project"] = project
+    if prepared_by:
+        payload["prepared_by"] = prepared_by
+    if organization:
+        payload["organization"] = organization
+    if audit_period:
+        payload["audit_period"] = audit_period
+    if _frameworks:
+        payload["frameworks"] = _frameworks
+
+    url = f"{creds.server_url}/evidence"
+    headers = {"Content-Type": "application/json", "Authorization": creds.bearer()}
+
+    rc.print(f"  Locking run [cyan]{run_id}[/cyan] as evidence…")
+
+    try:
+        resp = _httpx.post(url, json=payload, headers=headers, timeout=30)
+        if resp.status_code == 401:
+            creds = _require_creds()
+            headers["Authorization"] = creds.bearer()
+            resp = _httpx.post(url, json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        _body = ""
+        try:
+            _body = exc.response.json().get("detail", "")
+        except Exception:
+            pass
+        rc.print(f"[red]Lock failed: HTTP {exc.response.status_code}[/red]  {_body}")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Lock failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    ev = resp.json()
+    public_url = f"{creds.server_url}/evidence/p/{ev['public_token']}"
+
+    rc.print(f"[green]✓  Evidence locked[/green]")
+    rc.print(f"   ID           : [bold]{ev['id']}[/bold]")
+    rc.print(f"   Title        : {ev.get('title', '—')}")
+    rc.print(f"   SHA-256      : [dim]{ev.get('hash_digest', '—')}[/dim]")
+    rc.print(f"   Public URL   : [cyan]{public_url}[/cyan]")
+    rc.print(f"   Created      : {ev.get('created_at', '—')}")
+    rc.print()
+    rc.print("  Share the public URL with auditors — no login required.")
+    rc.print(f"  [dim]wafpass evidence show {ev['id']}[/dim]  for full details.")
+
+
+@evidence_app.command("list")
+def evidence_list(
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Filter by project name.",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="Maximum number of packages to show (default: 20).",
+    ),
+) -> None:
+    """List locked evidence packages on the connected server."""
+    import httpx as _httpx
+    from rich.console import Console
+    from rich.table import Table
+
+    rc = Console()
+    creds = _require_creds()
+
+    params: dict = {}
+    if project:
+        params["project"] = project
+
+    url = f"{creds.server_url}/evidence"
+    headers = {"Authorization": creds.bearer()}
+
+    try:
+        resp = _httpx.get(url, params=params, headers=headers, timeout=15)
+        if resp.status_code == 401:
+            creds = _require_creds()
+            headers["Authorization"] = creds.bearer()
+            resp = _httpx.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        rc.print(f"[red]Request failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Request failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    packages = resp.json()
+    if not packages:
+        rc.print("[yellow]No evidence packages found.[/yellow]")
+        return
+
+    packages = packages[:limit]
+
+    tbl = Table(
+        title=f"Evidence Packages — {creds.server_url}",
+        show_lines=False,
+        header_style="bold white on dark_blue",
+    )
+    tbl.add_column("ID", style="dim", no_wrap=True, max_width=12)
+    tbl.add_column("Title", style="bold white")
+    tbl.add_column("Project", style="cyan")
+    tbl.add_column("Run ID", style="dim", max_width=12)
+    tbl.add_column("Created", style="dim", no_wrap=True)
+    tbl.add_column("SHA-256", style="dim", max_width=16)
+
+    for ev in packages:
+        _id = str(ev.get("id", ""))[:8] + "…"
+        _run = str(ev.get("run_id", ""))[:8] + "…"
+        _hash = str(ev.get("hash_digest", ""))[:14] + "…"
+        _created = str(ev.get("created_at", ""))[:16]
+        tbl.add_row(
+            _id,
+            ev.get("title") or "—",
+            ev.get("project") or "—",
+            _run,
+            _created,
+            _hash,
+        )
+
+    rc.print(tbl)
+    rc.print(f"[dim]{len(packages)} package(s) shown[/dim]")
+
+
+@evidence_app.command("show")
+def evidence_show(
+    evidence_id: str = typer.Argument(
+        ...,
+        help="Evidence package UUID to display.",
+    ),
+    show_hash: bool = typer.Option(
+        False,
+        "--hash",
+        is_flag=True,
+        help="Print only the SHA-256 hash digest (useful for scripting / verification).",
+    ),
+) -> None:
+    """Show details of a locked evidence package."""
+    import httpx as _httpx
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    rc = Console()
+    creds = _require_creds()
+
+    url = f"{creds.server_url}/evidence/{evidence_id}"
+    headers = {"Authorization": creds.bearer()}
+
+    try:
+        resp = _httpx.get(url, headers=headers, timeout=15)
+        if resp.status_code == 401:
+            creds = _require_creds()
+            headers["Authorization"] = creds.bearer()
+            resp = _httpx.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            rc.print(f"[red]Evidence package not found:[/red] {evidence_id}")
+        else:
+            rc.print(f"[red]Request failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Request failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    ev = resp.json()
+
+    if show_hash:
+        rc.print(ev.get("hash_digest", ""))
+        return
+
+    public_url = f"{creds.server_url}/evidence/p/{ev['public_token']}"
+
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style="dim", justify="right")
+    tbl.add_column()
+
+    tbl.add_row("Evidence ID",  f"[bold]{ev.get('id', '—')}[/bold]")
+    tbl.add_row("Title",        ev.get("title") or "—")
+    tbl.add_row("Note",         ev.get("note") or "—")
+    tbl.add_row("Project",      ev.get("project") or "—")
+    tbl.add_row("Prepared by",  ev.get("prepared_by") or "—")
+    tbl.add_row("Organization", ev.get("organization") or "—")
+    tbl.add_row("Audit period", ev.get("audit_period") or "—")
+    _fw = ", ".join(ev.get("frameworks") or []) or "—"
+    tbl.add_row("Frameworks",   _fw)
+    tbl.add_row("Run ID",       ev.get("run_id") or "—")
+    tbl.add_row("Locked by",    str(ev.get("locked_by") or "—"))
+    tbl.add_row("Created",      str(ev.get("created_at") or "—"))
+    tbl.add_row("SHA-256",      f"[dim]{ev.get('hash_digest', '—')}[/dim]")
+    tbl.add_row("Public URL",   f"[cyan]{public_url}[/cyan]")
+
+    rc.print(Panel(
+        tbl,
+        title=f"[bold white]Evidence Package[/bold white]  [dim]{str(ev.get('id', ''))[:8]}…[/dim]",
+        border_style="cyan",
+        padding=(1, 2),
+    ))
+    rc.print()
+    rc.print("  [dim]Download report:[/dim]  "
+             f"[dim]{creds.server_url}/evidence/{evidence_id}/report.html[/dim]")
+    rc.print("  [dim]Share with auditor:[/dim]  "
+             f"[cyan]{public_url}[/cyan]")
