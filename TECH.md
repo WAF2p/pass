@@ -39,6 +39,10 @@ pass/
 │   │       └── pulumi.py    # Pulumi YAML/JSON parser
 │   └── export/              # Export formatters (JSON, CSV, …)
 ├── controls/                # 73 WAF++ control YAML files (WAF-*.yml)
+├── hooks/
+│   ├── pre-commit           # Pre-commit hook script (bash, POSIX-compatible)
+│   ├── install.sh           # Installer for macOS / Linux / Git Bash
+│   └── install.ps1          # Installer for Windows PowerShell
 ├── tests/
 └── pyproject.toml
 ```
@@ -182,6 +186,73 @@ Nine assertion operators are declared in control YAMLs but not implemented in `e
 | Pulumi | Stub | YAML/JSON config, limited assertion coverage |
 
 CDK, Bicep, and Pulumi plugins are functional but have significantly less assertion operator coverage than the Terraform plugin, because the 73 controls were primarily written and tested against Terraform.
+
+---
+
+## Git hooks
+
+The `hooks/` directory contains a pre-commit hook that runs `wafpass check` against staged IaC files before every commit.  It is committed to the repository so the whole team can install it from source with a single command.
+
+### Installation
+
+```bash
+# macOS / Linux / Git Bash
+bash hooks/install.sh
+
+# Windows PowerShell
+.\hooks\install.ps1
+```
+
+The installer symlinks `hooks/pre-commit` into `.git/hooks/pre-commit` (Unix) or copies it (Windows).  A symlink means updates to `hooks/pre-commit` take effect immediately without re-running the installer.
+
+### What the hook does
+
+On every `git commit` the hook:
+
+1. Augments `PATH` with common Python tool locations (`~/.local/bin`, Homebrew, `.venv/bin`, pyenv shims) so the script works in IDE-launched git environments where PATH is restricted.
+2. Detects IaC types from staged file extensions:
+
+   | Staged files | IaC plugin used |
+   |---|---|
+   | `*.tf`, `*.tfvars` | `terraform` |
+   | `*.bicep` | `bicep` |
+   | `*.ts` / `*.py` when `cdk.json` is present | `cdk` |
+   | `*.ts` / `*.py` / `*.go` when `Pulumi.yaml` is present | `pulumi` |
+
+3. Runs `wafpass check --iac <type> --controls-dir <dir> --severity <level> --fail-on fail` for each detected IaC type.
+4. Validates any staged `controls/*.yml` files with `wafpass control validate`.
+5. Blocks the commit and prints remediation guidance if any check fails.
+
+When `wafpass` is not found on `PATH` the hook prints a warning but **does not block the commit** (unless `WAFPASS_STRICT=1` is set).
+
+### Configuration
+
+All settings are optional and can be set as environment variables or in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `WAFPASS_CONTROLS_DIR` | `controls` | Path to the controls directory |
+| `WAFPASS_SEVERITY` | `high` | Minimum severity to enforce (`low`, `medium`, `high`, `critical`) |
+| `WAFPASS_FAIL_ON` | `fail` | When to exit non-zero: `fail`, `skip`, or `any` |
+| `WAFPASS_STRICT` | `0` | Set to `1` to abort the commit when wafpass is not installed |
+
+### IDE compatibility
+
+| IDE | Behaviour |
+|---|---|
+| **Git CLI** | Hook runs automatically via `.git/hooks/pre-commit`. |
+| **VS Code** | The built-in Git integration invokes `.git/hooks` automatically — no extra setup needed. |
+| **IntelliJ / JetBrains IDEs** | Hooks run by default (Settings → Version Control → Git → "Run Git hooks"). If wafpass is not found, ensure the IDE shell path resolves to your login shell (Settings → Tools → Terminal → Shell path), or set `WAFPASS_STRICT=0` to make the hook advisory rather than blocking. |
+
+### Bypassing the hook
+
+For exceptional cases (e.g. a WIP commit or a control waiver that hasn't been committed yet):
+
+```bash
+git commit --no-verify
+```
+
+Prefer adding a waiver to `risk_acceptance.yml` over bypassing the hook permanently.
 
 ---
 

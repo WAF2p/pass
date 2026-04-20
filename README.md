@@ -57,6 +57,67 @@ wafpass -V
 
 > **Rosetta not required.** WAF++ PASS is pure Python and runs natively on arm64.
 
+## Pre-commit hook
+
+WAF++ PASS ships a pre-commit hook that runs `wafpass check` against staged IaC files before every commit — blocking non-compliant code before it enters git history.  The hook is stored in `hooks/` and works with the standard git CLI, VS Code, and IntelliJ / JetBrains IDEs without any IDE-specific setup.
+
+### Install
+
+```bash
+# macOS / Linux / Git Bash
+bash hooks/install.sh
+
+# Windows PowerShell
+.\hooks\install.ps1
+```
+
+That's it.  The installer symlinks `hooks/pre-commit` into `.git/hooks/pre-commit` and prints IDE-specific notes.
+
+### What gets checked
+
+On every `git commit` the hook detects staged IaC file types and runs the appropriate compliance checks:
+
+| Staged files | Plugin |
+|---|---|
+| `*.tf`, `*.tfvars` | Terraform |
+| `*.bicep` | Bicep |
+| `*.ts` / `*.py` when `cdk.json` is present | CDK |
+| `*.ts` / `*.py` / `*.go` when `Pulumi.yaml` is present | Pulumi |
+
+If staged files include `controls/*.yml`, those are validated with `wafpass control validate` as well.
+
+When a check fails the commit is blocked and the hook prints:
+
+```
+[wafpass] terraform — compliance check FAILED.
+
+  Options:
+    • Fix the violations in your IaC code
+    • Add a time-boxed waiver to risk_acceptance.yml
+    • Bypass (not recommended): git commit --no-verify
+```
+
+### Configuration
+
+Set any of these as environment variables or in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `WAFPASS_CONTROLS_DIR` | `controls` | Path to the controls directory |
+| `WAFPASS_SEVERITY` | `high` | Minimum severity to enforce |
+| `WAFPASS_FAIL_ON` | `fail` | `fail` / `skip` / `any` — when to exit non-zero |
+| `WAFPASS_STRICT` | `0` | `1` = abort the commit when wafpass is not installed |
+
+If `wafpass` is not found on `PATH` and `WAFPASS_STRICT` is `0` (the default), the hook prints a warning and lets the commit through.  This keeps the team unblocked during onboarding or on machines where wafpass is not yet installed.
+
+### IDE notes
+
+**VS Code** — the built-in Git integration runs `.git/hooks` automatically.  No extra configuration needed.
+
+**IntelliJ / JetBrains IDEs** — git hooks are enabled by default (Settings → Version Control → Git → "Run Git hooks").  If wafpass is not found, go to Settings → Tools → Terminal, set the **Shell path** to your login shell (e.g. `/bin/zsh`), and restart the IDE so it inherits your full `PATH`.  Alternatively set `WAFPASS_STRICT=0` to make the hook advisory rather than blocking.
+
+---
+
 ## Python library API
 
 `wafpass-core` can be used as a library as well as a CLI:

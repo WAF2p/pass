@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# WAF++ PASS — pre-commit hook
+# Runs wafpass compliance checks on staged IaC files before every commit.
+#
+# Configuration (set in shell or .env):
+#   WAFPASS_CONTROLS_DIR   Path to controls directory  (default: controls)
+#   WAFPASS_SEVERITY       Minimum severity to enforce (default: high)
+#   WAFPASS_FAIL_ON        When to fail: fail|skip|any (default: fail)
+#   WAFPASS_STRICT         Exit 1 if wafpass is not installed (default: 0)
+#
+# To skip this hook for a single commit:  git commit --no-verify
+
+set -euo pipefail
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+if [ -t 1 ] && command -v tput &>/dev/null && tput colors &>/dev/null; then
+    RED=$(tput setaf 1); YELLOW=$(tput setaf 3); GREEN=$(tput setaf 2)
+    CYAN=$(tput setaf 6); BOLD=$(tput bold); RESET=$(tput sgr0)
+else
+    RED=""; YELLOW=""; GREEN=""; CYAN=""; BOLD=""; RESET=""
+fi
+
+log()  { echo "${CYAN}[wafpass]${RESET} $*"; }
+ok()   { echo "${GREEN}[wafpass]${RESET} $*"; }
+warn() { echo "${YELLOW}[wafpass]${RESET} $*"; }
+fail() { echo "${RED}${BOLD}[wafpass]${RESET} $*"; }
+
+# ── PATH augmentation for IDE environments ────────────────────────────────────
+# VS Code and IntelliJ launch git with a restricted PATH. This block adds the
+# most common locations where wafpass (a pip-installed tool) might live.
+_augment_path() {
+    local extras=(
+        "$HOME/.local/bin"           # pip install --user
+        "$HOME/bin"
+        "/usr/local/bin"
+        "/opt/homebrew/bin"          # macOS Homebrew (Apple Silicon)
+        "/opt/homebrew/sbin"
+        "/usr/local/sbin"
+        "/usr/bin"
+    )
+
+    # Activate a local virtual environment if one exists
+    local venv=""
+    for candidate in ".venv" "venv" ".env" "env"; do
+        if [[ -f "$candidate/bin/activate" ]]; then
+            venv="$PWD/$candidate"
+            break
+        fi
+    done
+    if [[ -n "$venv" ]]; then
+        extras=("$venv/bin" "${extras[@]}")
+    fi
+
+    # pyenv shims
+    [[ -d "$HOME/.pyenv/shims" ]] && extras+=("$HOME/.pyenv/shims" "$HOME/.pyenv/bin")
+
+    local joined
+    joined="$(IFS=:; printf '%s' "${extras[*]}")"
+    export PATH="$joined:$PATH"
+}
+_augment_path
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+CONTROLS_DIR="${WAFPASS_CONTROLS_DIR:-controls}"
+SEVERITY="${WAFPASS_SEVERITY:-high}"
+FAIL_ON="${WAFPASS_FAIL_ON:-fail}"
+STRICT="${WAFPASS_STRICT:-0}"
+
+# ── Verify wafpass is available ───────────────────────────────────────────────
+if ! command -v wafpass &>/dev/null; then
+    if [[ "$STRICT" == "1" ]]; then
+        fail "wafpass not found. Install with: pip install wafpass-core"
+        fail "Or set WAFPASS_STRICT=0 to skip the check when wafpass is absent."
+        exit 1
+    else
+        warn "wafpass not found — skipping compliance check."
+        warn "Install with: pip install wafpass-core"
+        exit 0
+    fi
+fi
+
+# ── Collect staged files ──────────────────────────────────────────────────────
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+
+if [[ -z "$STAGED" ]]; then
+    exit 0
+fi
+
+# ── Detect IaC types in staged files ─────────────────────────────────────────
+HAS_TERRAFORM=0
+HAS_BICEP=0
+HAS_CDK=0
+HAS_PULUMI=0
+STAGED_CONTROLS=()
+
+while IFS= read -r file; do
+    case "$file" in
+        *.tf|*.tfvars|*.tf.json)
+            HAS_TERRAFORM=1 ;;
+        *.bicep)
+            HAS_BICEP=1 ;;
+        controls/*.yml|controls/*.yaml)
+            STAGED_CONTROLS+=("$file") ;;
+    esac
+done <<< "$STAGED"
+
+# CDK: detect by cdk.json presence + staged TypeScript/Python
+if [[ -f "cdk.json" ]]; then
+    while IFS= read -r file; do
+        if [[ "$file" == *.ts || "$file" == *.py ]]; then
+            HAS_CDK=1; break
+        fi
+    done <<< "$STAGED"
+fi
+
+# Pulumi: detect by Pulumi.yaml presence + staged files
+if [[ -f "Pulumi.yaml" || -f "Pulumi.yml" ]]; then
+    while IFS= read -r file; do
+        if [[ "$file" == *.ts || "$file" == *.py || "$file" == *.go ]]; then
+            HAS_PULUMI=1; break
+        fi
+    done <<< "$STAGED"
+fi
+
+# ── Check controls directory ──────────────────────────────────────────────────
+if [[ ! -d "$CONTROLS_DIR" ]]; then
+    warn "Controls directory '$CONTROLS_DIR' not found — skipping IaC checks."
+    warn "Set WAFPASS_CONTROLS_DIR to point at your controls directory."
+    exit 0
+fi
+
+# ── No relevant staged files ──────────────────────────────────────────────────
+NEEDS_CHECK=$(( HAS_TERRAFORM + HAS_BICEP + HAS_CDK + HAS_PULUMI ))
+if [[ $NEEDS_CHECK -eq 0 && ${#STAGED_CONTROLS[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+# ── Run compliance checks ─────────────────────────────────────────────────────
+HOOK_FAILED=0
+
+_run_check() {
+    local iac_type="$1"
+    log "Checking ${iac_type} files (severity >= ${SEVERITY})…"
+    if wafpass check \
+            --iac "$iac_type" \
+            --controls-dir "$CONTROLS_DIR" \
+            --severity "$SEVERITY" \
+            --fail-on "$FAIL_ON" \
+            .; then
+        ok "${iac_type} — all controls passed."
+    else
+        fail "${iac_type} — compliance check FAILED."
+        HOOK_FAILED=1
+    fi
+}
+
+[[ $HAS_TERRAFORM -eq 1 ]] && _run_check "terraform"
+[[ $HAS_BICEP    -eq 1 ]] && _run_check "bicep"
+[[ $HAS_CDK      -eq 1 ]] && _run_check "cdk"
+[[ $HAS_PULUMI   -eq 1 ]] && _run_check "pulumi"
+
+# ── Validate staged control YAML files ───────────────────────────────────────
+if [[ ${#STAGED_CONTROLS[@]} -gt 0 ]]; then
+    log "Validating ${#STAGED_CONTROLS[@]} staged control file(s)…"
+    for control_file in "${STAGED_CONTROLS[@]}"; do
+        if wafpass control validate "$control_file" 2>&1; then
+            ok "  $control_file — valid"
+        else
+            fail "  $control_file — schema validation FAILED"
+            HOOK_FAILED=1
+        fi
+    done
+fi
+
+# ── Result ────────────────────────────────────────────────────────────────────
+if [[ $HOOK_FAILED -ne 0 ]]; then
+    echo ""
+    fail "Pre-commit check FAILED. Resolve the violations above before committing."
+    echo ""
+    echo "  Options:"
+    echo "    • Fix the violations in your IaC code"
+    echo "    • Add a time-boxed waiver to risk_acceptance.yml"
+    echo "    • Bypass (not recommended): git commit --no-verify"
+    exit 1
+fi
+
+exit 0
