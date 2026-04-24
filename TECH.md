@@ -9,13 +9,14 @@ This document covers internal architecture, design decisions, technical debt, an
 ```
 pass/
 ├── wafpass/
-│   ├── __init__.py          # Public API surface
+│   ├── __init__.py          # Public API surface (run_scan, WafpassResultSchema, …)
 │   ├── engine.py            # run_controls() — assertion evaluation loop
 │   ├── models.py            # Core dataclasses (Control, Check, CheckResult, …)
 │   ├── schema.py            # Pydantic models for wafpass-result.json contract
 │   ├── loader.py            # load_controls() — YAML → Control objects
 │   ├── control_schema.py    # Pydantic validation models for control authoring
-│   ├── cli.py               # Typer CLI entry point
+│   ├── cli.py               # Typer CLI — check, fix, login, logout, whoami, ui, control, evidence
+│   ├── auth.py              # Credential store — JWT tokens in ~/.wafpass/credentials.json
 │   ├── reporter.py          # Rich terminal output
 │   ├── pdf_reporter.py      # ReportLab PDF generation
 │   ├── baseline.py          # Baseline comparison (change tracking)
@@ -25,7 +26,7 @@ pass/
 │   ├── fixer.py             # Auto-remediation suggestions
 │   ├── secret_scanner.py    # Hardcoded credential detection
 │   ├── plan_parser.py       # Terraform plan JSON parsing
-│   ├── state.py             # Terraform state file handling
+│   ├── state.py             # Run versioning and change tracking
 │   ├── waivers.py           # Waiver file load and apply
 │   ├── wizard.py            # Interactive control authoring CLI
 │   ├── parser.py            # Legacy shim (backwards compat)
@@ -35,9 +36,19 @@ pass/
 │   │   └── plugins/
 │   │       ├── terraform.py # Terraform HCL parser (python-hcl2)
 │   │       ├── cdk.py       # AWS CDK parser
-│   │       ├── bicep.py     # Bicep/ARM parser
-│   │       └── pulumi.py    # Pulumi YAML/JSON parser
-│   └── export/              # Export formatters (JSON, CSV, …)
+│   │       ├── bicep.py     # Bicep/ARM parser (stub)
+│   │       └── pulumi.py    # Pulumi YAML/JSON parser (stub)
+│   └── export/              # Observability export plugins
+│       ├── base.py          # ExportPlugin protocol, ExportResult dataclass
+│       ├── config.py        # .wafpass-export.yml loader (${ENV_VAR} expansion)
+│       ├── registry.py      # Export plugin registry singleton
+│       └── plugins/
+│           ├── grafana.py   # Prometheus Pushgateway (fully implemented)
+│           ├── prometheus.py # Direct Pushgateway push
+│           ├── datadog.py   # Datadog Metrics API v2 (stub)
+│           ├── splunk.py    # Splunk HEC (stub)
+│           ├── slack.py     # Slack webhook (stub)
+│           └── webhook.py   # Generic HTTP POST (fully implemented)
 ├── controls/                # 73 WAF++ control YAML files (WAF-*.yml)
 ├── hooks/
 │   ├── pre-commit           # Pre-commit hook script (bash, POSIX-compatible)
@@ -127,6 +138,72 @@ Key YAML fields that affect engine behaviour:
 | `checks[].scope.resource_types` | Filters blocks by `IaCBlock.type` |
 | `assertions[].op` | Operator; unknown ops yield SKIP |
 | `assertions[].fallback_attribute` | Used only with `attribute_exists_or_fallback` |
+
+---
+
+## Authentication module (`auth.py`)
+
+`wafpass/auth.py` is a zero-knowledge credential store. It handles the full token lifecycle for the `wafpass login` / `logout` / `whoami` CLI commands and the `--push @` shorthand in `wafpass check`.
+
+### Credentials file
+
+`~/.wafpass/credentials.json` (mode `0o600`). Stored fields:
+
+| Field | Description |
+|-------|-------------|
+| `server_url` | Base URL of the wafpass-server (no trailing slash) |
+| `access_token` | Short-lived HS256 JWT |
+| `refresh_token` | Opaque long-lived token |
+| `username` | Username (informational) |
+| `role` | Role string returned by the server on login |
+| `expires_at` | ISO-8601 UTC — decoded from the JWT `exp` claim |
+
+The password is **never** written to disk.
+
+### Token flow
+
+```
+wafpass login <server_url>
+    │  POST /auth/login {username, password}
+    ▼
+do_login() → Credentials stored in ~/.wafpass/credentials.json
+    │  access_token, refresh_token, role, expires_at
+    ▼
+wafpass check --push @
+    │  resolve_push_target("@")
+    ▼
+get_valid_credentials()
+    ├─ load() → Credentials
+    ├─ if is_expired() → do_refresh() → update stored token
+    └─ bearer() → "Bearer <access_token>"
+    │  (push_url, {"Authorization": "Bearer ..."})
+    ▼
+httpx.post(push_url, content=result_json, headers=auth_headers)
+```
+
+### `Credentials.is_expired()`
+
+Treats the token as expired 30 seconds before the actual `exp` timestamp to avoid race conditions with the server's clock.
+
+### `resolve_push_target(push_arg)`
+
+| `push_arg` | Behaviour |
+|------------|-----------|
+| `None` / `""` | No push |
+| `"@"` | Uses `{server_url}/runs` from stored credentials with Bearer token |
+| Any URL | Uses that URL; injects Bearer token if the URL prefix matches `server_url` |
+
+### Evidence CLI subcommands
+
+`wafpass evidence` is a Typer sub-app that wraps three server endpoints:
+
+| Subcommand | Server call | Description |
+|------------|-------------|-------------|
+| `evidence lock` | `POST /evidence` | Freeze a run snapshot; print hash, public URL, QR link |
+| `evidence list` | `GET /evidence` | List locked packages (with optional `--project` filter) |
+| `evidence show` | `GET /evidence/{id}` | Print metadata; `--hash` prints only the SHA-256 digest |
+
+All three subcommands require an active `wafpass login` session.
 
 ---
 

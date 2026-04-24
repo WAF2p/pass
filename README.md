@@ -225,6 +225,63 @@ cp framework/modules/controls/controls/*.yml controls/
 
 Then run `wafpass check` as normal. Use `--controls-dir /path/to/controls` if your controls live outside the project root.
 
+## Authentication (`wafpass login`)
+
+WAF++ PASS can push scan results directly to a `wafpass-server` instance. Log in once to store a session token — subsequent `wafpass check --push @` calls use it automatically.
+
+```bash
+# Log in and store session (tokens saved to ~/.wafpass/credentials.json, chmod 600)
+wafpass login https://wafpass.example.com
+
+# Show the stored session
+wafpass whoami
+
+# Revoke session (local + server-side)
+wafpass logout
+```
+
+Credentials file: `~/.wafpass/credentials.json`. Only JWT tokens are stored — the password is **never** written to disk. The access token is auto-refreshed when expired (30-second grace window).
+
+```bash
+# Push scan results using stored credentials
+wafpass check ./infra/ --push @
+
+# Push to an explicit URL with an API key (no login required)
+wafpass check ./infra/ --output json --push http://localhost:8000/runs --api-key $WAFPASS_API_KEY
+
+# Auto-push via environment variable (equivalent to --push URL)
+WAFPASS_SERVER_URL=http://localhost:8000/runs wafpass check ./infra/
+```
+
+---
+
+## Evidence commands (`wafpass evidence`)
+
+Lock server-side run snapshots as cryptographically-signed, immutable audit packages.
+
+```bash
+# Lock a run as an evidence package
+wafpass evidence lock \
+  --run-id <uuid> \
+  --title "Q1 2026 SOC2 Evidence" \
+  --prepared-by "Jane Smith" \
+  --organization "Acme Corp" \
+  --audit-period "Q1 2026" \
+  --frameworks "SOC2,ISO 27001"
+
+# List locked evidence packages
+wafpass evidence list
+wafpass evidence list --project my-infra --limit 10
+
+# Show evidence package details (includes SHA-256 hash and public URL)
+wafpass evidence show <evidence-id>
+wafpass evidence show <evidence-id> --hash   # print only the hash digest
+```
+
+Each locked package gets a SHA-256 hash of its canonical snapshot and a unique public token. Auditors access the frozen HTML report at `/evidence/p/{token}` — no login required.
+
+---
+
 ## Usage
 
 ```bash
