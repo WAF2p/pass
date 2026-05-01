@@ -202,6 +202,7 @@ def _report_to_dict(report: Any) -> dict:
                     "message": r.message,
                     "remediation": r.remediation,
                     "example": r.example,
+                    "regulatory_mapping": cr.control.regulatory_mapping,
                 }
                 for r in cr.results
             ],

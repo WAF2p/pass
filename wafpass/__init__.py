@@ -40,12 +40,14 @@ from wafpass.models import Report  # noqa: E402
 from wafpass.iac.base import IaCBlock, IaCPlugin, IaCState  # noqa: E402
 
 
+from typing import Optional, List
+
 def run_scan(
-    paths: list[str],
+    paths: List[str],
     controls_dir: str = "controls/",
     *,
-    severity_filter: str | None = None,
-    waivers_file: str | None = None,
+    severity_filter: Optional[str] = None,
+    waivers_file: Optional[str] = None,
 ) -> "WafpassResultSchema":
     """Run a WAF++ PASS compliance scan and return a structured result.
 

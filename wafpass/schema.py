@@ -46,7 +46,7 @@ Shape
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -79,7 +79,8 @@ class FindingSchema(BaseModel):
     resource: str
     message: str
     remediation: str
-    example: dict[str, Any] | None = None
+    example: Optional[dict[str, Any]] = None
+    regulatory_mapping: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ControlCheckMetaSchema(BaseModel):
@@ -89,7 +90,7 @@ class ControlCheckMetaSchema(BaseModel):
     title: str
     severity: str
     remediation: str = ""
-    example: dict[str, Any] | None = None  # {"compliant": str, "non_compliant": str}
+    example: Optional[dict[str, Any]] = None  # {"compliant": str, "non_compliant": str}
 
 
 class ControlMetaSchema(BaseModel):
@@ -179,7 +180,7 @@ class WafpassResultSchema(BaseModel):
     )
 
     # ── Terraform plan changes (optional, populated via --plan-file) ──────────
-    plan_changes: dict[str, Any] | None = Field(
+    plan_changes: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
             "Normalised terraform plan change summary. "

@@ -77,6 +77,8 @@ class CheckResult:
     message: str
     remediation: str
     example: dict | None = None
+    regulatory_mapping: list[dict] = field(default_factory=list)
+    # Each entry: {"framework": str, "controls": list[str]}
 
 
 @dataclass

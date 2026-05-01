@@ -124,6 +124,15 @@ def check(
         "--controls-dir",
         help="Path to WAF++ YAML control files.",
     ),
+    server_url: str = typer.Option(
+        "",
+        "--server-url",
+        envvar="WAFPASS_SERVER_URL",
+        help=(
+            "wafpass-server URL to fetch controls from. "
+            "Overrides --controls-dir. Requires --output json for --push integration."
+        ),
+    ),
     pillar: str | None = typer.Option(
         None,
         "--pillar",
@@ -364,16 +373,22 @@ def check(
     if control_ids:
         ids = [i.strip() for i in control_ids.split(",") if i.strip()]
 
-    # ── Load controls ──────────────────────────────────────────────────────────
+    # ── Load controls (from filesystem or server) ──────────────────────────────
+    effective_controls_dir = controls_dir
+    if server_url:
+        effective_controls_dir = Path(".wafpass-server-controls")
+        typer.echo(f"Fetching controls from: {server_url}", err=True)
+
     try:
-        controls = load_controls(controls_dir, pillar=pillar, ids=ids)
+        controls = load_controls(effective_controls_dir, pillar=pillar, ids=ids, server_url=server_url)
     except Exception as exc:
         typer.echo(f"ERROR loading controls: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     if not controls:
         _hint = (f" (pillar={pillar})" if pillar else "") + (f" (ids={ids})" if ids else "")
-        typer.echo(f"No controls found in '{controls_dir}'{_hint}", err=True)
+        _src = f"from server {server_url!r}" if server_url else f"in '{controls_dir}'"
+        typer.echo(f"No controls found {_src}{_hint}", err=True)
         typer.echo("", err=True)
         typer.echo("Controls are not bundled with WAF++ PASS — they must be obtained separately.", err=True)
         typer.echo("", err=True)
@@ -604,6 +619,7 @@ def check(
                     message=chk.message,
                     remediation=chk.remediation,
                     example=chk.example,
+                    regulatory_mapping=cr.control.regulatory_mapping,
                 ))
             if cr.status == "WAIVED" and not cr.results:
                 _findings.append(FindingSchema(
@@ -616,6 +632,7 @@ def check(
                     resource="",
                     message=cr.waived_reason or "",
                     remediation="",
+                    regulatory_mapping=cr.control.regulatory_mapping,
                 ))
 
         # Compute scores
@@ -900,6 +917,15 @@ def fix(
         "--controls-dir",
         help="Path to WAF++ YAML control files.",
     ),
+    server_url: str = typer.Option(
+        "",
+        "--server-url",
+        envvar="WAFPASS_SERVER_URL",
+        help=(
+            "wafpass-server URL to fetch controls from. "
+            "Overrides --controls-dir."
+        ),
+    ),
     pillar: str | None = typer.Option(
         None,
         "--pillar",
@@ -978,15 +1004,21 @@ def fix(
     if control_ids:
         ids = [i.strip() for i in control_ids.split(",") if i.strip()]
 
-    # ── Load controls ─────────────────────────────────────────────────────────
+    # ── Load controls (from filesystem or server) ─────────────────────────────
+    effective_controls_dir = controls_dir
+    if server_url:
+        effective_controls_dir = Path(".wafpass-server-controls")
+        typer.echo(f"Fetching controls from: {server_url}", err=True)
+
     try:
-        controls = load_controls(controls_dir, pillar=pillar, ids=ids)
+        controls = load_controls(effective_controls_dir, pillar=pillar, ids=ids, server_url=server_url)
     except Exception as exc:
         typer.echo(f"ERROR loading controls: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     if not controls:
-        typer.echo(f"No controls found in '{controls_dir}'.", err=True)
+        _src = f"from server {server_url!r}" if server_url else f"in '{controls_dir}'"
+        typer.echo(f"No controls found {_src}.", err=True)
         raise typer.Exit(code=2)
 
     # ── Resolve waiver file ───────────────────────────────────────────────────
