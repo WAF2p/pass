@@ -1,8 +1,8 @@
 # WAF++ PASS — wafpass-core
 
-**WAF++ PASS** (`wafpass-core` v0.4.0) is the compliance engine, CLI tool, and result schema contract for the [WAF++ framework](https://waf2p.dev).
+**WAF++ PASS** (`wafpass-core` v1.0.0) is the compliance engine, CLI tool, and result schema contract for the [WAF++ framework](https://waf2p.dev).
 
-It checks IaC (Infrastructure-as-Code) files against YAML control definitions and produces a structured compliance report. As of v0.4.0 it is the core library in a three-component monorepo:
+It checks IaC (Infrastructure-as-Code) files against YAML control definitions and produces a structured compliance report. As of v1.0.0 it is the core library in a three-component monorepo:
 
 | Component | Package | Description |
 |-----------|---------|-------------|

@@ -1161,7 +1161,7 @@
           <h3 class="font-semibold text-slate-700 mb-3">Region List</h3>
           <div class="flex flex-wrap gap-2">
             <template x-for="[r,p] in (results.detected_regions || [])" :key="r">
-              <span class="pill text-xs font-mono" x-text="r + ' (' + p + ')'"></span>
+              <span class="pill text-xs font-mono" x-text="r + ' (' + p + ') ' + (_REGION_LABELS[r] ? ' - ' + _REGION_LABELS[r] : '')"></span>
             </template>
           </div>
         </div>
@@ -3292,6 +3292,12 @@
       "australia-southeast1":[-33.87,151.21],"australia-southeast2":[-37.81,144.96],
       "me-west1":[32.09,34.78],"me-central1":[24.47,54.37],"me-central2":[25.28,51.56],
       "africa-south1":[-33.87,18.43],
+      // Hetzner
+      "fsn1":[60.12,19.90],"fsn2":[57.79,11.97],"fsn3":[60.12,19.90],"nbg1":[49.46,11.07],"nbg2":[49.46,11.07],"nbg3":[49.46,11.07],"hel1":[60.17,24.94],
+      // OVH
+      "GRA":[47.40,0.70],"BHS":[-23.55,-46.63],"RBX":[-20.30,-40.40],"UK":[51.51,-0.13],"WAW":[52.23,21.01],
+      // OpenStack
+      "DE":[52.52,13.41],
       // Alibaba
       "cn-hangzhou":[30.25,120.16],"cn-shanghai":[31.23,121.47],"cn-beijing":[39.91,116.39],
       "cn-shenzhen":[22.54,114.06],"cn-hongkong":[22.32,114.17],"ap-southeast-1-ali":[1.35,103.82],
@@ -3336,15 +3342,22 @@
       "asia-southeast1":"Singapore","asia-southeast2":"Jakarta, Indonesia",
       "australia-southeast1":"Sydney, Australia","me-west1":"Tel Aviv, Israel",
       "africa-south1":"Cape Town, South Africa",
+      // Hetzner
+      "fsn1":"Falkenstein, Germany","fsn2":"Falkenstein, Germany","fsn3":"Falkenstein, Germany","nbg1":"Nuremberg, Germany","nbg2":"Nuremberg, Germany","nbg3":"Nuremberg, Germany","hel1":"Helsinki, Finland",
+      // OVH
+      "GRA":"Gravelines, France","BHS":"Bahia, Brazil","RBX":"Robopolis, Brazil","UK":"London, UK","WAW":"Warsaw, Poland",
+      // OpenStack
+      "DE":"Berlin, Germany",
     };
 
+    const _PROVIDER_COLORS = {
+      aws:'#f97316', azure:'#2b7fff', gcp:'#22c55e',
+      alicloud:'#ff6a00', yandex:'#fcdb03', oci:'#c74634',
+      hetzner:'#0069b4', ovh:'#ff6a00', openstack:'#e84545'
+    };
     window._REGION_COORDS = _REGION_COORDS;
     window._PROVIDER_COLORS = _PROVIDER_COLORS;
     window._REGION_LABELS = _REGION_LABELS;
-    const _PROVIDER_COLORS = {
-      aws:'#f97316', azure:'#2b7fff', gcp:'#22c55e',
-      alicloud:'#ff6a00', yandex:'#fcdb03', oci:'#c74634'
-    };
 
     function wafpass() {
   return {
@@ -4396,19 +4409,40 @@
     // ── Charts ─────────────────────────────────────────────────────────
 
     async renderWorldMap() {
+      console.log('renderWorldMap called');
       const el = document.getElementById('worldmap');
       const legendEl = document.getElementById('worldmap-legend');
-      if (!el || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
+      if (!el || typeof d3 === 'undefined' || typeof topojson === 'undefined') {
+        console.log('renderWorldMap: missing deps, returning (el=', !!el, 'd3=', typeof d3, 'topojson=', typeof topojson, ')');
+        return;
+      }
       const regions = (this.results && this.results.detected_regions) || [];
-      if (!regions.length) return;
+      console.log('renderWorldMap: regions=', regions);
+      console.log('renderWorldMap: this.results=', this.results);
+      console.log('renderWorldMap: d3 available:', typeof d3 !== 'undefined');
+      console.log('renderWorldMap: topojson available:', typeof topojson !== 'undefined');
+      if (!regions.length) {
+        console.log('renderWorldMap: no regions, returning');
+        return;
+      }
 
       // Resolve coordinates, skip unknowns
-      const pts = regions.map(([r,p]) => ({region:r, provider:p, coords:_REGION_COORDS[r]})).filter(d=>d.coords);
-      if (!pts.length) return;
+      console.log('renderWorldMap: _REGION_COORDS=', Object.keys(_REGION_COORDS));
+      const pts = regions.map(([r,p]) => ({region:r, provider:p, coords:_REGION_COORDS[r]}));
+      console.log('renderWorldMap: pts before filter=', pts);
+      pts.forEach(({region, provider, coords}) => {
+        console.log(`  region=${region} provider=${provider} coords=${coords} found=${!!coords}`);
+      });
+      const ptsFiltered = pts.filter(d=>d.coords);
+      console.log('renderWorldMap: pts after filter=', ptsFiltered);
+      if (!ptsFiltered.length) {
+        console.log('renderWorldMap: no pts with coords, returning');
+        return;
+      }
 
       let world;
       try { world = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'); }
-      catch(e) { el.innerHTML='<div style="color:#64748b;padding:1rem;font-size:0.75rem;">Map unavailable</div>'; return; }
+      catch(e) { console.error('renderWorldMap: failed to load world-atlas:', e); el.innerHTML='<div style="color:#64748b;padding:1rem;font-size:0.75rem;">Map unavailable</div>'; return; }
 
       el.innerHTML = '';
       const W = el.clientWidth || 640, H = el.clientHeight || 220;

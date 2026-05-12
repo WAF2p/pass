@@ -286,7 +286,7 @@ class TerraformPlugin:
         """Extract ``(region_name, provider)`` tuples from parsed Terraform state.
 
         Supports: AWS, Azure (azurerm/azuread/azurestack), GCP (google/google-beta),
-        Alicloud, Yandex.Cloud, OCI.
+        Alicloud, Yandex.Cloud, OCI, OVH, Hetzner, StackIT.
         """
         seen: set[tuple[str, str]] = set()
         result: list[tuple[str, str]] = []
@@ -336,6 +336,14 @@ class TerraformPlugin:
                 try_zone(blk.attributes.get("zone") or blk.attributes.get("region"), "yandex")
             elif pname == "oci":
                 try_literal(blk.attributes.get("region"), "oci")
+            elif pname == "ovh":
+                try_literal(blk.attributes.get("region") or blk.attributes.get("location"), "ovh")
+            elif pname == "hcloud":
+                try_literal(blk.attributes.get("region") or blk.attributes.get("location"), "hetzner")
+            elif pname == "openstack":
+                try_literal(blk.attributes.get("region"), "openstack")
+            elif pname == "stackit":
+                try_literal(blk.attributes.get("region"), "stackit")
 
         for blk in state.resources:
             rtype = blk.type.lower()
@@ -357,6 +365,12 @@ class TerraformPlugin:
                 try_zone(blk.attributes.get("zone") or blk.attributes.get("region"), "yandex")
             elif rtype.startswith("oci_"):
                 try_literal(blk.attributes.get("region"), "oci")
+            elif rtype.startswith("ovh_"):
+                try_literal(blk.attributes.get("region") or blk.attributes.get("location"), "ovh")
+            elif rtype.startswith("hcloud_"):
+                try_literal(blk.attributes.get("region") or blk.attributes.get("location"), "hetzner")
+            elif rtype.startswith("stackit_"):
+                try_literal(blk.attributes.get("region"), "stackit")
 
         return result
 
