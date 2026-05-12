@@ -79,3 +79,5 @@ controls/*.yaml
 /serve/last_results.json
 /.claude/settings.local.json
 /test.tmp
+/.wafpass-state/
+/.wafpass-server-controls/

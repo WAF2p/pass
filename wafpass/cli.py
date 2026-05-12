@@ -124,6 +124,15 @@ def check(
         "--controls-dir",
         help="Path to WAF++ YAML control files.",
     ),
+    server_url: str = typer.Option(
+        "",
+        "--server-url",
+        envvar="WAFPASS_SERVER_URL",
+        help=(
+            "wafpass-server URL to fetch controls from. "
+            "Overrides --controls-dir. Requires --output json for --push integration."
+        ),
+    ),
     pillar: str | None = typer.Option(
         None,
         "--pillar",
@@ -159,9 +168,19 @@ def check(
         None,
         "--push",
         help=(
-            "POST the result as wafpass-result.json to this URL "
-            "(e.g. http://localhost:8000/runs). "
-            "Requires 'httpx': pip install httpx."
+            "POST the result to this URL (e.g. http://localhost:8000/runs). "
+            "Pass [bold]@[/bold] to push to the server from 'wafpass login' using your stored token. "
+            "Requires --output json."
+        ),
+    ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="WAFPASS_API_KEY",
+        help=(
+            "API key sent as 'X-Api-Key' header when using --push. "
+            "Not needed after 'wafpass login' — Bearer token is used automatically. "
+            "Can also be set via the WAFPASS_API_KEY environment variable."
         ),
     ),
     project: str = typer.Option(
@@ -183,6 +202,11 @@ def check(
         "",
         "--triggered-by",
         help="Trigger source: local, github-actions, gitlab-ci, … (auto-detected if not set).",
+    ),
+    stage: str = typer.Option(
+        "",
+        "--stage",
+        help="Deployment stage this run targets, e.g. dev, staging, prod.",
     ),
     pdf_out: Path = typer.Option(
         None,
@@ -349,16 +373,22 @@ def check(
     if control_ids:
         ids = [i.strip() for i in control_ids.split(",") if i.strip()]
 
-    # ── Load controls ──────────────────────────────────────────────────────────
+    # ── Load controls (from filesystem or server) ──────────────────────────────
+    effective_controls_dir = controls_dir
+    if server_url:
+        effective_controls_dir = Path(".wafpass-server-controls")
+        typer.echo(f"Fetching controls from: {server_url}", err=True)
+
     try:
-        controls = load_controls(controls_dir, pillar=pillar, ids=ids)
+        controls = load_controls(effective_controls_dir, pillar=pillar, ids=ids, server_url=server_url)
     except Exception as exc:
         typer.echo(f"ERROR loading controls: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     if not controls:
         _hint = (f" (pillar={pillar})" if pillar else "") + (f" (ids={ids})" if ids else "")
-        typer.echo(f"No controls found in '{controls_dir}'{_hint}", err=True)
+        _src = f"from server {server_url!r}" if server_url else f"in '{controls_dir}'"
+        typer.echo(f"No controls found {_src}{_hint}", err=True)
         typer.echo("", err=True)
         typer.echo("Controls are not bundled with WAF++ PASS — they must be obtained separately.", err=True)
         typer.echo("", err=True)
@@ -480,7 +510,7 @@ def check(
         )
 
         run_id = generate_run_id()
-        snapshot = build_run_snapshot(report, run_id=run_id, iac_plugin=iac.lower())
+        snapshot = build_run_snapshot(report, run_id=run_id, iac_plugin=iac.lower(), stage=stage)
 
         previous_run = load_latest_run(state_dir)
         if previous_run is not None:
@@ -589,6 +619,7 @@ def check(
                     message=chk.message,
                     remediation=chk.remediation,
                     example=chk.example,
+                    regulatory_mapping=cr.control.regulatory_mapping,
                 ))
             if cr.status == "WAIVED" and not cr.results:
                 _findings.append(FindingSchema(
@@ -601,6 +632,7 @@ def check(
                     resource="",
                     message=cr.waived_reason or "",
                     remediation="",
+                    regulatory_mapping=cr.control.regulatory_mapping,
                 ))
 
         # Compute scores
@@ -679,6 +711,7 @@ def check(
             git_sha=_sha,
             triggered_by=_triggered,
             iac_framework=iac.lower(),
+            stage=stage,
             score=_score,
             pillar_scores=_pillar_scores,
             path=report.path,
@@ -698,21 +731,43 @@ def check(
         if push:
             try:
                 import httpx as _httpx
-            except ImportError:
-                typer.echo(
-                    "ERROR: --push requires 'httpx'. Install with: pip install httpx",
-                    err=True,
-                )
-                raise typer.Exit(code=2)
-            try:
+                from wafpass.auth import resolve_push_target, get_valid_credentials
+
+                _push_url, _auto_headers = resolve_push_target(push)
+
+                if push == "@" and _push_url is None:
+                    typer.echo(
+                        "ERROR: --push @ requires an active login session. "
+                        "Run 'wafpass login <server-url>' first.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+
+                _push_headers: dict[str, str] = {
+                    "Content-Type": "application/json",
+                    **_auto_headers,
+                }
+                # Explicit --api-key always wins over the stored Bearer token
+                if api_key:
+                    _push_headers.pop("Authorization", None)
+                    _push_headers["X-Api-Key"] = api_key
+
                 _resp = _httpx.post(
-                    push,
+                    _push_url,
                     content=_json_str,
-                    headers={"Content-Type": "application/json"},
+                    headers=_push_headers,
                     timeout=30,
                 )
+                if _resp.status_code == 401:
+                    # Token may have just expired — try one refresh and retry
+                    _creds = get_valid_credentials()
+                    if _creds and not api_key:
+                        _push_headers["Authorization"] = _creds.bearer()
+                        _resp = _httpx.post(_push_url, content=_json_str, headers=_push_headers, timeout=30)
                 _resp.raise_for_status()
-                typer.echo(f"Pushed to {push}  →  HTTP {_resp.status_code}", err=True)
+                typer.echo(f"Pushed to {_push_url}  →  HTTP {_resp.status_code}", err=True)
+            except SystemExit:
+                raise
             except Exception as exc:
                 typer.echo(f"ERROR: Push to '{push}' failed: {exc}", err=True)
                 raise typer.Exit(code=2)
@@ -723,9 +778,10 @@ def check(
 
     # ── Push for non-JSON output modes (--push without --output json) ──────────
     if push and output != "json":
+        _push_hint = push if push != "@" else "@ (stored server)"
         typer.echo(
-            "NOTE: --push only works with --output json. "
-            "Re-run with --output json --push <url>.",
+            f"NOTE: --push only works with --output json. "
+            f"Re-run with --output json --push {_push_hint}.",
             err=True,
         )
 
@@ -861,6 +917,15 @@ def fix(
         "--controls-dir",
         help="Path to WAF++ YAML control files.",
     ),
+    server_url: str = typer.Option(
+        "",
+        "--server-url",
+        envvar="WAFPASS_SERVER_URL",
+        help=(
+            "wafpass-server URL to fetch controls from. "
+            "Overrides --controls-dir."
+        ),
+    ),
     pillar: str | None = typer.Option(
         None,
         "--pillar",
@@ -939,15 +1004,21 @@ def fix(
     if control_ids:
         ids = [i.strip() for i in control_ids.split(",") if i.strip()]
 
-    # ── Load controls ─────────────────────────────────────────────────────────
+    # ── Load controls (from filesystem or server) ─────────────────────────────
+    effective_controls_dir = controls_dir
+    if server_url:
+        effective_controls_dir = Path(".wafpass-server-controls")
+        typer.echo(f"Fetching controls from: {server_url}", err=True)
+
     try:
-        controls = load_controls(controls_dir, pillar=pillar, ids=ids)
+        controls = load_controls(effective_controls_dir, pillar=pillar, ids=ids, server_url=server_url)
     except Exception as exc:
         typer.echo(f"ERROR loading controls: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     if not controls:
-        typer.echo(f"No controls found in '{controls_dir}'.", err=True)
+        _src = f"from server {server_url!r}" if server_url else f"in '{controls_dir}'"
+        typer.echo(f"No controls found {_src}.", err=True)
         raise typer.Exit(code=2)
 
     # ── Resolve waiver file ───────────────────────────────────────────────────
@@ -1537,3 +1608,480 @@ def control_show(
 
     rc.print(f"[red]Control not found:[/red] {control_id}")
     raise typer.Exit(code=1)
+
+
+# ── wafpass login / logout / whoami ───────────────────────────────────────────
+
+
+@app.command("login")
+def cmd_login(
+    server_url: str = typer.Argument(
+        ...,
+        help="Base URL of the wafpass-server, e.g. https://wafpass.example.com or http://localhost:8000.",
+    ),
+    username: str = typer.Option(
+        None,
+        "--username",
+        "-u",
+        help="Username (prompted if not given).",
+    ),
+    no_verify: bool = typer.Option(
+        False,
+        "--no-verify",
+        help="Disable TLS certificate verification (insecure — development only).",
+    ),
+) -> None:
+    """Authenticate with a wafpass-server and store a session token.
+
+    Your password is never written to disk — only the issued JWT token is saved
+    to ~/.wafpass/credentials.json (chmod 600).
+
+    After login you can push scan results without --api-key:
+
+    \b
+        wafpass check ./infra --output json --push @
+        wafpass check ./infra --output json --push http://my-server:8000/runs
+    """
+    from rich.console import Console
+    from rich.prompt import Prompt
+    import httpx as _httpx
+    from wafpass.auth import do_login, _CREDS_FILE
+
+    rc = Console()
+
+    # Normalise URL — strip trailing slash, add scheme if bare hostname given
+    _url = server_url.rstrip("/")
+    if not _url.startswith(("http://", "https://")):
+        _url = f"https://{_url}"
+
+    # Quick reachability check
+    try:
+        _health_resp = _httpx.get(
+            f"{_url}/health",
+            timeout=8,
+            verify=not no_verify,
+            follow_redirects=True,
+        )
+        if _health_resp.status_code not in (200, 404):
+            rc.print(f"[yellow]Warning: /health returned HTTP {_health_resp.status_code} — check URL.[/yellow]")
+    except _httpx.ConnectError:
+        rc.print(f"[red]Cannot reach {_url} — check the URL and network connectivity.[/red]")
+        raise typer.Exit(code=1)
+    except Exception:
+        pass  # Non-fatal — proceed to login
+
+    if not username:
+        username = Prompt.ask("[bold]Username[/bold]")
+    password = Prompt.ask("[bold]Password[/bold]", password=True)
+
+    rc.print(f"  Authenticating with [cyan]{_url}[/cyan]…")
+
+    try:
+        from wafpass.auth import do_login as _do_login
+        creds = _do_login(_url, username, password)
+    except _httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            rc.print("[red]Login failed: invalid username or password.[/red]")
+        elif exc.response.status_code == 403:
+            rc.print("[red]Login failed: account is disabled.[/red]")
+        else:
+            rc.print(f"[red]Login failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Login failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    # Friendly expiry display
+    from datetime import datetime, timezone
+    try:
+        exp = datetime.fromisoformat(creds.expires_at)
+        _exp_str = exp.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        _exp_str = creds.expires_at
+
+    rc.print(f"[green]✓  Logged in[/green] as [bold]{creds.username}[/bold] ([cyan]{creds.role}[/cyan])")
+    rc.print(f"   Server   : {creds.server_url}")
+    rc.print(f"   Token    : valid until {_exp_str}  [dim](auto-refreshed via refresh token)[/dim]")
+    rc.print(f"   Stored   : {_CREDS_FILE}")
+    rc.print()
+    rc.print("  Push scan results using [bold]--push @[/bold] to use this server automatically:")
+    rc.print(f"  [dim]wafpass check ./infra --output json --push @[/dim]")
+
+
+@app.command("logout")
+def cmd_logout() -> None:
+    """Revoke the stored session and remove local credentials.
+
+    The refresh token is invalidated on the server so the session cannot be
+    silently extended after logout.
+    """
+    from rich.console import Console
+    from wafpass.auth import load, do_logout, clear
+
+    rc = Console()
+    creds = load()
+    if creds is None:
+        rc.print("[yellow]Not logged in — nothing to do.[/yellow]")
+        return
+
+    rc.print(f"  Revoking session for [bold]{creds.username}[/bold] on {creds.server_url}…")
+    do_logout(creds)
+    clear()
+    rc.print("[green]✓  Logged out[/green] — local credentials removed.")
+
+
+@app.command("whoami")
+def cmd_whoami() -> None:
+    """Show the currently stored login session."""
+    from rich.console import Console
+    from rich.table import Table
+    from datetime import datetime, timezone
+    from wafpass.auth import get_valid_credentials, load
+
+    rc = Console()
+    raw = load()
+    if raw is None:
+        rc.print("[yellow]Not logged in.[/yellow]  Run [bold]wafpass login <server-url>[/bold] first.")
+        raise typer.Exit(code=1)
+
+    creds = get_valid_credentials()
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+
+    table.add_row("Server",   raw.server_url)
+    table.add_row("Username", f"[bold]{raw.username}[/bold]")
+    table.add_row("Role",     f"[cyan]{raw.role}[/cyan]")
+
+    try:
+        exp = datetime.fromisoformat(raw.expires_at)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = exp - now
+        if delta.total_seconds() < 0:
+            _exp_label = f"[red]expired {abs(int(delta.total_seconds() // 60))} min ago[/red]"
+        elif delta.total_seconds() < 300:
+            _exp_label = f"[yellow]expires in {int(delta.total_seconds())}s (refreshing…)[/yellow]"
+        else:
+            _exp_label = f"[green]valid for {int(delta.total_seconds() // 60)} min[/green]  ({exp.strftime('%Y-%m-%d %H:%M UTC')})"
+    except Exception:
+        _exp_label = raw.expires_at
+
+    table.add_row("Token",    _exp_label)
+
+    if creds is None:
+        table.add_row("Session", "[red]Refresh failed — run 'wafpass login' again.[/red]")
+    elif creds.access_token != raw.access_token:
+        table.add_row("Session", "[green]Auto-refreshed ✓[/green]")
+
+    rc.print(table)
+    rc.print()
+    rc.print("  Use [bold]--push @[/bold] to push scan results to this server.")
+
+
+# ── wafpass evidence ───────────────────────────────────────────────────────────
+
+evidence_app = typer.Typer(
+    name="evidence",
+    help="Manage locked, immutable evidence packages on a wafpass-server.",
+    add_completion=False,
+)
+app.add_typer(evidence_app, name="evidence")
+
+
+def _require_creds():
+    """Return valid credentials or exit with a helpful message."""
+    from wafpass.auth import get_valid_credentials
+    from rich.console import Console
+    creds = get_valid_credentials()
+    if creds is None:
+        Console().print(
+            "[red]Not logged in.[/red]  Run [bold]wafpass login <server-url>[/bold] first."
+        )
+        raise typer.Exit(code=1)
+    return creds
+
+
+@evidence_app.command("lock")
+def evidence_lock(
+    run_id: str = typer.Option(
+        None,
+        "--run-id",
+        help="UUID of the run to lock as evidence (required).",
+    ),
+    title: str = typer.Option(
+        "",
+        "--title",
+        help="Evidence package title (auto-generated from run if omitted).",
+    ),
+    note: str = typer.Option(
+        "",
+        "--note",
+        help="Auditor-facing note to embed in the evidence package.",
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Project name tag.",
+    ),
+    prepared_by: str = typer.Option(
+        "",
+        "--prepared-by",
+        help="Name of the person preparing this evidence package.",
+    ),
+    organization: str = typer.Option(
+        "",
+        "--organization",
+        help="Organization name for the evidence package.",
+    ),
+    audit_period: str = typer.Option(
+        "",
+        "--audit-period",
+        help="Audit period description, e.g. 'Q1 2026'.",
+    ),
+    frameworks: str = typer.Option(
+        "",
+        "--frameworks",
+        help="Comma-separated compliance frameworks, e.g. 'ISO 27001,SOC 2'.",
+    ),
+) -> None:
+    """Lock a server-side run as an immutable evidence package.
+
+    Requires an active login session (run 'wafpass login <url>' first).
+
+    \b
+    Example:
+        wafpass evidence lock --run-id <uuid> --title "Q1 2026 Audit"
+    """
+    import httpx as _httpx
+    from rich.console import Console
+
+    rc = Console()
+
+    if not run_id:
+        rc.print("[red]--run-id is required.[/red]")
+        raise typer.Exit(code=2)
+
+    creds = _require_creds()
+
+    _frameworks = [f.strip() for f in frameworks.split(",") if f.strip()] if frameworks else []
+
+    payload: dict = {
+        "run_id": run_id,
+        "snapshot": {},  # server will load the run's stored data
+    }
+    if title:
+        payload["title"] = title
+    if note:
+        payload["note"] = note
+    if project:
+        payload["project"] = project
+    if prepared_by:
+        payload["prepared_by"] = prepared_by
+    if organization:
+        payload["organization"] = organization
+    if audit_period:
+        payload["audit_period"] = audit_period
+    if _frameworks:
+        payload["frameworks"] = _frameworks
+
+    url = f"{creds.server_url}/evidence"
+    headers = {"Content-Type": "application/json", "Authorization": creds.bearer()}
+
+    rc.print(f"  Locking run [cyan]{run_id}[/cyan] as evidence…")
+
+    try:
+        resp = _httpx.post(url, json=payload, headers=headers, timeout=30)
+        if resp.status_code == 401:
+            creds = _require_creds()
+            headers["Authorization"] = creds.bearer()
+            resp = _httpx.post(url, json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        _body = ""
+        try:
+            _body = exc.response.json().get("detail", "")
+        except Exception:
+            pass
+        rc.print(f"[red]Lock failed: HTTP {exc.response.status_code}[/red]  {_body}")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Lock failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    ev = resp.json()
+    public_url = f"{creds.server_url}/evidence/p/{ev['public_token']}"
+
+    rc.print(f"[green]✓  Evidence locked[/green]")
+    rc.print(f"   ID           : [bold]{ev['id']}[/bold]")
+    rc.print(f"   Title        : {ev.get('title', '—')}")
+    rc.print(f"   SHA-256      : [dim]{ev.get('hash_digest', '—')}[/dim]")
+    rc.print(f"   Public URL   : [cyan]{public_url}[/cyan]")
+    rc.print(f"   Created      : {ev.get('created_at', '—')}")
+    rc.print()
+    rc.print("  Share the public URL with auditors — no login required.")
+    rc.print(f"  [dim]wafpass evidence show {ev['id']}[/dim]  for full details.")
+
+
+@evidence_app.command("list")
+def evidence_list(
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Filter by project name.",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="Maximum number of packages to show (default: 20).",
+    ),
+) -> None:
+    """List locked evidence packages on the connected server."""
+    import httpx as _httpx
+    from rich.console import Console
+    from rich.table import Table
+
+    rc = Console()
+    creds = _require_creds()
+
+    params: dict = {}
+    if project:
+        params["project"] = project
+
+    url = f"{creds.server_url}/evidence"
+    headers = {"Authorization": creds.bearer()}
+
+    try:
+        resp = _httpx.get(url, params=params, headers=headers, timeout=15)
+        if resp.status_code == 401:
+            creds = _require_creds()
+            headers["Authorization"] = creds.bearer()
+            resp = _httpx.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        rc.print(f"[red]Request failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Request failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    packages = resp.json()
+    if not packages:
+        rc.print("[yellow]No evidence packages found.[/yellow]")
+        return
+
+    packages = packages[:limit]
+
+    tbl = Table(
+        title=f"Evidence Packages — {creds.server_url}",
+        show_lines=False,
+        header_style="bold white on dark_blue",
+    )
+    tbl.add_column("ID", style="dim", no_wrap=True, max_width=12)
+    tbl.add_column("Title", style="bold white")
+    tbl.add_column("Project", style="cyan")
+    tbl.add_column("Run ID", style="dim", max_width=12)
+    tbl.add_column("Created", style="dim", no_wrap=True)
+    tbl.add_column("SHA-256", style="dim", max_width=16)
+
+    for ev in packages:
+        _id = str(ev.get("id", ""))[:8] + "…"
+        _run = str(ev.get("run_id", ""))[:8] + "…"
+        _hash = str(ev.get("hash_digest", ""))[:14] + "…"
+        _created = str(ev.get("created_at", ""))[:16]
+        tbl.add_row(
+            _id,
+            ev.get("title") or "—",
+            ev.get("project") or "—",
+            _run,
+            _created,
+            _hash,
+        )
+
+    rc.print(tbl)
+    rc.print(f"[dim]{len(packages)} package(s) shown[/dim]")
+
+
+@evidence_app.command("show")
+def evidence_show(
+    evidence_id: str = typer.Argument(
+        ...,
+        help="Evidence package UUID to display.",
+    ),
+    show_hash: bool = typer.Option(
+        False,
+        "--hash",
+        is_flag=True,
+        help="Print only the SHA-256 hash digest (useful for scripting / verification).",
+    ),
+) -> None:
+    """Show details of a locked evidence package."""
+    import httpx as _httpx
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    rc = Console()
+    creds = _require_creds()
+
+    url = f"{creds.server_url}/evidence/{evidence_id}"
+    headers = {"Authorization": creds.bearer()}
+
+    try:
+        resp = _httpx.get(url, headers=headers, timeout=15)
+        if resp.status_code == 401:
+            creds = _require_creds()
+            headers["Authorization"] = creds.bearer()
+            resp = _httpx.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            rc.print(f"[red]Evidence package not found:[/red] {evidence_id}")
+        else:
+            rc.print(f"[red]Request failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        rc.print(f"[red]Request failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    ev = resp.json()
+
+    if show_hash:
+        rc.print(ev.get("hash_digest", ""))
+        return
+
+    public_url = f"{creds.server_url}/evidence/p/{ev['public_token']}"
+
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style="dim", justify="right")
+    tbl.add_column()
+
+    tbl.add_row("Evidence ID",  f"[bold]{ev.get('id', '—')}[/bold]")
+    tbl.add_row("Title",        ev.get("title") or "—")
+    tbl.add_row("Note",         ev.get("note") or "—")
+    tbl.add_row("Project",      ev.get("project") or "—")
+    tbl.add_row("Prepared by",  ev.get("prepared_by") or "—")
+    tbl.add_row("Organization", ev.get("organization") or "—")
+    tbl.add_row("Audit period", ev.get("audit_period") or "—")
+    _fw = ", ".join(ev.get("frameworks") or []) or "—"
+    tbl.add_row("Frameworks",   _fw)
+    tbl.add_row("Run ID",       ev.get("run_id") or "—")
+    tbl.add_row("Locked by",    str(ev.get("locked_by") or "—"))
+    tbl.add_row("Created",      str(ev.get("created_at") or "—"))
+    tbl.add_row("SHA-256",      f"[dim]{ev.get('hash_digest', '—')}[/dim]")
+    tbl.add_row("Public URL",   f"[cyan]{public_url}[/cyan]")
+
+    rc.print(Panel(
+        tbl,
+        title=f"[bold white]Evidence Package[/bold white]  [dim]{str(ev.get('id', ''))[:8]}…[/dim]",
+        border_style="cyan",
+        padding=(1, 2),
+    ))
+    rc.print()
+    rc.print("  [dim]Download report:[/dim]  "
+             f"[dim]{creds.server_url}/evidence/{evidence_id}/report.html[/dim]")
+    rc.print("  [dim]Share with auditor:[/dim]  "
+             f"[cyan]{public_url}[/cyan]")

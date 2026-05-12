@@ -1,8 +1,8 @@
 # WAF++ PASS — wafpass-core
 
-**WAF++ PASS** (`wafpass-core` v0.4.0) is the compliance engine, CLI tool, and result schema contract for the [WAF++ framework](https://waf2p.dev).
+**WAF++ PASS** (`wafpass-core` v1.0.0) is the compliance engine, CLI tool, and result schema contract for the [WAF++ framework](https://waf2p.dev).
 
-It checks IaC (Infrastructure-as-Code) files against YAML control definitions and produces a structured compliance report. As of v0.4.0 it is the core library in a three-component monorepo:
+It checks IaC (Infrastructure-as-Code) files against YAML control definitions and produces a structured compliance report. As of v1.0.0 it is the core library in a three-component monorepo:
 
 | Component | Package | Description |
 |-----------|---------|-------------|
@@ -56,6 +56,67 @@ wafpass -V
 ```
 
 > **Rosetta not required.** WAF++ PASS is pure Python and runs natively on arm64.
+
+## Pre-commit hook
+
+WAF++ PASS ships a pre-commit hook that runs `wafpass check` against staged IaC files before every commit — blocking non-compliant code before it enters git history.  The hook is stored in `hooks/` and works with the standard git CLI, VS Code, and IntelliJ / JetBrains IDEs without any IDE-specific setup.
+
+### Install
+
+```bash
+# macOS / Linux / Git Bash
+bash hooks/install.sh
+
+# Windows PowerShell
+.\hooks\install.ps1
+```
+
+That's it.  The installer symlinks `hooks/pre-commit` into `.git/hooks/pre-commit` and prints IDE-specific notes.
+
+### What gets checked
+
+On every `git commit` the hook detects staged IaC file types and runs the appropriate compliance checks:
+
+| Staged files | Plugin |
+|---|---|
+| `*.tf`, `*.tfvars` | Terraform |
+| `*.bicep` | Bicep |
+| `*.ts` / `*.py` when `cdk.json` is present | CDK |
+| `*.ts` / `*.py` / `*.go` when `Pulumi.yaml` is present | Pulumi |
+
+If staged files include `controls/*.yml`, those are validated with `wafpass control validate` as well.
+
+When a check fails the commit is blocked and the hook prints:
+
+```
+[wafpass] terraform — compliance check FAILED.
+
+  Options:
+    • Fix the violations in your IaC code
+    • Add a time-boxed waiver to risk_acceptance.yml
+    • Bypass (not recommended): git commit --no-verify
+```
+
+### Configuration
+
+Set any of these as environment variables or in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `WAFPASS_CONTROLS_DIR` | `controls` | Path to the controls directory |
+| `WAFPASS_SEVERITY` | `high` | Minimum severity to enforce |
+| `WAFPASS_FAIL_ON` | `fail` | `fail` / `skip` / `any` — when to exit non-zero |
+| `WAFPASS_STRICT` | `0` | `1` = abort the commit when wafpass is not installed |
+
+If `wafpass` is not found on `PATH` and `WAFPASS_STRICT` is `0` (the default), the hook prints a warning and lets the commit through.  This keeps the team unblocked during onboarding or on machines where wafpass is not yet installed.
+
+### IDE notes
+
+**VS Code** — the built-in Git integration runs `.git/hooks` automatically.  No extra configuration needed.
+
+**IntelliJ / JetBrains IDEs** — git hooks are enabled by default (Settings → Version Control → Git → "Run Git hooks").  If wafpass is not found, go to Settings → Tools → Terminal, set the **Shell path** to your login shell (e.g. `/bin/zsh`), and restart the IDE so it inherits your full `PATH`.  Alternatively set `WAFPASS_STRICT=0` to make the hook advisory rather than blocking.
+
+---
 
 ## Python library API
 
@@ -163,6 +224,63 @@ cp framework/modules/controls/controls/*.yml controls/
 ```
 
 Then run `wafpass check` as normal. Use `--controls-dir /path/to/controls` if your controls live outside the project root.
+
+## Authentication (`wafpass login`)
+
+WAF++ PASS can push scan results directly to a `wafpass-server` instance. Log in once to store a session token — subsequent `wafpass check --push @` calls use it automatically.
+
+```bash
+# Log in and store session (tokens saved to ~/.wafpass/credentials.json, chmod 600)
+wafpass login https://wafpass.example.com
+
+# Show the stored session
+wafpass whoami
+
+# Revoke session (local + server-side)
+wafpass logout
+```
+
+Credentials file: `~/.wafpass/credentials.json`. Only JWT tokens are stored — the password is **never** written to disk. The access token is auto-refreshed when expired (30-second grace window).
+
+```bash
+# Push scan results using stored credentials
+wafpass check ./infra/ --push @
+
+# Push to an explicit URL with an API key (no login required)
+wafpass check ./infra/ --output json --push http://localhost:8000/runs --api-key $WAFPASS_API_KEY
+
+# Auto-push via environment variable (equivalent to --push URL)
+WAFPASS_SERVER_URL=http://localhost:8000/runs wafpass check ./infra/
+```
+
+---
+
+## Evidence commands (`wafpass evidence`)
+
+Lock server-side run snapshots as cryptographically-signed, immutable audit packages.
+
+```bash
+# Lock a run as an evidence package
+wafpass evidence lock \
+  --run-id <uuid> \
+  --title "Q1 2026 SOC2 Evidence" \
+  --prepared-by "Jane Smith" \
+  --organization "Acme Corp" \
+  --audit-period "Q1 2026" \
+  --frameworks "SOC2,ISO 27001"
+
+# List locked evidence packages
+wafpass evidence list
+wafpass evidence list --project my-infra --limit 10
+
+# Show evidence package details (includes SHA-256 hash and public URL)
+wafpass evidence show <evidence-id>
+wafpass evidence show <evidence-id> --hash   # print only the hash digest
+```
+
+Each locked package gets a SHA-256 hash of its canonical snapshot and a unique public token. Auditors access the frozen HTML report at `/evidence/p/{token}` — no login required.
+
+---
 
 ## Usage
 
