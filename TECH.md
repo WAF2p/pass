@@ -9,13 +9,14 @@ This document covers internal architecture, design decisions, technical debt, an
 ```
 pass/
 ├── wafpass/
-│   ├── __init__.py          # Public API surface
+│   ├── __init__.py          # Public API surface (run_scan, WafpassResultSchema, …)
 │   ├── engine.py            # run_controls() — assertion evaluation loop
 │   ├── models.py            # Core dataclasses (Control, Check, CheckResult, …)
 │   ├── schema.py            # Pydantic models for wafpass-result.json contract
 │   ├── loader.py            # load_controls() — YAML → Control objects
 │   ├── control_schema.py    # Pydantic validation models for control authoring
-│   ├── cli.py               # Typer CLI entry point
+│   ├── cli.py               # Typer CLI — check, fix, login, logout, whoami, ui, control, evidence
+│   ├── auth.py              # Credential store — JWT tokens in ~/.wafpass/credentials.json
 │   ├── reporter.py          # Rich terminal output
 │   ├── pdf_reporter.py      # ReportLab PDF generation
 │   ├── baseline.py          # Baseline comparison (change tracking)
@@ -25,7 +26,7 @@ pass/
 │   ├── fixer.py             # Auto-remediation suggestions
 │   ├── secret_scanner.py    # Hardcoded credential detection
 │   ├── plan_parser.py       # Terraform plan JSON parsing
-│   ├── state.py             # Terraform state file handling
+│   ├── state.py             # Run versioning and change tracking
 │   ├── waivers.py           # Waiver file load and apply
 │   ├── wizard.py            # Interactive control authoring CLI
 │   ├── parser.py            # Legacy shim (backwards compat)
@@ -35,10 +36,24 @@ pass/
 │   │   └── plugins/
 │   │       ├── terraform.py # Terraform HCL parser (python-hcl2)
 │   │       ├── cdk.py       # AWS CDK parser
-│   │       ├── bicep.py     # Bicep/ARM parser
-│   │       └── pulumi.py    # Pulumi YAML/JSON parser
-│   └── export/              # Export formatters (JSON, CSV, …)
+│   │       ├── bicep.py     # Bicep/ARM parser (stub)
+│   │       └── pulumi.py    # Pulumi YAML/JSON parser (stub)
+│   └── export/              # Observability export plugins
+│       ├── base.py          # ExportPlugin protocol, ExportResult dataclass
+│       ├── config.py        # .wafpass-export.yml loader (${ENV_VAR} expansion)
+│       ├── registry.py      # Export plugin registry singleton
+│       └── plugins/
+│           ├── grafana.py   # Prometheus Pushgateway (fully implemented)
+│           ├── prometheus.py # Direct Pushgateway push
+│           ├── datadog.py   # Datadog Metrics API v2 (stub)
+│           ├── splunk.py    # Splunk HEC (stub)
+│           ├── slack.py     # Slack webhook (stub)
+│           └── webhook.py   # Generic HTTP POST (fully implemented)
 ├── controls/                # 73 WAF++ control YAML files (WAF-*.yml)
+├── hooks/
+│   ├── pre-commit           # Pre-commit hook script (bash, POSIX-compatible)
+│   ├── install.sh           # Installer for macOS / Linux / Git Bash
+│   └── install.ps1          # Installer for Windows PowerShell
 ├── tests/
 └── pyproject.toml
 ```
@@ -126,6 +141,72 @@ Key YAML fields that affect engine behaviour:
 
 ---
 
+## Authentication module (`auth.py`)
+
+`wafpass/auth.py` is a zero-knowledge credential store. It handles the full token lifecycle for the `wafpass login` / `logout` / `whoami` CLI commands and the `--push @` shorthand in `wafpass check`.
+
+### Credentials file
+
+`~/.wafpass/credentials.json` (mode `0o600`). Stored fields:
+
+| Field | Description |
+|-------|-------------|
+| `server_url` | Base URL of the wafpass-server (no trailing slash) |
+| `access_token` | Short-lived HS256 JWT |
+| `refresh_token` | Opaque long-lived token |
+| `username` | Username (informational) |
+| `role` | Role string returned by the server on login |
+| `expires_at` | ISO-8601 UTC — decoded from the JWT `exp` claim |
+
+The password is **never** written to disk.
+
+### Token flow
+
+```
+wafpass login <server_url>
+    │  POST /auth/login {username, password}
+    ▼
+do_login() → Credentials stored in ~/.wafpass/credentials.json
+    │  access_token, refresh_token, role, expires_at
+    ▼
+wafpass check --push @
+    │  resolve_push_target("@")
+    ▼
+get_valid_credentials()
+    ├─ load() → Credentials
+    ├─ if is_expired() → do_refresh() → update stored token
+    └─ bearer() → "Bearer <access_token>"
+    │  (push_url, {"Authorization": "Bearer ..."})
+    ▼
+httpx.post(push_url, content=result_json, headers=auth_headers)
+```
+
+### `Credentials.is_expired()`
+
+Treats the token as expired 30 seconds before the actual `exp` timestamp to avoid race conditions with the server's clock.
+
+### `resolve_push_target(push_arg)`
+
+| `push_arg` | Behaviour |
+|------------|-----------|
+| `None` / `""` | No push |
+| `"@"` | Uses `{server_url}/runs` from stored credentials with Bearer token |
+| Any URL | Uses that URL; injects Bearer token if the URL prefix matches `server_url` |
+
+### Evidence CLI subcommands
+
+`wafpass evidence` is a Typer sub-app that wraps three server endpoints:
+
+| Subcommand | Server call | Description |
+|------------|-------------|-------------|
+| `evidence lock` | `POST /evidence` | Freeze a run snapshot; print hash, public URL, QR link |
+| `evidence list` | `GET /evidence` | List locked packages (with optional `--project` filter) |
+| `evidence show` | `GET /evidence/{id}` | Print metadata; `--hash` prints only the SHA-256 digest |
+
+All three subcommands require an active `wafpass login` session.
+
+---
+
 ## Key design decisions
 
 ### Dataclasses over Pydantic for internal models
@@ -182,6 +263,73 @@ Nine assertion operators are declared in control YAMLs but not implemented in `e
 | Pulumi | Stub | YAML/JSON config, limited assertion coverage |
 
 CDK, Bicep, and Pulumi plugins are functional but have significantly less assertion operator coverage than the Terraform plugin, because the 73 controls were primarily written and tested against Terraform.
+
+---
+
+## Git hooks
+
+The `hooks/` directory contains a pre-commit hook that runs `wafpass check` against staged IaC files before every commit.  It is committed to the repository so the whole team can install it from source with a single command.
+
+### Installation
+
+```bash
+# macOS / Linux / Git Bash
+bash hooks/install.sh
+
+# Windows PowerShell
+.\hooks\install.ps1
+```
+
+The installer symlinks `hooks/pre-commit` into `.git/hooks/pre-commit` (Unix) or copies it (Windows).  A symlink means updates to `hooks/pre-commit` take effect immediately without re-running the installer.
+
+### What the hook does
+
+On every `git commit` the hook:
+
+1. Augments `PATH` with common Python tool locations (`~/.local/bin`, Homebrew, `.venv/bin`, pyenv shims) so the script works in IDE-launched git environments where PATH is restricted.
+2. Detects IaC types from staged file extensions:
+
+   | Staged files | IaC plugin used |
+   |---|---|
+   | `*.tf`, `*.tfvars` | `terraform` |
+   | `*.bicep` | `bicep` |
+   | `*.ts` / `*.py` when `cdk.json` is present | `cdk` |
+   | `*.ts` / `*.py` / `*.go` when `Pulumi.yaml` is present | `pulumi` |
+
+3. Runs `wafpass check --iac <type> --controls-dir <dir> --severity <level> --fail-on fail` for each detected IaC type.
+4. Validates any staged `controls/*.yml` files with `wafpass control validate`.
+5. Blocks the commit and prints remediation guidance if any check fails.
+
+When `wafpass` is not found on `PATH` the hook prints a warning but **does not block the commit** (unless `WAFPASS_STRICT=1` is set).
+
+### Configuration
+
+All settings are optional and can be set as environment variables or in `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `WAFPASS_CONTROLS_DIR` | `controls` | Path to the controls directory |
+| `WAFPASS_SEVERITY` | `high` | Minimum severity to enforce (`low`, `medium`, `high`, `critical`) |
+| `WAFPASS_FAIL_ON` | `fail` | When to exit non-zero: `fail`, `skip`, or `any` |
+| `WAFPASS_STRICT` | `0` | Set to `1` to abort the commit when wafpass is not installed |
+
+### IDE compatibility
+
+| IDE | Behaviour |
+|---|---|
+| **Git CLI** | Hook runs automatically via `.git/hooks/pre-commit`. |
+| **VS Code** | The built-in Git integration invokes `.git/hooks` automatically — no extra setup needed. |
+| **IntelliJ / JetBrains IDEs** | Hooks run by default (Settings → Version Control → Git → "Run Git hooks"). If wafpass is not found, ensure the IDE shell path resolves to your login shell (Settings → Tools → Terminal → Shell path), or set `WAFPASS_STRICT=0` to make the hook advisory rather than blocking. |
+
+### Bypassing the hook
+
+For exceptional cases (e.g. a WIP commit or a control waiver that hasn't been committed yet):
+
+```bash
+git commit --no-verify
+```
+
+Prefer adding a waiver to `risk_acceptance.yml` over bypassing the hook permanently.
 
 ---
 

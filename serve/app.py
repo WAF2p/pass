@@ -202,6 +202,7 @@ def _report_to_dict(report: Any) -> dict:
                     "message": r.message,
                     "remediation": r.remediation,
                     "example": r.example,
+                    "regulatory_mapping": cr.control.regulatory_mapping,
                 }
                 for r in cr.results
             ],
@@ -409,6 +410,8 @@ async def api_run_scan(req: ScanRequest):
             raise HTTPException(status_code=422, detail=f"Unknown IaC plugin: {req.iac}")
 
         state = plugin.parse(path)
+        # Extract regions from the parsed IaC state
+        detected_regions = plugin.extract_regions(state)
         results = run_controls(controls, state)
 
         waivers_data = []
@@ -428,7 +431,7 @@ async def api_run_scan(req: ScanRequest):
             controls_loaded=len(controls),
             controls_run=len([r for r in results if r.results]),
             results=results,
-            detected_regions=[],
+            detected_regions=detected_regions,
             source_paths=[str(path)],
         )
         data = _report_to_dict(report)
@@ -577,6 +580,7 @@ async def api_sandbox_scan(req: SandboxRequest):
             tf_file = Path(tmpdir) / "sandbox.tf"
             tf_file.write_text(req.content, encoding="utf-8")
             state = plugin.parse(Path(tmpdir))
+            detected_regions = plugin.extract_regions(state)
             results = run_controls(controls, state)
 
         waivers_data = []
@@ -596,7 +600,7 @@ async def api_sandbox_scan(req: SandboxRequest):
             controls_loaded=len(controls),
             controls_run=len([r for r in results if r.results]),
             results=results,
-            detected_regions=[],
+            detected_regions=detected_regions,
             source_paths=["sandbox.tf"],
         )
         return _report_to_dict(report)

@@ -8,9 +8,9 @@ engine-evaluated control format.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ── Allowed vocabulary ────────────────────────────────────────────────────────
 
@@ -69,12 +69,26 @@ _EngineLiteral = Literal["terraform", "checkov", "manual"]
 
 
 class WizardCheck(BaseModel):
-    """A single check within a wizard-generated control."""
+    """A single check within a wizard-generated control.
+
+    This is the canonical check structure that includes all fields needed
+    for automated evaluation. The engine expects: scope, assertions, title,
+    provider, remediation, example, on_fail.
+    """
 
     id: str
     engine: _EngineLiteral
     description: str
-    expected: str
+    expected: str = "true"  # Default for controls that don't have specific expected values
+
+    # Optional fields for full check structure
+    title: str | None = None
+    provider: str | None = None
+    scope: dict | None = None
+    assertions: list | None = None
+    remediation: str | None = None
+    example: dict | None = None
+    on_fail: str | None = None
 
     @field_validator("id")
     @classmethod
@@ -84,7 +98,7 @@ class WizardCheck(BaseModel):
             raise ValueError("check id must not be empty")
         return v
 
-    @field_validator("description", "expected")
+    @field_validator("description")
     @classmethod
     def text_not_empty(cls, v: str) -> str:
         v = v.strip()
@@ -102,6 +116,7 @@ class WizardControl(BaseModel):
     type: list[_TypeLiteral]
     description: str
     checks: list[WizardCheck]
+    regulatory_mapping: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
