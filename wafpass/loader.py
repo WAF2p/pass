@@ -85,7 +85,7 @@ def _parse_scope(raw: dict) -> Scope:
     )
 
 
-def _parse_check(raw: dict) -> Check | None:
+def _parse_check(raw: dict, control_severity: str | None = None) -> Check | None:
     """Parse a check dict. Returns None if not automated."""
     if not raw.get("automated", False):
         return None
@@ -93,12 +93,19 @@ def _parse_check(raw: dict) -> Check | None:
     scope_raw = raw.get("scope", {})
     assertions_raw = raw.get("assertions", [])
 
+    # Use check's severity if present, otherwise fall back to control's severity, then default to medium
+    check_severity = raw.get("severity")
+    if check_severity is None and control_severity is not None:
+        check_severity = control_severity
+    if check_severity is None:
+        check_severity = "medium"
+
     return Check(
         id=raw.get("id", ""),
         engine=raw.get("engine", ""),
         provider=raw.get("provider", ""),
         automated=raw.get("automated", False),
-        severity=raw.get("severity", "medium"),
+        severity=check_severity,
         title=raw.get("title", ""),
         scope=_parse_scope(scope_raw),
         assertions=[_parse_assertion(a) for a in assertions_raw],
@@ -114,9 +121,12 @@ def _parse_control(raw: dict) -> Control | None:
     if not checks_raw:
         return None
 
+    # Get control severity for check fallback
+    control_severity = raw.get("severity")
+
     checks: list[Check] = []
     for check_raw in checks_raw:
-        parsed = _parse_check(check_raw)
+        parsed = _parse_check(check_raw, control_severity=control_severity)
         if parsed is not None:
             checks.append(parsed)
 
