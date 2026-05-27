@@ -156,7 +156,7 @@ Public symbols exported from `wafpass`:
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "project":        "my-infra",
   "branch":         "main",
   "git_sha":        "abc1234",
