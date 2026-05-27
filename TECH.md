@@ -120,7 +120,7 @@ Assertions support 22+ operators. The `op` field maps to a handler function in `
 
 ### Result schema contract (`schema.py`)
 
-`WafpassResultSchema` is the stable JSON contract between `wafpass-core`, `wafpass-server`, and any downstream tooling. The server's `RunCreate` schema mirrors it. The schema is versioned (`schema_version = "1.0"`).
+`WafpassResultSchema` is the stable JSON contract between `wafpass-core`, `wafpass-server`, and any downstream tooling. The server's `RunCreate` schema mirrors it. The schema is versioned (`schema_version = "1.1"`).
 
 **Design rule:** Never add required fields to `WafpassResultSchema` without a default — doing so is a breaking change for clients that POST stored results.
 
