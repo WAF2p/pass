@@ -503,7 +503,12 @@ class TerraformPlugin:
             elif pname == "ovh":
                 region = resolve_region(pname, blk.attributes.get("region") or blk.attributes.get("location"))
                 if region:
-                    add(region, _detect_ovh_provider_from_region(region))
+                    provider = _detect_ovh_provider_from_region(region)
+                    # Format region as GRA-ovh to match region-data.ts (lowercase)
+                    r = region.lower()
+                    if not r.endswith("-ovh") and not r.endswith("-infomaniak") and not r.endswith("-leafcloud") and not r.endswith("-tcloud") and not r.endswith("-seeweb") and not r.endswith("-exoscale") and not r.endswith("-cyso") and not r.endswith("-numspot") and not r.endswith("-plusserver") and not r.endswith("-syselev") and not r.endswith("-outscale") and not r.endswith("-leaseweb"):
+                        r = r + "-" + provider
+                    add(r, provider)
             elif pname == "hcloud":
                 region = resolve_region(pname, blk.attributes.get("region") or blk.attributes.get("location"))
                 if region:
@@ -515,8 +520,12 @@ class TerraformPlugin:
                 region = resolve_region(pname, blk.attributes.get("region"))
                 if region:
                     r = str(region).strip()
+                    # Detect T Cloud based on region naming (ts-, os-, hk-)
                     if r.startswith("ts-") or r.startswith("os-") or r.startswith("hk-"):
                         add(r, "tcloud")
+                    # Detect StackIT based on region naming (ends with -stackit)
+                    elif r.endswith("-stackit"):
+                        add(r, "stackit")
                     else:
                         add(r, "openstack")
             elif pname == "stackit":
@@ -534,7 +543,7 @@ class TerraformPlugin:
             elif pname == "upcloud":
                 region = resolve_region(pname, blk.attributes.get("region"))
                 if region:
-                    add(region, "upcloud")
+                    add(region + "-upcloud", "upcloud")
 
         for blk in state.resources:
             rtype = blk.type.lower()
@@ -560,16 +569,24 @@ class TerraformPlugin:
                 region = blk.attributes.get("region") or blk.attributes.get("location")
                 if _is_literal_string(region):
                     r = str(region).strip()
-                    add(r, _detect_ovh_provider_from_region(r))
+                    provider = _detect_ovh_provider_from_region(r)
+                    # Format region as GRA-ovh to match region-data.ts (lowercase)
+                    r = r.lower()
+                    if not r.endswith("-ovh") and not r.endswith("-infomaniak") and not r.endswith("-leafcloud") and not r.endswith("-tcloud") and not r.endswith("-seeweb") and not r.endswith("-exoscale") and not r.endswith("-cyso") and not r.endswith("-numspot") and not r.endswith("-plusserver") and not r.endswith("-syselev") and not r.endswith("-outscale") and not r.endswith("-leaseweb"):
+                        r = r + "-" + provider
+                    add(r, provider)
                 else:
                     try_literal(region, "ovh")
             elif rtype.startswith("openstack_"):
                 region = blk.attributes.get("region")
                 if _is_literal_string(region):
                     r = str(region).strip()
-                    # T Cloud uses OpenStack, detect based on region naming
+                    # Detect T Cloud based on region naming (ts-, os-, hk-)
                     if r.startswith("ts-") or r.startswith("os-") or r.startswith("hk-"):
                         add(r, "tcloud")
+                    # Detect StackIT based on region naming (de-fld-X-stackit, de-muc-X-stackit, etc.)
+                    elif r.endswith("-stackit"):
+                        add(r, "stackit")
                     else:
                         add(r, "openstack")
                 else:
@@ -586,8 +603,9 @@ class TerraformPlugin:
                     if re.search(r"-dc\d+$", r):
                         continue
                     # For Cleura detection, we need the full region name with suffix
-                    # Check if this matches Cleura naming pattern (se-sto-X, se-Gothenburg-X, fi-hel-X, etc.)
-                    if re.match(r"^(se-sto-\d+|se-Gothenburg-\d+|fi-hel-\d+|de-fra-\d+|nl-ams-\d+|uk-lon-\d+)$", r):
+                    # Check if this matches Cleura naming pattern
+                    # Cleura regions: se-sto-X, se-Gothenburg-X, fi-hel-X, de-fra-X, nl-ams-X, uk-lon-X, sto, fra
+                    if re.match(r"^(se-sto-\d+|se-Gothenburg-\d+|fi-hel-\d+|de-fra-\d+|nl-ams-\d+|uk-lon-\d+|sto|fra)$", r):
                         # Add with -cleura suffix so it has coordinates in the dashboard
                         r = f"{r}-cleura"
                         add(r, "cleura")
@@ -658,7 +676,7 @@ class TerraformPlugin:
             elif rtype.startswith("upcloud_"):
                 region = blk.attributes.get("region") or blk.attributes.get("zone")
                 if region:
-                    add(region, "upcloud")
+                    add(region + "-upcloud", "upcloud")
 
         return result
 
