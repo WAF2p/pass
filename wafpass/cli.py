@@ -423,11 +423,11 @@ def check(
         merged_state.config_blocks.extend(state.config_blocks)
         all_regions.extend(plugin.extract_regions(state))
 
-    # Deduplicate regions while preserving order
-    seen_region_keys: set[tuple[str, str]] = set()
-    unique_regions: list[tuple[str, str]] = []
+    # Deduplicate regions while preserving order, keeping unique (region, provider, az) combinations
+    seen_region_keys: set[tuple[str, str, str]] = set()
+    unique_regions: list[tuple[str, str, str]] = []
     for r in all_regions:
-        key = (r[0].lower(), r[1])
+        key = (r[0].lower(), r[1], r[2] if len(r) > 2 else "")
         if key not in seen_region_keys:
             seen_region_keys.add(key)
             unique_regions.append(r)
