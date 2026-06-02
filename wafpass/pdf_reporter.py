@@ -665,7 +665,7 @@ def _fetch_tile_basemap(zoom: int = _MAP_TILE_ZOOM) -> "_PILImage.Image | None":
 def _render_world_map_pil(
     width_pt: float,
     height_pt: float,
-    regions: list[tuple[str, str]],
+    regions: list[tuple[str, str, str | None]],
 ) -> "io.BytesIO | None":
     """Render a modern world map as a BytesIO PNG.
 
@@ -734,7 +734,7 @@ def _render_world_map_pil(
     h_super = out_h * SUPER
     markers: list[tuple[int, int, tuple[int, int, int]]] = []
     seen: set[tuple[str, str]] = set()
-    for rname, prov in regions:
+    for rname, prov, _ in regions:
         key = (rname.strip().lower(), prov.lower())
         if key in seen:
             continue
@@ -1026,7 +1026,7 @@ class _WorldMapFlowable(Flowable):
         self,
         width: float,
         height: float,
-        regions: list[tuple[str, str]],
+        regions: list[tuple[str, str, str | None]],
     ) -> None:
         Flowable.__init__(self)
         self.width   = width
@@ -2111,7 +2111,7 @@ def _regulatory_alignment(report: Report, S: dict) -> list:
 
 def _data_geography_section(report: Report, S: dict) -> list:
     """Build the Data Geography & Sovereignty world-map section."""
-    regions: list[tuple[str, str]] = getattr(report, "detected_regions", [])
+    regions: list[tuple[str, str, str | None]] = getattr(report, "detected_regions", [])
 
     elems: list = [
         *_section_header("Data Geography & Sovereignty", S),
@@ -3379,7 +3379,7 @@ def _carbon_section(carbon: "CarbonResult", S: dict) -> list:
     from wafpass.carbon import CarbonResult  # local import – optional feature
 
     # Build the region disclaimer dynamically
-    _all_region_names = [r for r, _p in carbon.detected_regions] if carbon.detected_regions else []
+    _all_region_names = [r for r, _p, _z in carbon.detected_regions] if carbon.detected_regions else []
     _other_regions = [r for r in _all_region_names if r != carbon.primary_region]
     if _other_regions:
         _region_note = (

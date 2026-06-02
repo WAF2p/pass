@@ -90,6 +90,6 @@ class IaCPlugin(Protocol):
         """Parse all matching files under *path* and return an :class:`IaCState`."""
         ...
 
-    def extract_regions(self, state: IaCState) -> list[tuple[str, str]]:
-        """Return ``(region_name, provider)`` tuples detected in *state*."""
+    def extract_regions(self, state: IaCState) -> list[tuple[str, str, str]]:
+        """Return ``(region_name, provider, availability_zone)`` tuples detected in *state*."""
         ...
