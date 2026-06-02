@@ -406,7 +406,7 @@ def check(
 
     # ── Parse IaC files (merge across all paths) ───────────────────────────────
     merged_state = IaCState()
-    all_regions: list[tuple[str, str]] = []
+    all_regions: list[tuple[str, str, str]] = []
 
     for p in paths:
         if len(paths) > 1:

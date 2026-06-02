@@ -46,9 +46,9 @@ def _region_from_az(val: str) -> str | None:
 def _normalize_region_for_zone_grouping(region: str, provider: str) -> str:
     """Normalize region by stripping numeric zone suffixes for grouping.
 
-    Some providers (like OpenStack/SINA Cloud, IONOS, UpCloud) use region names that
-    include zone numbers (e.g., 'de-ham-1', 'de-fra-2', 'fi-hel1'). This function
-    strips those suffixes so all zones of the same region are grouped together.
+    Some providers (like OpenStack/SINA Cloud, IONOS, UpCloud, OVH) use region names that
+    include zone numbers (e.g., 'de-ham-1', 'de-fra-2', 'fi-hel1', 'gra2-ovh').
+    This function strips those suffixes so all zones of the same region are grouped together.
 
     Args:
         region: The region name (may include zone suffix)
@@ -58,6 +58,7 @@ def _normalize_region_for_zone_grouping(region: str, provider: str) -> str:
         Normalized region name without zone suffix for grouping purposes
     """
     r = region.lower().strip()
+    logger.debug("=== NORMALIZE DEBUG: input region=%s provider=%s", region, provider)
 
     # Providers that use numeric zone suffixes (region-N or regionN)
     # All zones of the same datacenter should be grouped under one region
@@ -69,37 +70,53 @@ def _normalize_region_for_zone_grouping(region: str, provider: str) -> str:
     }
 
     if provider not in providers_with_numeric_zones:
+        logger.debug("=== NORMALIZE DEBUG: provider not in list, returning %s", region)
         return region
 
-    # Remove provider suffix first if present (e.g., -sinacloud, -upcloud, -scaleway)
-    provider_suffixes = {"-sinacloud", "-upcloud", "-scaleway", "-ionos", "-hetzner", "-cleura",
-                         "-ovh", "-infomaniak", "-leafcloud", "-tcloud", "-seeweb", "-exoscale",
+    # For providers that use "region-provider" format in region-data.ts,
+    # we need to strip numeric suffixes but KEEP the provider suffix.
+
+    # All providers with provider suffixes
+    provider_suffixes = {"-ovh", "-infomaniak", "-leafcloud", "-tcloud", "-seeweb", "-exoscale",
                          "-cyso", "-numspot", "-plusserver", "-syselev", "-outscale", "-leaseweb",
-                         "-stackit"}
+                         "-stackit", "-sinacloud", "-upcloud", "-scaleway", "-ionos", "-hetzner", "-cleura"}
+
+    # Strip provider suffix to get the base region for numeric suffix stripping
     for suffix in provider_suffixes:
         if r.endswith(suffix):
             r = r[:-len(suffix)]
+            logger.debug("=== NORMALIZE DEBUG: stripped suffix %s, now r=%s", suffix, r)
             break
 
     # Pattern 1: region-1, region-2, region-3 (e.g., de-ham-1, de-fra-2)
-    # Pattern 2: region1, region2, region3 (e.g., fi-hel1, de-fra1)
-    # Pattern 3: region-1-N (e.g., de-fra-1-1, de-fra-1-2)
-
-    # Try to strip trailing -N or N pattern
-    # de-ham-1 -> de-ham, de-fra-2 -> de-fra
     m = re.match(r"^(.+)-(\d+)$", r)
     if m:
-        return m.group(1)
+        r = m.group(1)
+        logger.debug("=== NORMALIZE DEBUG: Pattern 1 matched, now r=%s", r)
 
-    # Try to strip trailing N pattern without dash
-    # fi-hel1 -> fi-hel, de-fra1 -> de-fra
+    # Pattern 2: region1, region2, region3 (e.g., fi-hel1, de-fra1)
     m = re.match(r"^(.+)(\d+)$", r)
     if m:
         base, num = m.groups()
-        # Only strip if the last character is a digit and base ends with a letter
-        # This handles fi-hel1 but not us-east1 (which is a different region pattern)
         if base and base[-1].isalpha():
-            return base
+            r = base
+            logger.debug("=== NORMALIZE DEBUG: Pattern 2 matched, now r=%s", r)
+
+    # Re-add provider suffix
+    provider_suffix_map = {
+        "ovh": "-ovh", "infomaniak": "-infomaniak", "leafcloud": "-leafcloud",
+        "tcloud": "-tcloud", "seeweb": "-seeweb", "exoscale": "-exoscale",
+        "cyso": "-cyso", "numspot": "-numspot", "plusserver": "-plusserver",
+        "syselev": "-syselev", "outscale": "-outscale", "leaseweb": "-leaseweb",
+        "stackit": "-stackit", "sinacloud": "-sinacloud", "upcloud": "-upcloud",
+        "scaleway": "-scaleway", "ionos": "-ionos", "hetzner": "-hetzner", "cleura": "-cleura"
+    }
+
+    if provider in provider_suffix_map and not r.endswith(provider_suffix_map[provider]):
+        r = r + provider_suffix_map[provider]
+        logger.debug("=== NORMALIZE DEBUG: re-added suffix, final r=%s", r)
+    else:
+        logger.debug("=== NORMALIZE DEBUG: suffix already present or provider not in map")
 
     return r
 
@@ -116,6 +133,11 @@ def _region_from_zone(val: str) -> str | None:
     """
     v = val.strip()
 
+    # GCP multi-region values like EU, US, ASIA (uppercase)
+    # These are valid GCP regions for sovereign/cloud-specific deployments
+    if v in ("EU", "US", "ASIA"):
+        return v
+
     # Azure-style regions like westeurope, northeurope, francecentral, germanywestcentral
     # Pattern: [direction][europe|north|south|central|west|east]+ (no digits)
     azure_pattern = re.compile(r"^(west|east|north|south|central|southeast|northeast|northwest|southwest)(europe|north|south|central|west|east)$")
@@ -124,10 +146,15 @@ def _region_from_zone(val: str) -> str | None:
 
     # GCP-style regions like europe-west1, us-central1, europe-central2
     # Pattern: word-word-digit (word can be europe, us, etc.)
-    gcp_pattern = re.compile(r"^(europe|us|ap|southamerica|northamerica|australia|africa|me|il|sa)-([a-z]+)\d+$")
+    # Also handle zones like europe-west1-a, europe-west1-b
+    gcp_pattern = re.compile(r"^(europe|us|ap|southamerica|northamerica|australia|africa|me|il|sa)-([a-z]+)\d+(-[a-z])?$")
     m = gcp_pattern.match(v)
     if m:
-        return v
+        # Return the base region without the zone suffix (e.g., europe-west1-a -> europe-west1)
+        base = m.group(0)
+        if m.group(3):  # zone suffix exists like "-a" (group 3 is the optional (-[a-z]) part)
+            base = base[:-len(m.group(3))]
+        return base
 
     # Alibaba Cloud regions like cn-hangzhou, cn-shanghai, cn-beijing
     # Pattern: two-letter country code followed by region name (no trailing digit)
@@ -461,17 +488,25 @@ class TerraformPlugin:
         seeweb, exoscale, cyso, numspot, plusserver, syselev, outscale, leaseweb),
         Hetzner (including Cleura), StackIT, Scaleway, IONOS, UpCloud.
         """
+        logger.debug("=== EXTRACT REGIONS DEBUG ===")
+        logger.debug("Resources: %s", [(r.address, r.type, r.attributes.get("region"), r.attributes.get("location"), r.attributes.get("zone")) for r in state.resources[:5]])
         seen: set[tuple[str, str, str]] = set()  # (region, provider, az)
         result: list[tuple[str, str, str]] = []  # (region, provider, az)
 
         def add(region: str, provider: str, az: str | None = None) -> None:
             # Normalize region for grouping - strip numeric zone suffixes
             normalized = _normalize_region_for_zone_grouping(region, provider)
-            # Deduplicate by (region, provider, az) to keep all unique AZs
-            key = (normalized.lower(), provider, az or normalized)
+            # For display in the dashboard, include the zone in the region name
+            # when a zone is present (e.g., "europe-west4-a" instead of just "europe-west4")
+            # This ensures the region name can be looked up in region-data.ts
+            display_region = normalized
+            if az is not None:
+                display_region = f"{normalized}-{az}"
+            # Deduplicate by (normalized region, provider, az) to keep all unique AZs
+            key = (normalized.lower(), provider, az if az is not None else None)
             if key not in seen:
                 seen.add(key)
-                result.append((normalized, provider, az or normalized))
+                result.append((display_region, provider, az))
 
         def try_literal(val: object, provider: str) -> None:
             if _is_literal_string(val):
@@ -481,16 +516,21 @@ class TerraformPlugin:
             if not _is_literal_string(val):
                 return
             s = str(val).strip()
-            if re.match(r"^[a-z]{2}-[a-z]+-\d+$", s):
-                add(s, "aws", s)
+            # Check if s looks like region+zone (e.g., us-east-1a, eu-central-1b)
+            # AWS zones are single letters at the end
+            m = re.match(r"^([a-z]{2}-[a-z]+-\d+)([a-z])$", s)
+            if m:
+                region = m.group(1)
+                zone = m.group(2)
+                add(region, "aws", zone)
                 return
-            region = _region_from_az(s)
-            if region:
-                add(region, "aws", s)
+            # Plain region without zone (e.g., us-east-1)
+            if re.match(r"^[a-z]{2}-[a-z]+-\d+$", s):
+                add(s, "aws", None)
                 return
             region = _region_from_string(s)
             if region:
-                add(region, "aws", s)
+                add(region, "aws", None)
 
         def try_zone(val: object, provider: str) -> None:
             if not _is_literal_string(val):
@@ -498,7 +538,10 @@ class TerraformPlugin:
             s = str(val).strip()
             # Try to extract base region, fall back to full value
             base_region = _region_from_zone(s)
-            add(base_region or s, provider)
+            # Pass just the zone part as the availability zone if base_region differs from full value
+            # (i.e., if there was a zone suffix like "-a" that got stripped)
+            az = s[len(base_region) + 1:] if base_region and base_region != s else None
+            add(base_region or s, provider, az)
 
         # Build a lookup of variable references in provider blocks
         # e.g., "${var.scaleway_region}" -> "scaleway_region"
@@ -555,8 +598,18 @@ class TerraformPlugin:
                         add(region, "azure", region)
             elif pname in ("google", "google-beta"):
                 region = resolve_region(pname, blk.attributes.get("region") or blk.attributes.get("location"))
+                logger.debug("GCP provider block - region: %s", region)
                 if region:
-                    add(region, "gcp", region)
+                    # GCP regions can include zone suffixes like europe-west1-a
+                    # Extract base region and zone
+                    base_region = _region_from_zone(region)
+                    logger.debug("GCP _region_from_zone(%s) -> %s", region, base_region)
+                    if base_region and region != base_region:
+                        # region has a zone suffix, extract the zone letter
+                        zone = region[len(base_region) + 1:] if len(region) > len(base_region) else None
+                        add(base_region, "gcp", zone)
+                    else:
+                        add(region, "gcp", None)
             elif pname == "alicloud":
                 region = resolve_region(pname, blk.attributes.get("region") or blk.attributes.get("zone"))
                 if region:
@@ -581,8 +634,13 @@ class TerraformPlugin:
             elif pname == "hcloud":
                 region = resolve_region(pname, blk.attributes.get("region") or blk.attributes.get("location"))
                 if region:
-                    if region.startswith("se-") or region.startswith("se-Gothenburg"):
+                    # Cleura regions (these have specific patterns that distinguish them from Hetzner)
+                    # Cleura regions: se-sto-X, se-Gothenburg-X, fi-hel-X, de-fra-X, nl-ams-X, uk-lon-X, sto, fra
+                    if re.match(r"^(se-sto|se-Gothenburg|fi-hel|de-fra|nl-ams|uk-lon|sto|fra)$", region.lower()):
                         add(region, "cleura", region)
+                    elif region.startswith("se-") or region.startswith("se-Gothenburg"):
+                        # Hetzner Stockholm or Gothenburg regions (without -cleura suffix)
+                        add(region, "hetzner", region)
                     else:
                         add(region, "hetzner", region)
             elif pname == "openstack":
@@ -624,12 +682,42 @@ class TerraformPlugin:
                 for attr in ("region", "availability_zone", "service_name"):
                     try_aws(blk.attributes.get(attr))
             elif rtype.startswith("azurerm_"):
-                try_literal(blk.attributes.get("location"), "azure")
+                # Azure region from location attribute
+                location = blk.attributes.get("location")
+                zone = blk.attributes.get("zone")
+                if _is_literal_string(location):
+                    region = str(location).strip()
+                    # Azure zones are stored as separate "zone" attribute (e.g., "1", "2", "3")
+                    # Combine region and zone for proper detection
+                    if _is_literal_string(zone):
+                        az = str(zone).strip()
+                        add(region, "azure", az)
+                    else:
+                        add(region, "azure", None)
             elif rtype.startswith("google_"):
-                try_literal(blk.attributes.get("region") or blk.attributes.get("location"), "gcp")
+                val = blk.attributes.get("region") or blk.attributes.get("location")
+                if _is_literal_string(val):
+                    region = str(val).strip()
+                    logger.debug("GCP resource %s - region: %s", blk.address, region)
+                    # GCP regions can include zone suffixes like europe-west1-a
+                    base_region = _region_from_zone(region)
+                    logger.debug("GCP _region_from_zone(%s) -> %s", region, base_region)
+                    if base_region and region != base_region:
+                        zone = region[len(base_region) + 1:] if len(region) > len(base_region) else None
+                        add(base_region, "gcp", zone)
+                    else:
+                        add(region, "gcp", None)
+                # Also check zone attribute to extract base region from zone suffix
+                zone_val = blk.attributes.get("zone")
+                if _is_literal_string(zone_val):
+                    zone_str = str(zone_val).strip()
+                    base_from_zone = _region_from_zone(zone_str)
+                    if base_from_zone:
+                        add(base_from_zone, "gcp", zone_str[len(base_from_zone) + 1:] if len(zone_str) > len(base_from_zone) else None)
             elif rtype.startswith("alicloud_"):
                 try_zone(
                     blk.attributes.get("region")
+                    or blk.attributes.get("availability_zone")  # Alibaba uses availability_zone
                     or blk.attributes.get("zone")
                     or blk.attributes.get("zone_id"),
                     "alicloud",
@@ -755,8 +843,25 @@ class TerraformPlugin:
                 if region:
                     add(region + "-upcloud", "upcloud", region)
 
+        logger.debug("extract_regions result: %s", result)
         return result
 
 
 # ── Self-register ─────────────────────────────────────────────────────────────
 registry.register(TerraformPlugin())
+
+
+def debug_extract_regions(state):
+    """Debug helper to extract and log regions."""
+    result = []
+    for blk in state.providers:
+        pname = blk.type.lower()
+        if pname in ("google", "google-beta"):
+            region = blk.attributes.get("region") or blk.attributes.get("location")
+            print(f"DEBUG: GCP provider block, region attribute = {region!r}")
+    for blk in state.resources:
+        rtype = blk.type.lower()
+        if rtype.startswith("google_"):
+            region = blk.attributes.get("region") or blk.attributes.get("location")
+            print(f"DEBUG: GCP resource {blk.address}, region = {region!r}")
+    return result

@@ -115,8 +115,9 @@ class Report:
     controls_loaded: int
     controls_run: int
     results: list[ControlResult] = field(default_factory=list)
-    detected_regions: list[tuple[str, str]] = field(default_factory=list)
-    # Each entry: (region_name, provider) e.g. ("eu-central-1", "aws")
+    detected_regions: list[tuple[str, str, str | None]] = field(default_factory=list)
+    # Each entry: (region_name, provider, availability_zone) e.g. ("eu-central-1", "aws", "eu-central-1a")
+    # availability_zone may be None for regions that don't use AZs (e.g., GCP multi-regions)
     source_paths: list[str] = field(default_factory=list)
     # Individual paths scanned (mirrors path when single; populated for multi-path runs)
 
