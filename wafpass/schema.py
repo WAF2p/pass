@@ -130,6 +130,10 @@ class WafpassResultSchema(BaseModel):
         default="local",
         description="How this run was triggered: local | github-actions | gitlab-ci | …",
     )
+    run: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Run metadata including CI/CD status. Add {'is_cicd': True} for pipeline runs.",
+    )
     iac_framework: str = Field(
         default="terraform",
         description="IaC framework scanned: terraform | cdk | bicep | pulumi | …",
