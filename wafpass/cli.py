@@ -203,6 +203,12 @@ def check(
         "--triggered-by",
         help="Trigger source: local, github-actions, gitlab-ci, … (auto-detected if not set).",
     ),
+    is_cicd: bool = typer.Option(
+        False,
+        "--is-cicd",
+        flag_value=True,
+        help="Set to true if this run was triggered by a CI/CD pipeline.",
+    ),
     stage: str = typer.Option(
         "",
         "--stage",
@@ -406,7 +412,7 @@ def check(
 
     # ── Parse IaC files (merge across all paths) ───────────────────────────────
     merged_state = IaCState()
-    all_regions: list[tuple[str, str]] = []
+    all_regions: list[tuple[str, str, str]] = []
 
     for p in paths:
         if len(paths) > 1:
@@ -423,11 +429,11 @@ def check(
         merged_state.config_blocks.extend(state.config_blocks)
         all_regions.extend(plugin.extract_regions(state))
 
-    # Deduplicate regions while preserving order
-    seen_region_keys: set[tuple[str, str]] = set()
-    unique_regions: list[tuple[str, str]] = []
+    # Deduplicate regions while preserving order, keeping unique (region, provider, az) combinations
+    seen_region_keys: set[tuple[str, str, str]] = set()
+    unique_regions: list[tuple[str, str, str]] = []
     for r in all_regions:
-        key = (r[0].lower(), r[1])
+        key = (r[0].lower(), r[1], r[2] if len(r) > 2 else "")
         if key not in seen_region_keys:
             seen_region_keys.add(key)
             unique_regions.append(r)
@@ -710,6 +716,7 @@ def check(
             branch=_branch,
             git_sha=_sha,
             triggered_by=_triggered,
+            run={"is_cicd": is_cicd},
             iac_framework=iac.lower(),
             stage=stage,
             score=_score,

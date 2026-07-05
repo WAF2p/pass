@@ -176,6 +176,10 @@
       Findings
       <span x-show="results && results.total_fail > 0" class="ml-auto sidebar-count sidebar-count-fail" x-text="results ? results.total_fail : ''"></span>
     </button>
+    <button @click="navTo('compliance-readiness')" :class="page==='compliance-readiness' ? 'active' : ''" class="sidebar-link w-full">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043A3.745 3.745 0 013 16.5c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 15c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z"/></svg>
+      Compliance Readiness
+    </button>
     <button @click="navTo('compliance')" :class="page==='compliance' ? 'active' : ''" class="sidebar-link w-full">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       Compliance Matrix
@@ -271,6 +275,7 @@
         'gap-analysis': 'Gap Analysis',
         waivers: 'Waivers Manager',
         'risk-acceptance': 'Risk Acceptance',
+        'compliance-readiness': 'Compliance Readiness',
         scan: 'Run Scan',
         sandbox: 'Architect Sandbox',
         regions: 'Deployed Regions',
@@ -287,6 +292,7 @@
         'gap-analysis': 'Regulatory gap view grouped by jurisdiction — identify which country-specific requirements are not yet met',
         waivers: 'Manage intentional risk acceptances and export to .wafpass-skip.yml',
         'risk-acceptance': 'Formal risk acceptance register with full approval and audit trail',
+        'compliance-readiness': 'Evidence collection status and audit readiness scores — prepare for compliance audits with offline support',
         scan: 'Execute a WAF++ PASS scan against your IaC directory',
         sandbox: 'Write Terraform and instantly evaluate it against all WAF++ controls',
         changelog: 'WAFPass release history and setup instructions',
@@ -1020,6 +1026,160 @@
         </template>
       </div>
 
+    </section>
+
+
+    <!-- ══ COMPLIANCE READINESS ════════════════════════════════════════════ -->
+    <section x-show="page === 'compliance-readiness'" x-transition>
+      <!-- Stats bar -->
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-6">
+        <div class="card text-center" style="background:rgba(34,197,94,.06);border-color:rgba(34,197,94,.2);">
+          <div class="text-3xl font-bold text-green-600" x-text="complianceReadiness.totalFrameworkCoverage + '%'"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Controls Mapped</div>
+        </div>
+        <div class="card text-center" style="background:rgba(14,165,233,.06);border-color:rgba(14,165,233,.2);">
+          <div class="text-3xl font-bold text-sky-600" x-text="complianceReadiness.frameworkCount"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Frameworks</div>
+        </div>
+        <div class="card text-center" style="background:rgba(234,179,8,.06);border-color:rgba(234,179,8,.2);">
+          <div class="text-3xl font-bold text-amber-600" x-text="complianceReadiness.evidenceCompleteness + '%'"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Evidence Ready</div>
+        </div>
+        <div class="card text-center" style="background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2);">
+          <div class="text-3xl font-bold text-red-600" x-text="complianceReadiness.findingsWithoutRemediation"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Missing Remediation</div>
+        </div>
+        <div class="card text-center" style="background:rgba(139,92,246,.06);border-color:rgba(139,92,246,.2);">
+          <div class="text-3xl font-bold text-purple-600" x-text="complianceReadiness.readinessScore + '%'"></div>
+          <div class="text-xs text-slate-500 mt-1 font-medium">Ready for Audit</div>
+        </div>
+      </div>
+
+      <!-- Audit Readiness Indicator -->
+      <div class="card mb-6">
+        <div class="flex flex-col md:flex-row items-center justify-between gap-6">
+          <div>
+            <h3 class="font-bold text-slate-800 text-lg">Audit Readiness Score</h3>
+            <p class="text-sm text-slate-500 mt-1">
+              <span class="font-medium" x-text="complianceReadiness.readinessScore"></span>/100
+              <span x-show="complianceReadiness.readinessScore >= 70" class="inline-block px-2 py-0.5 ml-2 rounded-full bg-green-100 text-green-700 text-xs font-medium">Ready for Audit</span>
+              <span x-show="complianceReadiness.readinessScore >= 50 && complianceReadiness.readinessScore < 70" class="inline-block px-2 py-0.5 ml-2 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">Near Ready</span>
+              <span x-show="complianceReadiness.readinessScore < 50" class="inline-block px-2 py-0.5 ml-2 rounded-full bg-red-100 text-red-700 text-xs font-medium">Needs Work</span>
+            </p>
+            <div class="text-xs text-slate-400 mt-2">
+              <p>Based on: <span class="font-medium">Framework Coverage</span>, <span class="font-medium">Evidence Completeness</span>, and <span class="font-medium">Remediation Documentation</span></p>
+            </div>
+          </div>
+          <!-- Visual indicator -->
+          <div class="flex-1 w-full md:w-auto min-w-0">
+            <div class="relative w-48 h-48 mx-auto md:mx-0">
+              <svg class="w-full h-full" viewBox="0 0 100 100">
+                <!-- Background circle -->
+                <circle cx="50" cy="50" r="45" fill="none" stroke="#f1f5f9" stroke-width="8" />
+                <!-- Progress arc -->
+                <circle
+                  cx="50" cy="50" r="45"
+                  fill="none"
+                  stroke="#8b5cf6"
+                  stroke-width="8"
+                  stroke-dasharray="283"
+                  :stroke-dashoffset="Math.max(0, 283 - (complianceReadiness.readinessScore / 100) * 283)"
+                  stroke-linecap="round"
+                  class="transition-all duration-500 ease-out"
+                />
+              </svg>
+              <div class="absolute inset-0 flex items-center justify-center">
+                <div class="text-center">
+                  <div class="text-4xl font-bold text-slate-800" x-text="complianceReadiness.readinessScore"></div>
+                  <div class="text-xs text-slate-500 font-medium mt-1">Ready Score</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Evidence breakdown -->
+      <div class="card mb-6">
+        <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Evidence Collection by Framework
+        </h3>
+        <div class="space-y-3">
+          <template x-for="fw in complianceReadiness.frameworks" :key="fw.name">
+            <div class="border-b border-slate-100 pb-3 last:border-0">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <div class="text-sm font-bold text-slate-800" x-text="fw.name"></div>
+                  <div class="text-xs text-slate-500" x-text="fw.description"></div>
+                </div>
+                <div class="text-right">
+                  <div class="text-sm font-bold" :class="fw.pct >= 80 ? 'text-green-600' : fw.pct >= 50 ? 'text-amber-600' : 'text-red-600'" x-text="fw.pct + '% complete'"></div>
+                  <div class="text-xs text-slate-500" x-text="fw.controls + ' controls'"></div>
+                </div>
+              </div>
+              <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div :class="fw.pct >= 80 ? 'bg-green-500' : fw.pct >= 50 ? 'bg-amber-400' : 'bg-red-500'" :style="'width:' + fw.pct + '%'"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Expiring waivers/risk acceptances -->
+      <div class="card mb-6">
+        <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          Waivers & Risk Acceptances Expiring (30 days)
+        </h3>
+        <div x-show="Object.keys(waivers).length === 0 && Object.keys(riskAcceptances).length === 0" class="text-center py-8 text-slate-400 text-sm">
+          No waivers or risk acceptances configured.
+        </div>
+        <div class="space-y-2">
+          <template x-for="(waiver, controlId) in waivers" :key="'waiver-' + controlId">
+            <div class="flex items-center justify-between p-3 bg-orange-50 rounded-lg border border-orange-100">
+              <div>
+                <div class="font-mono text-sm font-bold text-orange-700" x-text="controlId"></div>
+                <div class="text-xs text-orange-600" x-text="waiver.reason"></div>
+                <div class="text-xs text-slate-500 mt-0.5" x-text="'Expires: ' + (waiver.expires || 'Not set')"></div>
+              </div>
+              <span class="text-xs font-medium px-2 py-1 bg-orange-200 text-orange-800 rounded" x-text="waiver.expires && isExpiringSoon(waiver.expires) ? 'EXPIRING SOON' : 'ACTIVE'"></span>
+            </div>
+          </template>
+          <template x-for="(ra, controlId) in riskAcceptances" :key="'ra-' + controlId">
+            <div class="flex items-center justify-between p-3 bg-sky-50 rounded-lg border border-sky-100">
+              <div>
+                <div class="font-mono text-sm font-bold text-sky-700" x-text="controlId"></div>
+                <div class="text-xs text-sky-600" x-text="ra.reason"></div>
+                <div class="text-xs text-slate-500 mt-0.5" x-text="'Expires: ' + (ra.expires || 'Not set') + ' | Risk: ' + (ra.residual_risk || 'medium')"></div>
+              </div>
+              <span class="text-xs font-medium px-2 py-1 bg-sky-200 text-sky-800 rounded" x-text="ra.expires && isExpiringSoon(ra.expires) ? 'EXPIRING SOON' : 'ACTIVE'"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Remediation documentation gap -->
+      <div class="card">
+        <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          Findings Missing Remediation Documentation
+        </h3>
+        <div class="space-y-2">
+          <template x-for="control in complianceReadiness.controlsWithoutRemediation.slice(0, 10)" :key="'missing-' + control.id">
+            <div class="flex items-start gap-3 p-3 bg-red-50 rounded-lg border border-red-100">
+              <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <div>
+                <div class="font-mono text-sm font-bold text-red-700" x-text="control.id"></div>
+                <div class="text-xs text-red-600" x-text="control.title"></div>
+                <div class="text-xs text-slate-500 mt-1" x-text="control.category + ' | severity: ' + control.severity"></div>
+              </div>
+              <button @click="navTo('controls'); selectedControlId = control.id" class="ml-auto text-xs text-sky-600 hover:underline">View Control</button>
+            </div>
+          </template>
+          <div x-show="complianceReadiness.controlsWithoutRemediation.length > 10" class="text-center text-xs text-slate-400 py-2" x-text="'+' + (complianceReadiness.controlsWithoutRemediation.length - 10) + ' more controls missing remediation'"></div>
+        </div>
+      </div>
     </section>
 
 
@@ -3417,6 +3577,9 @@
     raEditId: null,
     raForm: { id: '', reason: '', approver: '', owner: '', rfc: '', jira_link: '', other_link: '', notes: '', risk_level: 'accepted', residual_risk: 'medium', expires: '', accepted_at: '' },
 
+    // Compliance Readiness
+    complianceReadinessData: null,
+
     // Auto-Fix
     autoFix: { loading: false, applying: false, error: null, result: null, showModal: false, controlIds: null },
 
@@ -3459,6 +3622,10 @@
         else this._roi = { risk: 0, effort: 0, fail: 0, savings: 0 };
       });
       this.$watch('riskAcceptances', () => this.$nextTick(() => this.initCharts()));
+      // Load compliance readiness data if on that page
+      if (this.page === 'compliance-readiness') {
+        this.loadComplianceReadiness();
+      }
     },
 
     // ── Computed ───────────────────────────────────────────────────────
@@ -3708,6 +3875,107 @@
         const passing = pControls.filter(c => passingIds.has(c.id) || this.waivers[c.id] || this.riskAcceptances[c.id]).length;
         return { name: p, total: pControls.length, passing, pct: Math.round(passing / pControls.length * 100) };
       });
+    },
+
+    get complianceReadiness() {
+      // Use backend data if available
+      if (this.complianceReadinessData) {
+        return this.complianceReadinessData;
+      }
+
+      // Framework data from controls mapping
+      const fwMap = {};
+      const fwDesc = {
+        'GDPR': 'General Data Protection Regulation (EU) 2016/679',
+        'ISO 27001:2022': 'Information Security Management Systems',
+        'BSI C5:2020': 'Cloud Computing Compliance Criteria Catalogue',
+        'EUCS (ENISA)': 'EU Cybersecurity Certification Scheme for Cloud',
+        'CSRD': 'Corporate Sustainability Reporting Directive',
+      };
+      this.controls.forEach(ctrl => {
+        (ctrl.regulatory_mapping || []).forEach(m => {
+          if (!fwMap[m.framework]) {
+            fwMap[m.framework] = {
+              name: m.framework,
+              description: fwDesc[m.framework] || '',
+              controls: new Set(),
+              mapped: 0,
+              unmapped: 0,
+            };
+          }
+          fwMap[m.framework].controls.add(ctrl.id);
+          // Count as mapped if it has regulatory_mapping
+          fwMap[m.framework].mapped++;
+        });
+      });
+
+      // Evidence completeness: count controls with evidence requirements
+      const evidenceData = {};
+      this.controls.forEach(ctrl => {
+        const evidence = ctrl.evidence || {};
+        const hasEvidence = evidence.required && evidence.required.length > 0;
+        (ctrl.regulatory_mapping || []).forEach(m => {
+          if (!evidenceData[m.framework]) {
+            evidenceData[m.framework] = { total: 0, complete: 0 };
+          }
+          evidenceData[m.framework].total++;
+          if (hasEvidence) evidenceData[m.framework].complete++;
+        });
+      });
+
+      // Findings missing remediation
+      const controlsWithoutRemediation = this.controls.filter(c => !c.remediation || c.remediation.trim() === '');
+
+      // Calculate readiness score
+      // Based on: framework coverage, evidence completeness, no expiring soon, no missing remediation
+      const frameworkCoverage = this.controls.length > 0
+        ? Math.round(this.controls.filter(c => c.regulatory_mapping && c.regulatory_mapping.length > 0).length / this.controls.length * 100)
+        : 0;
+
+      const frameworkCount = Object.keys(fwMap).length;
+      const totalControlsMapped = Object.values(fwMap).reduce((sum, fw) => sum + fw.mapped, 0);
+      const totalControls = this.controls.length;
+
+      // Evidence completeness (average across frameworks with regulatory mapping)
+      const evidenceKeys = Object.keys(evidenceData);
+      const evidenceCompleteness = evidenceKeys.length > 0
+        ? Math.round(Object.values(evidenceData).reduce((sum, ed) => sum + (ed.complete / ed.total * 100), 0) / evidenceKeys.length)
+        : 0;
+
+      // Findings without remediation
+      const findingsWithoutRemediation = controlsWithoutRemediation.length;
+
+      // Readiness score (0-100)
+      // Weighted average of coverage, evidence, and inverse of missing remediation
+      const remediationPenalty = Math.min(20, Math.round(findingsWithoutRemediation / totalControls * 20));
+      const readinessScore = Math.max(0, Math.round((frameworkCoverage * 0.4) + (evidenceCompleteness * 0.4) - remediationPenalty));
+
+      // Framework details for progress bars
+      const frameworks = Object.values(fwMap).map(fw => {
+        const controlsLen = fw.controls.size;
+        const pct = controlsLen > 0 ? Math.round(fw.mapped / controlsLen * 100) : 0;
+        return { name: fw.name, description: fw.description, controls: controlsLen, pct };
+      });
+
+      return {
+        totalFrameworkCoverage: frameworkCoverage,
+        frameworkCount: frameworkCount,
+        evidenceCompleteness: evidenceCompleteness,
+        findingsWithoutRemediation: findingsWithoutRemediation,
+        readinessScore: readinessScore,
+        frameworks: frameworks.sort((a, b) => b.pct - a.pct),
+        controlsWithoutRemediation: controlsWithoutRemediation.slice(0, 20),
+      };
+    },
+
+    // Helper: Check if date is within 30 days
+    isExpiringSoon(dateStr) {
+      if (!dateStr) return false;
+      const today = new Date();
+      const target = new Date(dateStr);
+      const diffTime = target - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays >= 0 && diffDays <= 30;
     },
 
     get effectiveScore() {
@@ -4001,6 +4269,18 @@
       return d >= new Date() && d <= new Date(Date.now() + 30 * 86400000);
     },
 
+    // ── Compliance Readiness ───────────────────────────────────────────
+    async loadComplianceReadiness() {
+      try {
+        const res = await fetch('/api/compliance-readiness');
+        if (res.ok) {
+          this.complianceReadinessData = await res.json();
+        }
+      } catch(e) {
+        this.complianceReadinessData = null;
+      }
+    },
+
     // ── Waivers ────────────────────────────────────────────────────────
     toggleWaiver(ctrl) {
       if (this.waivers[ctrl.id]) {
@@ -4151,6 +4431,7 @@
       this.sidebarOpen = false;
       history.replaceState(null, '', '#' + p);
       if (p === 'regions') this.$nextTick(() => this.renderWorldMap());
+      if (p === 'compliance-readiness') this.loadComplianceReadiness();
     },
 
     saveSettings() {
@@ -4209,7 +4490,7 @@
       const raw = hash.slice(1);
       const qmark = raw.indexOf('?');
       const pageName = qmark === -1 ? raw : raw.slice(0, qmark);
-      const validPages = ['dashboard','controls','findings','compliance','gap-analysis','waivers','risk-acceptance','scan','sandbox','regions','changelog','settings','exploitpath','journey'];
+      const validPages = ['dashboard','controls','findings','compliance','gap-analysis','waivers','risk-acceptance','compliance-readiness','scan','sandbox','regions','changelog','settings','exploitpath','journey'];
       if (!validPages.includes(pageName)) return;
       this.page = pageName;
       if (pageName === 'regions') this.$nextTick(() => this.renderWorldMap());

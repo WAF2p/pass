@@ -217,8 +217,8 @@ class CarbonResult:
     # Per-resource breakdown
     breakdown: list[ResourceFootprint]
 
-    # Region info
-    detected_regions: list[tuple[str, str]]   # [(provider, region), …]
+    # Region info - now includes availability zone: [(region, provider, az), …]
+    detected_regions: list[tuple[str, str, str | None]]
     primary_region: str
     primary_intensity: float                  # kgCO2e/kWh
     greenest_region_label: str
@@ -248,10 +248,10 @@ class CarbonResult:
 _PREFERRED_PROVIDERS = {"aws", "azurerm", "google", "azure"}
 
 
-def _detect_primary_region(detected_regions: list[tuple[str, str]]) -> str:
+def _detect_primary_region(detected_regions: list[tuple[str, str, str] | tuple[str, str]]) -> str:
     """Pick the most representative region from the detected list.
 
-    Each entry in *detected_regions* is a ``(region_name, provider)`` tuple
+    Each entry in *detected_regions* is a ``(region_name, provider, [az])`` tuple
     (the same format used by ``IaCPlugin.extract_regions()`` and stored on
     :class:`Report.detected_regions <wafpass.models.Report>`).
 
@@ -266,17 +266,22 @@ def _detect_primary_region(detected_regions: list[tuple[str, str]]) -> str:
         return "eu-central-1"
 
     # 1. Prefer major provider + known region
-    for region, provider in detected_regions:
+    for entry in detected_regions:
+        region = entry[0]
+        provider = entry[1]
         if provider.lower() in _PREFERRED_PROVIDERS and region in REGION_CARBON_INTENSITY:
             return region
 
     # 2. Any known region
-    for region, _provider in detected_regions:
+    for entry in detected_regions:
+        region = entry[0]
         if region in REGION_CARBON_INTENSITY:
             return region
 
     # 3. Major provider fallback
-    for region, provider in detected_regions:
+    for entry in detected_regions:
+        region = entry[0]
+        provider = entry[1]
         if provider.lower() in _PREFERRED_PROVIDERS:
             return region
 
@@ -304,14 +309,15 @@ def _has_waste_controls_failing(report: Report) -> bool:
 def compute_carbon(
     state: IaCState,
     report: Report,
-    detected_regions: list[tuple[str, str]],
+    detected_regions: list[tuple[str, str, str | None]],
 ) -> CarbonResult:
     """Compute the estimated monthly carbon footprint of the IaC infrastructure.
 
     Args:
         state:            Parsed IaC state (resources list used for power lookup).
         report:           WAF++ check report (used to detect waste-control failures).
-        detected_regions: List of ``(provider, region)`` tuples from the IaC parser.
+        detected_regions: List of ``(region_name, provider, availability_zone)`` tuples from the IaC parser.
+                          availability_zone may be None for regions that don't use AZs.
 
     Returns:
         :class:`CarbonResult` with full breakdown and equivalences.

@@ -84,7 +84,7 @@ def build_run_snapshot(report, run_id: str, iac_plugin: str, stage: str = "") ->
         "stage": stage,
         "source_paths": report.source_paths,
         "detected_regions": [
-            {"region": r, "provider": p} for r, p in report.detected_regions
+            {"region": r, "provider": p, "availability_zone": az} for r, p, az in report.detected_regions
         ],
         "score": score,
         "totals": {

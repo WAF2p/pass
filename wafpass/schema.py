@@ -25,7 +25,7 @@ Shape
       "path":           "infra/",
       "controls_loaded": 70,
       "controls_run":    65,
-      "detected_regions": [["eu-central-1", "aws"]],
+      "detected_regions": [["eu-central-1", "aws", "eu-central-1a"]],
       "source_paths":   ["infra/"],
       "findings": [
         {
@@ -130,6 +130,10 @@ class WafpassResultSchema(BaseModel):
         default="local",
         description="How this run was triggered: local | github-actions | gitlab-ci | …",
     )
+    run: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Run metadata including CI/CD status. Add {'is_cicd': True} for pipeline runs.",
+    )
     iac_framework: str = Field(
         default="terraform",
         description="IaC framework scanned: terraform | cdk | bicep | pulumi | …",
@@ -155,9 +159,10 @@ class WafpassResultSchema(BaseModel):
     path: str = Field(default="", description="Display path(s) scanned.")
     controls_loaded: int = Field(default=0, ge=0)
     controls_run: int = Field(default=0, ge=0)
-    detected_regions: list[list[str]] = Field(
+    detected_regions: list[list[str | None]] = Field(
         default_factory=list,
-        description="Detected cloud regions: [[region, provider], ...].",
+        description="Detected cloud regions: [[region, provider, availability_zone], ...]. "
+        "availability_zone may be null for regions that don't use AZs (e.g., GCP multi-regions).",
     )
     source_paths: list[str] = Field(default_factory=list)
 

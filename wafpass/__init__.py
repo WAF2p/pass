@@ -85,7 +85,7 @@ def run_scan(
     # Build IaC state from all paths
     all_blocks: list[IaCBlock] = []
     source_paths: list[str] = []
-    detected_regions: list[tuple[str, str]] = []
+    detected_regions: list[tuple[str, str, str]] = []
 
     for p in paths:
         state = registry.load(Path(p))
