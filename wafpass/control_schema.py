@@ -20,8 +20,10 @@ PILLARS = [
     "performance",
     "reliability",
     "operational",
+    "operations",
     "sustainability",
     "sovereign",
+    "agentic",
 ]
 
 SEVERITIES = ["critical", "high", "medium", "low"]
@@ -36,7 +38,7 @@ TYPES = [
     "cost",
 ]
 
-ENGINES = ["terraform", "checkov", "manual"]
+ENGINES = ["terraform", "checkov", "manual", "config"]
 
 # Pillar → short prefix used in control IDs (e.g. SOV → SOV-011)
 PILLAR_TO_PREFIX: dict[str, str] = {
@@ -45,8 +47,10 @@ PILLAR_TO_PREFIX: dict[str, str] = {
     "performance": "PERF",
     "reliability": "REL",
     "operational": "OPS",
+    "operations": "OPS",
     "sustainability": "SUS",
     "sovereign": "SOV",
+    "agentic": "AGN",
 }
 
 _PillarLiteral = Literal[
@@ -55,14 +59,16 @@ _PillarLiteral = Literal[
     "performance",
     "reliability",
     "operational",
+    "operations",
     "sustainability",
     "sovereign",
+    "agentic",
 ]
 _SeverityLiteral = Literal["critical", "high", "medium", "low"]
 _TypeLiteral = Literal[
     "governance", "configuration", "iac", "network", "identity", "data", "cost"
 ]
-_EngineLiteral = Literal["terraform", "checkov", "manual"]
+_EngineLiteral = Literal["terraform", "checkov", "manual", "config"]
 
 
 # ── Sub-models ────────────────────────────────────────────────────────────────

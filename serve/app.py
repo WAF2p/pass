@@ -386,6 +386,110 @@ async def api_export_risk_acceptances():
     )
 
 
+@app.get("/api/compliance-readiness")
+async def api_compliance_readiness():
+    """Compute compliance evidence readiness metrics."""
+    controls = _controls_as_dicts()
+    waivers = _load_waivers()
+    risk_acceptances = _load_risk_acceptances()
+
+    # Load results if available
+    results = None
+    if LAST_RESULTS_FILE.exists():
+        with LAST_RESULTS_FILE.open() as fh:
+            results = json.load(fh)
+
+    # Framework data from controls mapping
+    fw_map = {}
+    fw_desc = {
+        'GDPR': 'General Data Protection Regulation (EU) 2016/679',
+        'ISO 27001:2022': 'Information Security Management Systems',
+        'BSI C5:2020': 'Cloud Computing Compliance Criteria Catalogue',
+        'EUCS (ENISA)': 'EU Cybersecurity Certification Scheme for Cloud',
+        'CSRD': 'Corporate Sustainability Reporting Directive',
+    }
+
+    for ctrl in controls:
+        for mapping in ctrl.get('regulatory_mapping', []):
+            fw_name = mapping['framework']
+            if fw_name not in fw_map:
+                fw_map[fw_name] = {
+                    'name': fw_name,
+                    'description': fw_desc.get(fw_name, ''),
+                    'controls': [],
+                    'mapped': 0,
+                }
+            fw_map[fw_name]['controls'].append({'id': ctrl['id'], 'title': ctrl['title']})
+            fw_map[fw_name]['mapped'] += 1
+
+    # Evidence completeness
+    # Check if controls have evidence requirements defined in YAML
+    evidence_data = {}
+    for ctrl in controls:
+        # Controls from YAML may not have evidence field in dict - need raw YAML
+        raw = _raw_control(ctrl['id'])
+        has_evidence = False
+        if raw and 'evidence' in raw:
+            evidence = raw.get('evidence', {})
+            if evidence.get('required') and len(evidence['required']) > 0:
+                has_evidence = True
+        for mapping in ctrl.get('regulatory_mapping', []):
+            fw_name = mapping['framework']
+            if fw_name not in evidence_data:
+                evidence_data[fw_name] = {'total': 0, 'complete': 0}
+            evidence_data[fw_name]['total'] += 1
+            if has_evidence:
+                evidence_data[fw_name]['complete'] += 1
+
+    # Controls missing remediation
+    controls_without_remediation = [
+        {'id': c['id'], 'title': c['title'], 'category': c.get('category', ''), 'severity': c.get('severity', '')}
+        for c in controls if not c.get('checks_count', 0) or c.get('description', '').strip() == ''
+    ]
+
+    # Calculate metrics
+    total_controls = len(controls)
+    mapped_controls = sum(1 for c in controls if c.get('regulatory_mapping') and len(c.get('regulatory_mapping', [])) > 0)
+    framework_coverage = round(mapped_controls / total_controls * 100) if total_controls > 0 else 0
+
+    # Evidence completeness
+    evidence_keys = list(evidence_data.keys())
+    if evidence_keys:
+        evidence_completeness = round(
+            sum(ed['complete'] / ed['total'] * 100 for ed in evidence_data.values()) / len(evidence_keys)
+        )
+    else:
+        evidence_completeness = 0
+
+    # Framework details
+    frameworks = []
+    for fw_name, fw_data in fw_map.items():
+        controls_len = len(fw_data['controls'])
+        pct = round(fw_data['mapped'] / controls_len * 100) if controls_len > 0 else 0
+        frameworks.append({
+            'name': fw_name,
+            'description': fw_data['description'],
+            'controls': controls_len,
+            'pct': pct,
+        })
+    frameworks.sort(key=lambda x: x['pct'], reverse=True)
+
+    # Readiness score
+    findings_without_remediation = len(controls_without_remediation)
+    remediation_penalty = min(20, round(findings_without_remediation / total_controls * 20)) if total_controls > 0 else 0
+    readiness_score = max(0, round((framework_coverage * 0.4) + (evidence_completeness * 0.4) - remediation_penalty))
+
+    return {
+        'totalFrameworkCoverage': framework_coverage,
+        'frameworkCount': len(fw_map),
+        'evidenceCompleteness': evidence_completeness,
+        'findingsWithoutRemediation': findings_without_remediation,
+        'readinessScore': readiness_score,
+        'frameworks': frameworks,
+        'controlsWithoutRemediation': controls_without_remediation[:20],
+    }
+
+
 @app.post("/api/scan")
 async def api_run_scan(req: ScanRequest):
     """Run an in-process WAF++ PASS scan and return results as JSON."""
