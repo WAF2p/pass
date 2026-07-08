@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from wafpass.engine import SkipAssertion, evaluate_assertion, get_nested
-from wafpass.models import Assertion
+from wafpass.engine import SkipAssertion, evaluate_assertion, get_nested, _find_matching_blocks
+from wafpass.iac.base import IaCBlock, IaCState
+from wafpass.models import Assertion, Check, Scope
 from wafpass.parser import TerraformBlock, TerraformState
 
 
@@ -398,3 +399,46 @@ class TestAttributeExistsOrFallback:
         passed, msg = evaluate_assertion(assertion, block, EMPTY_STATE)
         assert passed is False
         assert "location" in msg or "region" in msg
+
+
+# ── scope matching ─────────────────────────────────────────────────────────────
+
+
+def test_find_matching_blocks_provider_scope_uses_resource_types() -> None:
+    """Provider checks whose YAML lists provider names under resource_types must
+    only match those provider blocks, not every provider in the config.
+    """
+    state = IaCState(
+        providers=[
+            IaCBlock(block_type="provider", type="azurerm", name="", address="provider.azurerm", attributes={}, raw={}),
+            IaCBlock(block_type="provider", type="google", name="", address="provider.google", attributes={}, raw={}),
+            IaCBlock(block_type="provider", type="aws", name="", address="provider.aws", attributes={}, raw={}),
+        ]
+    )
+    check = Check(
+        id="waf-sus-030.tf.google.preferred-regions",
+        engine="terraform",
+        provider="google",
+        automated=True,
+        severity="medium",
+        title="GCP provider region should be a low-carbon-intensity region",
+        scope=Scope(block_type="provider", resource_types=["google"]),
+        assertions=[Assertion(attribute="region", op="in", expected=["europe-north1"])],
+        on_fail="warning",
+        remediation="r",
+    )
+    blocks = _find_matching_blocks(check.scope, state)
+    assert [b.address for b in blocks] == ["provider.google"]
+
+
+def test_find_matching_blocks_provider_scope_prefers_provider_name() -> None:
+    """When scope.provider_name is explicitly set, it takes precedence."""
+    state = IaCState(
+        providers=[
+            IaCBlock(block_type="provider", type="aws", name="", address="provider.aws", attributes={}, raw={}),
+            IaCBlock(block_type="provider", type="google", name="", address="provider.google", attributes={}, raw={}),
+        ]
+    )
+    scope = Scope(block_type="provider", provider_name="aws", resource_types=["google"])
+    blocks = _find_matching_blocks(scope, state)
+    assert [b.address for b in blocks] == ["provider.aws"]

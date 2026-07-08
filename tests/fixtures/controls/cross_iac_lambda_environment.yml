@@ -1,0 +1,81 @@
+---
+id: WAF-CROSS-003
+title: Lambda functions must set AWS_XRAY_TRACING_NAME environment variable
+pillar: operations
+severity: medium
+category: iac
+description: |
+  AWS X-Ray tracing integration requires the AWS_XRAY_TRACING_NAME environment
+  variable to be set on Lambda functions.
+rationale: |
+  Explicit tracing names make service maps actionable in X-Ray.
+threat:
+  - Poor observability of serverless workloads
+regulatory_mapping:
+  - framework: SOC 2
+    controls: ["CC7.2"]
+
+checks:
+  - id: WAF-CROSS-003-TF
+    engine: terraform
+    title: Terraform Lambda sets AWS_XRAY_TRACING_NAME
+    provider: aws
+    automated: true
+    severity: medium
+    scope:
+      block_type: resource
+      resource_types: [aws_lambda_function]
+    assertions:
+      - attribute: environment.variables.AWS_XRAY_TRACING_NAME
+        op: attribute_exists
+    remediation: |
+      Add `environment { variables = { AWS_XRAY_TRACING_NAME = "..." } }` to the aws_lambda_function resource.
+    example:
+      compliant: |
+        resource "aws_lambda_function" "example" {
+          environment {
+            variables = {
+              AWS_XRAY_TRACING_NAME = "example"
+            }
+          }
+        }
+
+  - id: WAF-CROSS-003-CDK
+    engine: cdk
+    title: CDK Lambda sets AWS_XRAY_TRACING_NAME
+    provider: aws
+    automated: true
+    severity: medium
+    scope:
+      block_type: resource
+      resource_types: [aws_lambda_function]
+    assertions:
+      - attribute: environment.variables.AWS_XRAY_TRACING_NAME
+        op: attribute_exists
+    remediation: |
+      Set `environment: { AWS_XRAY_TRACING_NAME: "..." }` in the aws_lambda.Function props.
+    example:
+      compliant: |
+        new aws_lambda.Function(this, "Example", {
+          environment: {
+            AWS_XRAY_TRACING_NAME: "example",
+          },
+        });
+
+  - id: WAF-CROSS-003-PULUMI
+    engine: pulumi
+    title: Pulumi Lambda sets AWS_XRAY_TRACING_NAME
+    provider: aws
+    automated: true
+    severity: medium
+    scope:
+      block_type: resource
+      resource_types: [aws_lambda_function]
+    assertions:
+      - attribute: environment.variables.AWS_XRAY_TRACING_NAME
+        op: attribute_exists
+    remediation: |
+      Set `environment={"variables": {"AWS_XRAY_TRACING_NAME": "..."}}` in the aws.lambda_.Function kwargs.
+    example:
+      compliant: |
+        aws.lambda_.Function("example", environment={"variables": {"AWS_XRAY_TRACING_NAME": "example"}})

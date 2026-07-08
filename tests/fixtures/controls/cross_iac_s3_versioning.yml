@@ -1,0 +1,77 @@
+---
+id: WAF-CROSS-001
+title: S3 versioning must be enabled
+pillar: security
+severity: high
+category: iac
+description: |
+  S3 bucket versioning protects against accidental deletion and ransomware by
+  keeping multiple versions of objects. It must be enabled on all S3 buckets.
+rationale: |
+  Without versioning, deleted or overwritten objects cannot be recovered.
+threat:
+  - Accidental or malicious object deletion
+regulatory_mapping:
+  - framework: ISO 27001
+    controls: ["A.12.3.1"]
+
+checks:
+  - id: WAF-CROSS-001-TF
+    engine: terraform
+    title: Terraform S3 bucket versioning is enabled
+    provider: aws
+    automated: true
+    severity: high
+    scope:
+      block_type: resource
+      resource_types: [aws_s3_bucket]
+    assertions:
+      - attribute: versioning.enabled
+        op: is_true
+    remediation: |
+      Add a `versioning { enabled = true }` block to the aws_s3_bucket resource.
+    example:
+      compliant: |
+        resource "aws_s3_bucket" "example" {
+          versioning {
+            enabled = true
+          }
+        }
+
+  - id: WAF-CROSS-001-CDK
+    engine: cdk
+    title: CDK S3 bucket versioning is enabled
+    provider: aws
+    automated: true
+    severity: high
+    scope:
+      block_type: resource
+      resource_types: [aws_s3_bucket]
+    assertions:
+      - attribute: versioning.enabled
+        op: is_true
+    remediation: |
+      Set `versioned: true` in the aws_s3.Bucket props.
+    example:
+      compliant: |
+        new aws_s3.Bucket(this, "Example", {
+          versioned: true,
+        });
+
+  - id: WAF-CROSS-001-PULUMI
+    engine: pulumi
+    title: Pulumi S3 bucket versioning is enabled
+    provider: aws
+    automated: true
+    severity: high
+    scope:
+      block_type: resource
+      resource_types: [aws_s3_bucket]
+    assertions:
+      - attribute: versioning.enabled
+        op: is_true
+    remediation: |
+      Set `versioning={"enabled": True}` in the aws.s3.BucketV2 kwargs.
+    example:
+      compliant: |
+        aws.s3.BucketV2("example", versioning={"enabled": True})

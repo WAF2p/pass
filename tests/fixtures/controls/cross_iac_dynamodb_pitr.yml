@@ -1,0 +1,77 @@
+---
+id: WAF-CROSS-002
+title: DynamoDB point-in-time recovery must be enabled
+pillar: reliability
+severity: high
+category: iac
+description: |
+  DynamoDB point-in-time recovery (PITR) provides continuous backups and allows
+  restoring a table to any point in the last 35 days.
+rationale: |
+  PITR is essential for recovery from accidental writes or deletes.
+threat:
+  - Data loss due to operator error or application bug
+regulatory_mapping:
+  - framework: ISO 27001
+    controls: ["A.12.3.1"]
+
+checks:
+  - id: WAF-CROSS-002-TF
+    engine: terraform
+    title: Terraform DynamoDB PITR is enabled
+    provider: aws
+    automated: true
+    severity: high
+    scope:
+      block_type: resource
+      resource_types: [aws_dynamodb_table]
+    assertions:
+      - attribute: point_in_time_recovery.enabled
+        op: is_true
+    remediation: |
+      Add a `point_in_time_recovery { enabled = true }` block to the aws_dynamodb_table resource.
+    example:
+      compliant: |
+        resource "aws_dynamodb_table" "example" {
+          point_in_time_recovery {
+            enabled = true
+          }
+        }
+
+  - id: WAF-CROSS-002-CDK
+    engine: cdk
+    title: CDK DynamoDB PITR is enabled
+    provider: aws
+    automated: true
+    severity: high
+    scope:
+      block_type: resource
+      resource_types: [aws_dynamodb_table]
+    assertions:
+      - attribute: point_in_time_recovery.enabled
+        op: is_true
+    remediation: |
+      Set `pointInTimeRecovery: true` in the aws_dynamodb.Table props.
+    example:
+      compliant: |
+        new aws_dynamodb.Table(this, "Example", {
+          pointInTimeRecovery: true,
+        });
+
+  - id: WAF-CROSS-002-PULUMI
+    engine: pulumi
+    title: Pulumi DynamoDB PITR is enabled
+    provider: aws
+    automated: true
+    severity: high
+    scope:
+      block_type: resource
+      resource_types: [aws_dynamodb_table]
+    assertions:
+      - attribute: point_in_time_recovery.enabled
+        op: is_true
+    remediation: |
+      Set `point_in_time_recovery={"enabled": True}` in the aws.dynamodb.Table kwargs.
+    example:
+      compliant: |
+        aws.dynamodb.Table("example", point_in_time_recovery={"enabled": True})

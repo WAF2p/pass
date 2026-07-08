@@ -193,3 +193,13 @@ class WafpassResultSchema(BaseModel):
             "Shape: {terraform_version, format_version, scanned_at, summary, changes}."
         ),
     )
+
+    # ── Source snapshot (optional, populated via --upload-source) ───────────────
+    source_snapshot: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional map of relative .tf file paths to their full text content. "
+            "When uploaded, wafpass-server can render Local preview diffs in the "
+            "dashboard without needing filesystem access to the original repository."
+        ),
+    )

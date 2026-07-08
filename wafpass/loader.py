@@ -50,6 +50,7 @@ PILLAR_PREFIXES: dict[str, str] = {
     "operational": "WAF-OPS-",  # Alias for "operations"
     "architecture": "WAF-ARCH-",
     "governance": "WAF-GOV-",
+    "agentic": "WAF-AGN-",
 }
 
 

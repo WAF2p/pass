@@ -40,7 +40,9 @@ from wafpass.models import Report  # noqa: E402
 from wafpass.iac.base import IaCBlock, IaCPlugin, IaCState  # noqa: E402
 
 
-from typing import Optional, List
+from pathlib import Path
+from typing import List, Optional
+
 
 def run_scan(
     paths: List[str],
@@ -51,141 +53,20 @@ def run_scan(
 ) -> "WafpassResultSchema":
     """Run a WAF++ PASS compliance scan and return a structured result.
 
-    Parameters
-    ----------
-    paths:
-        One or more file-system paths to scan (Terraform ``.tf`` files or
-        directories).
-    controls_dir:
-        Directory containing WAF++ YAML control definitions.
-    severity_filter:
-        If given, only evaluate checks at or above this severity level
-        (``CRITICAL``, ``HIGH``, ``MEDIUM``, ``LOW``).
-    waivers_file:
-        Path to a ``waivers.yml`` risk-acceptance file.
-
-    Returns
-    -------
-    WafpassResultSchema
-        The full scan result as a validated Pydantic model, ready to be
-        serialised (``result.model_dump()`` / ``result.model_dump_json()``)
-        or posted to ``wafpass-server``.
+    This is the convenience public API wrapper around
+    :func:`wafpass.runner.run_scan`. For full control (project, branch, secret
+    scanning, source snapshots, etc.) use :class:`wafpass.runner.ScanConfig`
+    directly.
     """
-    from pathlib import Path
+    from wafpass.runner import ScanConfig, run_scan as _run_scan
 
-    from wafpass.engine import filter_by_severity, run_controls
-    from wafpass.iac import registry
-    from wafpass.loader import load_controls
-    from wafpass.models import Report as _Report
-    from wafpass.waivers import apply_waivers, load_waivers
-
-    controls_path = Path(controls_dir)
-    controls = load_controls(controls_path)
-
-    # Build IaC state from all paths
-    all_blocks: list[IaCBlock] = []
-    source_paths: list[str] = []
-    detected_regions: list[tuple[str, str, str]] = []
-
-    for p in paths:
-        state = registry.load(Path(p))
-        all_blocks.extend(state.blocks)
-        source_paths.append(p)
-        detected_regions.extend(state.detected_regions)
-
-    from wafpass.iac.base import IaCState as _IaCState
-
-    merged = _IaCState(blocks=all_blocks, detected_regions=detected_regions)
-
-    # Apply severity filter
-    if severity_filter:
-        controls = filter_by_severity(controls, severity_filter)
-
-    # Evaluate controls
-    results = run_controls(controls, merged)
-
-    # Apply waivers
-    if waivers_file:
-        waivers = load_waivers(Path(waivers_file))
-        results = apply_waivers(results, waivers)
-
-    # Build internal Report
-    display_path = " | ".join(paths) if len(paths) > 1 else paths[0] if paths else ""
-    report = _Report(
-        path=display_path,
-        controls_loaded=len(controls),
-        controls_run=len([r for r in results if r.status != "SKIP"]),
-        results=results,
-        detected_regions=detected_regions,
-        source_paths=source_paths,
-    )
-
-    # Convert to WafpassResultSchema
-    findings: list[FindingSchema] = []
-    for cr in report.results:
-        for chk in cr.results:
-            findings.append(
-                FindingSchema(
-                    check_id=chk.check_id,
-                    check_title=chk.check_title,
-                    control_id=chk.control_id,
-                    pillar=cr.control.pillar,
-                    severity=chk.severity,
-                    status=chk.status,
-                    resource=chk.resource,
-                    message=chk.message,
-                    remediation=chk.remediation,
-                    example=chk.example,
-                )
-            )
-        # If waived, add a synthetic WAIVED finding
-        if cr.status == "WAIVED" and not cr.results:
-            findings.append(
-                FindingSchema(
-                    check_id=f"{cr.control.id}-WAIVED",
-                    check_title=cr.control.title,
-                    control_id=cr.control.id,
-                    pillar=cr.control.pillar,
-                    severity=cr.control.severity,
-                    status="WAIVED",
-                    resource="",
-                    message=cr.waived_reason or "",
-                    remediation="",
-                )
-            )
-
-    # Compute pillar scores
-    pillar_totals: dict[str, list[int]] = {}
-    for cr in report.results:
-        p = cr.control.pillar
-        pillar_totals.setdefault(p, [])
-        pillar_totals[p].append(1 if cr.status == "PASS" else 0)
-
-    pillar_scores = {
-        p: int(sum(v) / len(v) * 100) if v else 0
-        for p, v in pillar_totals.items()
-    }
-    overall_score = (
-        int(sum(pillar_scores.values()) / len(pillar_scores))
-        if pillar_scores
-        else 0
-    )
-
-    return WafpassResultSchema(
-        project="",
-        branch="",
-        git_sha="",
-        triggered_by="local",
-        iac_framework="terraform",
-        score=overall_score,
-        pillar_scores=pillar_scores,
-        path=report.path,
-        controls_loaded=report.controls_loaded,
-        controls_run=report.controls_run,
-        detected_regions=[list(r) for r in report.detected_regions],
-        source_paths=report.source_paths,
-        findings=findings,
-    )
+    _, schema = _run_scan(ScanConfig(
+        paths=[Path(p) for p in paths],
+        controls_dir=Path(controls_dir),
+        severity=severity_filter,
+        waivers_file=Path(waivers_file) if waivers_file else None,
+    ))
+    return schema
 
 
 __all__ = [
