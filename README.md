@@ -10,7 +10,7 @@ It checks IaC (Infrastructure-as-Code) files against YAML control definitions an
 | **`wafpass-server/`** | `wafpass-server` | FastAPI + PostgreSQL API for persisting scan results |
 | **`wafpass-dashboard/`** | — (React) | Standalone dashboard consuming the server API |
 
-Supported IaC frameworks are loaded as **plugins** — Terraform and AWS CDK are fully implemented; Bicep and Pulumi are available as stubs ready for contribution.
+Supported IaC frameworks are loaded as **plugins** — Terraform, AWS CDK (TypeScript), and Pulumi (Python) are fully implemented; Bicep is available as a stub ready for contribution.
 
 ## Installation
 
@@ -81,15 +81,15 @@ On every `git commit` the hook detects staged IaC file types and runs the approp
 |---|---|
 | `*.tf`, `*.tfvars` | Terraform |
 | `*.bicep` | Bicep |
-| `*.ts` / `*.py` when `cdk.json` is present | CDK |
-| `*.ts` / `*.py` / `*.go` when `Pulumi.yaml` is present | Pulumi |
+| `*.ts` when `cdk.json` is present | CDK |
+| `*.py` when `Pulumi.yaml` is present | Pulumi |
 
 If staged files include `controls/*.yml`, those are validated with `wafpass control validate` as well.
 
 When a check fails the commit is blocked and the hook prints:
 
 ```
-[wafpass] terraform — compliance check FAILED.
+[wafpass] compliance check FAILED.
 
   Options:
     • Fix the violations in your IaC code
@@ -201,6 +201,12 @@ httpx.post("http://localhost:8000/runs", json=result)
 EOF
 ```
 
+To let the dashboard render Local preview diffs for auto-fix, include source snapshots when you generate the result:
+
+```bash
+wafpass check ./infra/ --output json --upload-source > wafpass-result.json
+```
+
 ## Controls directory setup
 
 PASS reads controls from a local `controls/` directory. Controls are **not bundled** with the tool — they are published separately by the WAF++ framework and must be downloaded once before the first run.
@@ -249,9 +255,14 @@ wafpass check ./infra/ --push @
 # Push to an explicit URL with an API key (no login required)
 wafpass check ./infra/ --output json --push http://localhost:8000/runs --api-key $WAFPASS_API_KEY
 
+# Upload source snapshots so the dashboard can render Local preview diffs
+wafpass check ./infra/ --output json --push @ --upload-source
+
 # Auto-push via environment variable (equivalent to --push URL)
 WAFPASS_SERVER_URL=http://localhost:8000/runs wafpass check ./infra/
 ```
+
+> **Dashboard auto-fix / Local preview:** The dashboard can show git-style diffs for auto-fix suggestions only when the run includes the original source files for the selected IaC plugin (e.g. `.tf`, `.ts`, or `.py`). Add `--upload-source` whenever you push results that will be reviewed in the dashboard's **Auto-Fix** page. Requires `--output json` and `--push`.
 
 ---
 
@@ -390,9 +401,9 @@ WAF++ PASS uses a plugin architecture so that different IaC frameworks can be su
 | Plugin | `--iac` flag | File type | Status |
 |--------|-------------|-----------|--------|
 | Terraform | `terraform` (default) | `*.tf` | Fully implemented |
-| AWS CDK | `cdk` | `cdk.out/*.template.json` | Fully implemented |
+| AWS CDK | `cdk` | `*.ts` (source) / `cdk.out/*.template.json` (synthesized) | Fully implemented |
+| Pulumi | `pulumi` | `*.py` | Fully implemented |
 | Bicep | `bicep` | `*.bicep` | Stub – not yet implemented |
-| Pulumi | `pulumi` | `Pulumi.yaml` | Stub – not yet implemented |
 
 Stub plugins register themselves in the global registry and log a clear warning when invoked, but return an empty state. They serve as the integration skeleton for contributors.
 
@@ -709,10 +720,10 @@ The **Risk Acceptance** page in the web UI (`#risk-acceptance`) provides a full 
 The engine:
 
 1. Runs the same check pipeline as `wafpass check`.
-2. Builds a `ResourceLocator` by scanning `.tf` files with a brace-counting state machine that handles heredocs, nested blocks, and multi-file projects.
+2. Builds a framework-specific `ResourceLocator` that scans the plugin's file extensions (e.g. `.tf`, `.ts`, `.py`) and maps resources back to their source files.
 3. For each failing assertion derives the minimum change needed — e.g. `is_true → true`, `equals 14 → 14`, `in ["AES256","aws:kms"] → "AES256"`.
 4. Deduplicates patches by `(file, address, attribute)` so the same attribute is never written twice.
-5. Guards against overwriting Terraform dynamic expressions (`var.`, `local.`, `${…}`, `merge(…)`, etc.) — those lines are left untouched.
+5. Guards against overwriting dynamic expressions (`var.`, `local.`, `${…}`, `merge(…)`, etc.) — those lines are left untouched.
 
 **Dry-run is the default.** Pass `--apply` to write changes.
 
@@ -722,7 +733,7 @@ The engine:
 # Preview what would change (dry-run)
 wafpass fix ./infra/
 
-# Apply patches and create .tf.bak backups
+# Apply patches and create .bak backups
 wafpass fix ./infra/ --apply
 
 # Apply without backups
@@ -772,8 +783,8 @@ After `--apply` the command re-runs the checks and reports a **delta**: how many
 
 ### Safety
 
-- `.tf.bak` backups are created by default (disable with `--no-backup`).
-- Terraform dynamic references are never overwritten.
+- `.bak` backups are created by default (disable with `--no-backup`).
+- Dynamic references are never overwritten.
 - Each `(file, address, attribute)` triple is patched at most once.
 - The command exits non-zero if any failing check remains after apply.
 
@@ -1643,6 +1654,18 @@ Post a result from `wafpass-core`:
 
 ```bash
 wafpass check ./infra/ --output json \
+  | python -c "
+import json,sys,httpx
+r=json.load(sys.stdin)
+r.update({'project':'my-infra','branch':'main'})
+httpx.post('http://localhost:8000/runs',json=r)
+"
+```
+
+To enable dashboard Local preview / auto-fix diffs, upload the source snapshot as well:
+
+```bash
+wafpass check ./infra/ --output json --upload-source \
   | python -c "
 import json,sys,httpx
 r=json.load(sys.stdin)

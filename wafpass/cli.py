@@ -303,153 +303,39 @@ def check(
             "as 'plan_changes', enabling Change Overview analysis."
         ),
     ),
+    upload_source: bool = typer.Option(
+        False,
+        "--upload-source",
+        flag_value=True,
+        help=(
+            "When used with --push, also upload the contents of all source files "
+            "for the selected IaC plugin so the dashboard can render Local preview diffs. "
+            "Requires --output json and --push."
+        ),
+    ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
 
-    # ── Resolve plugin ─────────────────────────────────────────────────────────
-    plugin = registry.get(iac.lower())
-    if plugin is None:
-        available = ", ".join(registry.available) or "(none)"
+    # ── Validate --upload-source prerequisites ────────────────────────────────
+    if upload_source and (not push or output != "json"):
         typer.echo(
-            f"ERROR: Unknown IaC plugin '{iac}'. Available: {available}",
+            "ERROR: --upload-source requires --output json and --push. "
+            "Re-run with --output json --push <url|@> --upload-source.",
             err=True,
         )
         raise typer.Exit(code=2)
 
-    # ── Validate paths ─────────────────────────────────────────────────────────
-    for p in paths:
-        if not p.exists():
-            typer.echo(f"ERROR: Path does not exist: {p}", err=True)
-            raise typer.Exit(code=2)
-
-    # ── Secret scanner (runs before controls, prints prominently) ─────────────
-    _secret_findings: list = []
-    if not no_secrets:
-        from wafpass.secret_scanner import scan_secrets, REMEDIATION_GUIDANCE
-        from rich.console import Console as _RichConsole
-        from rich.panel import Panel as _Panel
-        from rich.table import Table as _Table
-        from rich.text import Text as _Text
-
-        _secret_findings = [f for f in scan_secrets(list(paths)) if not f.suppressed]
-        _suppressed_count = sum(1 for f in scan_secrets(list(paths)) if f.suppressed)
-
-        if _secret_findings:
-            _rc = _RichConsole(stderr=True)
-            _sev_style = {"critical": "bold red", "high": "red", "medium": "yellow"}
-
-            _tbl = _Table(show_header=True, header_style="bold white on dark_red",
-                          show_lines=True, expand=True)
-            _tbl.add_column("Severity", style="bold", width=10)
-            _tbl.add_column("File : Line", style="cyan", no_wrap=True)
-            _tbl.add_column("Finding", style="white")
-            _tbl.add_column("Attribute", style="dim")
-            _tbl.add_column("Value (masked)", style="dim")
-
-            for _f in _secret_findings:
-                _style = _sev_style.get(_f.severity, "white")
-                _tbl.add_row(
-                    _Text(_f.severity.upper(), style=_style),
-                    f"{_f.file}:{_f.line_no}",
-                    _f.pattern_name,
-                    _f.matched_key or "—",
-                    _f.masked_value,
-                )
-
-            _rc.print()
-            _rc.print(_Panel(
-                _tbl,
-                title="[bold white on dark_red] ⚠  HARDCODED SECRETS DETECTED [/bold white on dark_red]",
-                border_style="red",
-                padding=(0, 1),
-            ))
-            _rc.print()
-            _rc.print(f"[bold red]{len(_secret_findings)} hardcoded secret(s) found.[/bold red] "
-                      f"These must be remediated before deployment.")
-            if _suppressed_count:
-                _rc.print(f"[dim]{_suppressed_count} finding(s) suppressed via wafpass:ignore-secret.[/dim]")
-            _rc.print()
-            _rc.print("[bold]How to fix:[/bold]")
-            for _line in REMEDIATION_GUIDANCE.splitlines():
-                _rc.print(f"  [dim]{_line}[/dim]" if _line.startswith(" ") else f"  {_line}")
-            _rc.print()
+    # ── Validate --plan-file path ─────────────────────────────────────────────
+    if plan_file and not plan_file.exists():
+        typer.echo(f"ERROR: --plan-file path does not exist: {plan_file}", err=True)
+        raise typer.Exit(code=2)
 
     # Parse control ID list
     ids: list[str] | None = None
     if control_ids:
         ids = [i.strip() for i in control_ids.split(",") if i.strip()]
 
-    # ── Load controls (from filesystem or server) ──────────────────────────────
-    effective_controls_dir = controls_dir
-    if server_url:
-        effective_controls_dir = Path(".wafpass-server-controls")
-        typer.echo(f"Fetching controls from: {server_url}", err=True)
-
-    try:
-        controls = load_controls(effective_controls_dir, pillar=pillar, ids=ids, server_url=server_url)
-    except Exception as exc:
-        typer.echo(f"ERROR loading controls: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
-
-    if not controls:
-        _hint = (f" (pillar={pillar})" if pillar else "") + (f" (ids={ids})" if ids else "")
-        _src = f"from server {server_url!r}" if server_url else f"in '{controls_dir}'"
-        typer.echo(f"No controls found {_src}{_hint}", err=True)
-        typer.echo("", err=True)
-        typer.echo("Controls are not bundled with WAF++ PASS — they must be obtained separately.", err=True)
-        typer.echo("", err=True)
-        typer.echo("Option A — Download from the WAF++ website:", err=True)
-        typer.echo("  1. Visit https://waf2p.dev/wafpass/ and click \"Download Controls\"", err=True)
-        typer.echo("  2. Unzip the archive and copy the *.yml files into your controls directory:", err=True)
-        typer.echo(f"       cp /path/to/download/*.yml {controls_dir}/", err=True)
-        typer.echo("", err=True)
-        typer.echo("Option B — Clone the WAF++ framework repository:", err=True)
-        typer.echo("  git clone https://github.com/WAF2p/framework.git", err=True)
-        typer.echo(f"  cp framework/modules/controls/controls/*.yml {controls_dir}/", err=True)
-        typer.echo("", err=True)
-        typer.echo("Then re-run your wafpass command.", err=True)
-        raise typer.Exit(code=2)
-
-    # ── Parse IaC files (merge across all paths) ───────────────────────────────
-    merged_state = IaCState()
-    all_regions: list[tuple[str, str, str]] = []
-
-    for p in paths:
-        if len(paths) > 1:
-            typer.echo(f"Scanning [{iac}]: {p}")
-        try:
-            state = plugin.parse(p)
-        except Exception as exc:
-            typer.echo(f"ERROR parsing {iac} files in {p}: {exc}", err=True)
-            raise typer.Exit(code=2) from exc
-        merged_state.resources.extend(state.resources)
-        merged_state.providers.extend(state.providers)
-        merged_state.variables.extend(state.variables)
-        merged_state.modules.extend(state.modules)
-        merged_state.config_blocks.extend(state.config_blocks)
-        all_regions.extend(plugin.extract_regions(state))
-
-    # Deduplicate regions while preserving order, keeping unique (region, provider, az) combinations
-    seen_region_keys: set[tuple[str, str, str]] = set()
-    unique_regions: list[tuple[str, str, str]] = []
-    for r in all_regions:
-        key = (r[0].lower(), r[1], r[2] if len(r) > 2 else "")
-        if key not in seen_region_keys:
-            seen_region_keys.add(key)
-            unique_regions.append(r)
-
-    # ── Run controls ───────────────────────────────────────────────────────────
-    try:
-        results = run_controls(controls, merged_state, engine_name=iac.lower())
-    except Exception as exc:
-        typer.echo(f"ERROR running controls: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
-
-    # ── Apply severity filter ──────────────────────────────────────────────────
-    if severity:
-        results = filter_by_severity(results, severity)
-
-    # ── Apply waivers ──────────────────────────────────────────────────────────
+    # ── Resolve waiver file ───────────────────────────────────────────────────
     def _find_skip_file() -> Path | None:
         # Discover both the canonical risk_acceptance.yml and legacy .wafpass-skip.yml
         _names = ["risk_acceptance.yml", DEFAULT_SKIP_FILE]
@@ -470,36 +356,121 @@ def check(
     resolved_skip_file = skip_file or _find_skip_file()
     if resolved_skip_file:
         try:
-            waivers = load_waivers(resolved_skip_file)
+            _active_waivers = load_waivers(resolved_skip_file)
         except ValueError as exc:
             typer.echo(f"ERROR in waiver file: {exc}", err=True)
             raise typer.Exit(code=2) from exc
-        if waivers:
-            _active_waivers = waivers
-            expired = apply_waivers(results, waivers)
-            waived_ids = [w.id for w in waivers]
-            typer.echo(
-                f"Waivers applied: {len(waived_ids)} control(s) marked as WAIVED "
-                f"({', '.join(waived_ids)})"
-            )
-            for w in expired:
-                typer.echo(
-                    f"WARNING: Waiver for {w.id} expired on {w.expires} — "
-                    "please review and renew or remove it.",
-                    err=True,
+
+    # ── Load controls (from filesystem or server) ──────────────────────────────
+    effective_controls_dir = controls_dir
+    if server_url:
+        effective_controls_dir = Path(".wafpass-server-controls")
+        typer.echo(f"Fetching controls from: {server_url}", err=True)
+
+    # ── Run the core scan ──────────────────────────────────────────────────────
+    from wafpass.runner import ScanConfig, run_scan
+
+    try:
+        report, schema = run_scan(ScanConfig(
+            paths=list(paths),
+            controls_dir=effective_controls_dir,
+            iac=iac,
+            project=project,
+            branch=branch,
+            git_sha=git_sha,
+            triggered_by=triggered_by,
+            is_cicd=is_cicd,
+            stage=stage,
+            control_ids=ids,
+            severity=severity,
+            pillar=pillar,
+            waivers_file=resolved_skip_file,
+            plan_file=plan_file,
+            no_secrets=no_secrets,
+            upload_source=upload_source,
+            server_url=server_url,
+        ))
+    except FileNotFoundError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "No controls found" in msg:
+            _hint = (f" (pillar={pillar})" if pillar else "") + (f" (ids={ids})" if ids else "")
+            _src = f"from server {server_url!r}" if server_url else f"in '{controls_dir}'"
+            typer.echo(f"No controls found {_src}{_hint}", err=True)
+            typer.echo("", err=True)
+            typer.echo("Controls are not bundled with WAF++ PASS — they must be obtained separately.", err=True)
+            typer.echo("", err=True)
+            typer.echo("Option A — Download from the WAF++ website:", err=True)
+            typer.echo("  1. Visit https://waf2p.dev/wafpass/ and click \"Download Controls\"", err=True)
+            typer.echo("  2. Unzip the archive and copy the *.yml files into your controls directory:", err=True)
+            typer.echo(f"       cp /path/to/download/*.yml {controls_dir}/", err=True)
+            typer.echo("", err=True)
+            typer.echo("Option B — Clone the WAF++ framework repository:", err=True)
+            typer.echo("  git clone https://github.com/WAF2p/framework.git", err=True)
+            typer.echo(f"  cp framework/modules/controls/controls/*.yml {controls_dir}/", err=True)
+            typer.echo("", err=True)
+            typer.echo("Then re-run your wafpass command.", err=True)
+            raise typer.Exit(code=2)
+        typer.echo(f"ERROR: {msg}", err=True)
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        typer.echo(f"ERROR running scan: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    _secret_findings = report.secret_findings
+
+    # ── Secret scanner output (console/PDF path) ───────────────────────────────
+    if not no_secrets and _secret_findings and output in ("console", "pdf"):
+        from wafpass.secret_scanner import REMEDIATION_GUIDANCE
+        from rich.console import Console as _RichConsole
+        from rich.panel import Panel as _Panel
+        from rich.table import Table as _Table
+        from rich.text import Text as _Text
+
+        _visible = [f for f in _secret_findings if not f.suppressed]
+        _suppressed_count = sum(1 for f in _secret_findings if f.suppressed)
+
+        if _visible:
+            _rc = _RichConsole(stderr=True)
+            _sev_style = {"critical": "bold red", "high": "red", "medium": "yellow"}
+
+            _tbl = _Table(show_header=True, header_style="bold white on dark_red",
+                          show_lines=True, expand=True)
+            _tbl.add_column("Severity", style="bold", width=10)
+            _tbl.add_column("File : Line", style="cyan", no_wrap=True)
+            _tbl.add_column("Finding", style="white")
+            _tbl.add_column("Attribute", style="dim")
+            _tbl.add_column("Value (masked)", style="dim")
+
+            for _f in _visible:
+                _style = _sev_style.get(_f.severity, "white")
+                _tbl.add_row(
+                    _Text(_f.severity.upper(), style=_style),
+                    f"{_f.file}:{_f.line_no}",
+                    _f.pattern_name,
+                    _f.matched_key or "—",
+                    _f.masked_value,
                 )
 
-    # ── Build report ───────────────────────────────────────────────────────────
-    str_paths = [str(p) for p in paths]
-    path_display = " | ".join(str_paths)
-    report = Report(
-        path=path_display,
-        controls_loaded=len(controls),
-        controls_run=len(results),
-        results=results,
-        detected_regions=unique_regions,
-        source_paths=str_paths,
-    )
+            _rc.print()
+            _rc.print(_Panel(
+                _tbl,
+                title="[bold white on dark_red] ⚠  HARDCODED SECRETS DETECTED [/bold white on dark_red]",
+                border_style="red",
+                padding=(0, 1),
+            ))
+            _rc.print()
+            _rc.print(f"[bold red]{len(_visible)} hardcoded secret(s) found.[/bold red] "
+                      f"These must be remediated before deployment.")
+            if _suppressed_count:
+                _rc.print(f"[dim]{_suppressed_count} finding(s) suppressed via wafpass:ignore-secret.[/dim]")
+            _rc.print()
+            _rc.print("[bold]How to fix:[/bold]")
+            for _line in REMEDIATION_GUIDANCE.splitlines():
+                _rc.print(f"  [dim]{_line}[/dim]" if _line.startswith(" ") else f"  {_line}")
+            _rc.print()
 
     # ── Run state: load previous, compute diff, save current ───────────────────
     run_diff: dict | None = None
@@ -534,15 +505,15 @@ def check(
     _br_result = None
     if blast_radius:
         from wafpass.blast_radius import build_dependency_graph, compute_blast_radius
-        graph = build_dependency_graph(merged_state)
-        _br_result = compute_blast_radius(report, merged_state, graph)
+        graph = build_dependency_graph(report.state)
+        _br_result = compute_blast_radius(report, report.state, graph)
 
     # ── Carbon footprint (always computed for PDF; skipped for console-only) ──
     _carbon_result = None
     if output == "pdf":
         try:
             from wafpass.carbon import compute_carbon
-            _carbon_result = compute_carbon(merged_state, report, unique_regions)
+            _carbon_result = compute_carbon(report.state, report, report.detected_regions)
         except Exception as exc:
             typer.echo(f"WARNING: Could not compute carbon footprint: {exc}", err=True)
 
@@ -586,154 +557,18 @@ def check(
         # Also print summary to console so CI pipelines see the result
         print_summary_only(report)
     elif output == "json":
-        import json as _json
-        from wafpass.schema import ControlCheckMetaSchema, ControlMetaSchema, FindingSchema, SecretFindingSchema, WafpassResultSchema
-
-        # Auto-detect git metadata when flags are not provided
-        def _git(cmd: list[str]) -> str:
-            try:
-                return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
-            except Exception:
-                return ""
-
-        _branch = branch or _git(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-        _sha = git_sha or _git(["git", "rev-parse", "HEAD"])
-
-        _triggered = triggered_by
-        if not _triggered:
-            if os.environ.get("GITHUB_ACTIONS"):
-                _triggered = "github-actions"
-            elif os.environ.get("GITLAB_CI"):
-                _triggered = "gitlab-ci"
-            elif os.environ.get("CI"):
-                _triggered = "ci"
-            else:
-                _triggered = "local"
-
-        # Build findings list
-        _findings: list[FindingSchema] = []
-        for cr in report.results:
-            for chk in cr.results:
-                _findings.append(FindingSchema(
-                    check_id=chk.check_id,
-                    check_title=chk.check_title,
-                    control_id=chk.control_id,
-                    pillar=cr.control.pillar,
-                    severity=chk.severity,
-                    status=chk.status,
-                    resource=chk.resource,
-                    message=chk.message,
-                    remediation=chk.remediation,
-                    example=chk.example,
-                    regulatory_mapping=cr.control.regulatory_mapping,
-                ))
-            if cr.status == "WAIVED" and not cr.results:
-                _findings.append(FindingSchema(
-                    check_id=f"{cr.control.id}-WAIVED",
-                    check_title=cr.control.title,
-                    control_id=cr.control.id,
-                    pillar=cr.control.pillar,
-                    severity=cr.control.severity,
-                    status="WAIVED",
-                    resource="",
-                    message=cr.waived_reason or "",
-                    remediation="",
-                    regulatory_mapping=cr.control.regulatory_mapping,
-                ))
-
-        # Compute scores
-        _pillar_totals: dict[str, list[int]] = {}
-        for cr in report.results:
-            _pillar_totals.setdefault(cr.control.pillar, []).append(
-                1 if cr.status == "PASS" else 0
-            )
-        _pillar_scores = {
-            p: int(sum(v) / len(v) * 100) if v else 0
-            for p, v in _pillar_totals.items()
-        }
-        _score = int(sum(_pillar_scores.values()) / len(_pillar_scores)) if _pillar_scores else 0
-
-        # Serialize loaded controls into lightweight metadata
-        _controls_meta: list[ControlMetaSchema] = []
-        for _ctrl in controls:
-            _ctrl_checks = [
-                ControlCheckMetaSchema(
-                    id=_chk.id,
-                    title=_chk.title,
-                    severity=_chk.severity,
-                    remediation=_chk.remediation,
-                    example=_chk.example,
-                )
-                for _chk in _ctrl.checks
-            ]
-            _controls_meta.append(ControlMetaSchema(
-                id=_ctrl.id,
-                title=_ctrl.title,
-                pillar=_ctrl.pillar,
-                severity=_ctrl.severity,
-                category=_ctrl.category,
-                description=_ctrl.description,
-                rationale=_ctrl.rationale,
-                threat=_ctrl.threat,
-                regulatory_mapping=_ctrl.regulatory_mapping,
-                checks=_ctrl_checks,
-            ))
-
-        # ── Parse terraform plan file if provided ─────────────────────────────
-        _plan_changes: dict | None = None
-        if plan_file:
-            if not plan_file.exists():
-                typer.echo(f"ERROR: --plan-file path does not exist: {plan_file}", err=True)
-                raise typer.Exit(code=2)
-            try:
-                from wafpass.plan_parser import parse_plan_file as _parse_plan
-                _plan_changes = _parse_plan(plan_file)
-                _total_changes = sum(
-                    v for k, v in _plan_changes.get("summary", {}).items() if k != "no_op"
-                )
-                typer.echo(
-                    f"Plan file parsed: {_total_changes} resource change(s) detected "
-                    f"({plan_file})",
-                    err=True,
-                )
-            except Exception as exc:
-                typer.echo(f"WARNING: Could not parse --plan-file '{plan_file}': {exc}", err=True)
-
-        _secret_schema_findings = [
-            SecretFindingSchema(
-                file=str(_sf.file),
-                line_no=_sf.line_no,
-                pattern_name=_sf.pattern_name,
-                severity=_sf.severity,
-                matched_key=_sf.matched_key,
-                masked_value=_sf.masked_value,
-            )
-            for _sf in (_secret_findings or [])
-        ]
-
-        _result = WafpassResultSchema(
-            project=project,
-            branch=_branch,
-            git_sha=_sha,
-            triggered_by=_triggered,
-            run={"is_cicd": is_cicd},
-            iac_framework=iac.lower(),
-            stage=stage,
-            score=_score,
-            pillar_scores=_pillar_scores,
-            path=report.path,
-            controls_loaded=report.controls_loaded,
-            controls_run=report.controls_run,
-            detected_regions=[list(r) for r in report.detected_regions],
-            source_paths=report.source_paths,
-            controls_meta=_controls_meta,
-            findings=_findings,
-            secret_findings=_secret_schema_findings,
-            plan_changes=_plan_changes,
-        )
-
-        _json_str = _result.model_dump_json(indent=2)
+        _json_str = schema.model_dump_json(indent=2)
         typer.echo(_json_str)
+
+        if schema.plan_changes:
+            _total_changes = sum(
+                v for k, v in schema.plan_changes.get("summary", {}).items() if k != "no_op"
+            )
+            typer.echo(
+                f"Plan file parsed: {_total_changes} resource change(s) detected "
+                f"({plan_file})",
+                err=True,
+            )
 
         if push:
             try:
@@ -962,7 +797,7 @@ def fix(
     backup: bool = typer.Option(
         True,
         "--backup/--no-backup",
-        help="Create <file>.tf.bak before modifying (default: true, only with --apply).",
+        help="Create <file>.bak before modifying (default: true, only with --apply).",
     ),
 ) -> None:
     """Auto-fix failing WAF++ checks by patching IaC source files.
@@ -980,10 +815,14 @@ def fix(
       ≥ / ≤ numeric      → attribute = <threshold>
       in                 → attribute = <first allowed value>
       key_exists (tags)  → inserts "key" = "TODO-fill-in" into tags block
+      attribute_exists   → inserts a known-safe default block when available
 
-    Assertions using Terraform expressions (var., local., ${…}) are left
-    untouched.  Structural changes (missing resource blocks, runtime operators)
-    are reported as manual-fix items.
+    Assertions using dynamic expressions (var., local., ${…}) are left
+    untouched.  Runtime and negation operators are reported as manual-fix items.
+
+    Writes are atomic: a temp file is created, a framework-specific formatter is
+    run when available, and the original file is kept as ``<file>.bak``.  Use
+    ``wafpass fix-rollback`` to restore backups.
 
     After ``--apply`` the checks are re-run and an improvement delta is printed.
     """
@@ -1065,23 +904,35 @@ def fix(
     from wafpass.fixer import (
         FixPlan,
         PatchKind,
-        ResourceLocator,
+        make_locator,
         apply_fix_plan,
         build_fix_plan,
         compute_fix_delta,
         render_diff,
     )
 
-    locator = ResourceLocator(list(paths)).build()
+    locator = make_locator(iac.lower(), list(paths)).build()
     plan = build_fix_plan(
         control_results=results,
         merged_state=merged_state,
         controls=controls,
         locator=locator,
+        framework=iac.lower(),
     )
 
     # ── Compute diffs (always, for preview) ───────────────────────────────────
-    diff_map = apply_fix_plan(plan, locator, dry_run=True, backup=False)
+    dry_run_result = apply_fix_plan(plan, locator, dry_run=True, backup=False)
+    diff_map = dry_run_result.diffs
+
+    def _print_warnings(warnings: list[str]) -> None:
+        if not warnings:
+            return
+        rc.print(Rule("[bold yellow]Warnings[/bold yellow]", style="yellow"))
+        for w in warnings:
+            rc.print(f"[yellow]⚠  {w}[/yellow]")
+        rc.print()
+
+    _print_warnings(dry_run_result.warnings)
 
     # ── Print per-file diff panels ────────────────────────────────────────────
     if diff_map:
@@ -1160,8 +1011,15 @@ def fix(
         detail_tbl.add_column("File",      style="dim",   no_wrap=True)
 
         for p in plan.active_patches:
-            label = p.tag_key if p.patch_kind == PatchKind.ADD_TAG_KEY else p.attribute_path
-            val   = f'tag "{p.tag_key}" = "TODO-fill-in"' if p.patch_kind == PatchKind.ADD_TAG_KEY else p.hcl_value
+            if p.patch_kind == PatchKind.ADD_TAG_KEY:
+                label = p.tag_key
+                val   = f'tag "{p.tag_key}" = "TODO-fill-in"'
+            elif p.patch_kind == PatchKind.ADD_BLOCK:
+                label = p.attribute_path
+                val   = "(block from default template)"
+            else:
+                label = p.attribute_path
+                val   = p.hcl_value
             detail_tbl.add_row(
                 p.address,
                 label,
@@ -1212,7 +1070,8 @@ def fix(
         rc.print("[dim]Nothing to write.[/dim]")
         raise typer.Exit(code=0)
 
-    apply_fix_plan(plan, locator, dry_run=False, backup=backup)
+    apply_result = apply_fix_plan(plan, locator, dry_run=False, backup=backup)
+    _print_warnings(apply_result.warnings)
 
     files_written = list(diff_map.keys())
     rc.print(Rule("[bold green]Patches Applied[/bold green]", style="green"))
@@ -1266,6 +1125,60 @@ def fix(
 
     exit_code = 1 if delta.still_failing or delta.regressions else 0
     raise typer.Exit(code=exit_code)
+
+
+@app.command(name="fix-rollback")
+def fix_rollback(
+    paths: List[Path] = typer.Argument(
+        ...,
+        help="Path(s) to IaC files or directories to restore from .bak backups.",
+    ),
+    iac: str = typer.Option(
+        "terraform",
+        "--iac",
+        help="IaC framework plugin (terraform, bicep, cdk, pulumi). Default: terraform.",
+    ),
+) -> None:
+    """Restore IaC source files from their .bak backups created by `wafpass fix --apply`."""
+    from wafpass.fixer import restore_backup
+
+    plugin = registry.get(iac.lower())
+    if plugin is None:
+        typer.echo(f"ERROR: Unknown IaC plugin '{iac}'.", err=True)
+        raise typer.Exit(code=2)
+
+    extensions = set(plugin.file_extensions)
+
+    restored = 0
+    missing = 0
+    for p in paths:
+        if not p.exists():
+            typer.echo(f"ERROR: Path not found: {p}", err=True)
+            raise typer.Exit(code=2)
+
+        if p.is_file():
+            files = [p]
+        else:
+            files = sorted({
+                f
+                for ext in extensions
+                for f in p.rglob(f"*{ext}")
+            })
+
+        for source_file in files:
+            if source_file.suffix not in extensions:
+                continue
+            if restore_backup(source_file):
+                restored += 1
+                typer.echo(f"Restored {source_file} from backup")
+            else:
+                missing += 1
+
+    if restored == 0:
+        typer.echo("No backups were restored.", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Restored {restored} file(s).")
 
 
 # ── wafpass ui ─────────────────────────────────────────────────────────────────

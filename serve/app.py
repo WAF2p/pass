@@ -277,6 +277,24 @@ class AutoFixRequest(BaseModel):
     apply: bool = False
 
 
+class AutoFixRollbackRequest(BaseModel):
+    path: str
+    iac: str = "terraform"
+
+
+class AutoFixFindingInput(BaseModel):
+    control_id: str
+    check_id: str
+    resource: str | None = None
+    message: str | None = None
+
+
+class AutoFixClassifyRequest(BaseModel):
+    iac: str = "terraform"
+    findings: list[AutoFixFindingInput]
+    control_ids: list[str] | None = None
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -565,8 +583,10 @@ async def api_auto_fix(req: AutoFixRequest):
         from wafpass.engine import run_controls
         from wafpass.fixer import (
             ResourceLocator,
+            FixApplyResult,
             apply_fix_plan,
             build_fix_plan,
+            compute_fix_delta,
             render_diff,
         )
         from wafpass.iac import registry
@@ -582,17 +602,23 @@ async def api_auto_fix(req: AutoFixRequest):
             raise HTTPException(status_code=422, detail=f"Unknown IaC plugin: {req.iac}")
 
         state = plugin.parse(path)
-        results = run_controls(controls, state)
+        results = run_controls(controls, state, engine_name=req.iac.lower())
 
         waivers_data = []
         if WAIVERS_FILE.exists():
             waivers_data = load_waivers(WAIVERS_FILE)
         apply_waivers(results, waivers_data)
 
-        tf_paths = [path] if path.is_file() else list(path.rglob("*.tf"))
-        locator = ResourceLocator(tf_paths).build()
+        from wafpass.fixer import make_locator
 
-        plan = build_fix_plan(results, state, controls, locator)
+        source_paths = [path] if path.is_file() else [
+            f
+            for ext in plugin.file_extensions
+            for f in path.rglob(f"*{ext}")
+        ]
+        locator = make_locator(req.iac.lower(), source_paths).build()
+
+        plan = build_fix_plan(results, state, controls, locator, framework=req.iac.lower())
 
         base = path if path.is_dir() else path.parent
 
@@ -622,10 +648,11 @@ async def api_auto_fix(req: AutoFixRequest):
             for s in plan.skipped
         ]
 
-        file_results = apply_fix_plan(plan, locator, dry_run=not req.apply, backup=req.apply)
+        apply_result = apply_fix_plan(plan, locator, dry_run=not req.apply, backup=req.apply)
+        assert isinstance(apply_result, FixApplyResult)
 
         diff_preview: dict[str, list[str]] = {}
-        for fp, (orig, patched) in file_results.items():
+        for fp, (orig, patched) in apply_result.diffs.items():
             diff_lines = render_diff(orig, patched, fp)
             if diff_lines:
                 try:
@@ -636,7 +663,7 @@ async def api_auto_fix(req: AutoFixRequest):
 
         files_modified = sorted(diff_preview.keys())
 
-        return {
+        response: dict[str, Any] = {
             "patches_count": len(plan.active_patches),
             "skipped_count": len(plan.skipped),
             "files_modified": files_modified,
@@ -644,12 +671,124 @@ async def api_auto_fix(req: AutoFixRequest):
             "patches": patches_data,
             "skipped": skipped_data,
             "diff_preview": diff_preview,
+            "warnings": apply_result.warnings,
+            "delta": None,
         }
+
+        if req.apply:
+            new_state = plugin.parse(path)
+            new_results = run_controls(controls, new_state, engine_name=req.iac.lower())
+            apply_waivers(new_results, waivers_data)
+            response["delta"] = {
+                "resolved": compute_fix_delta(results, new_results).resolved,
+                "still_failing": compute_fix_delta(results, new_results).still_failing,
+                "regressions": compute_fix_delta(results, new_results).regressions,
+            }
+
+        return response
 
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/auto-fix/classify")
+async def api_auto_fix_classify(req: AutoFixClassifyRequest):
+    """Classify stored findings as fixable or manual without filesystem access."""
+    from wafpass.fixer import FindingInput, classify_findings
+    from wafpass.loader import load_controls
+
+    controls = load_controls(CONTROLS_DIR, ids=req.control_ids)
+    if not controls:
+        raise HTTPException(status_code=422, detail="No controls loaded.")
+
+    inputs = [
+        FindingInput(
+            control_id=f.control_id,
+            check_id=f.check_id,
+            resource=f.resource,
+            message=f.message,
+        )
+        for f in req.findings
+    ]
+
+    plan = classify_findings(inputs, controls, framework=req.iac.lower())
+
+    patches_data = [
+        {
+            "file": f"{p.address} resource",
+            "address": p.address,
+            "attribute": p.attribute_path,
+            "kind": p.patch_kind.name,
+            "new_value": p.hcl_value,
+            "description": p.description,
+            "check_id": p.check_id,
+            "control_id": p.control_id,
+        }
+        for p in plan.active_patches
+    ]
+
+    skipped_data = [
+        {
+            "check_id": s.check_id,
+            "control_id": s.control_id,
+            "address": s.address,
+            "attribute": s.attribute,
+            "op": s.op,
+            "reason": s.reason,
+        }
+        for s in plan.skipped
+    ]
+
+    return {
+        "patches_count": len(plan.active_patches),
+        "skipped_count": len(plan.skipped),
+        "files_modified": plan.active_patches and ["Preview derived from scan findings"] or [],
+        "applied": False,
+        "patches": patches_data,
+        "skipped": skipped_data,
+        "diff_preview": {},
+        "warnings": ["Local-only preview: no filesystem access, so diffs are not generated. Use the CLI command below to apply fixes locally."],
+        "delta": None,
+    }
+
+
+@app.post("/api/auto-fix/rollback")
+async def api_auto_fix_rollback(req: AutoFixRollbackRequest):
+    """Restore IaC source files from their .bak backups."""
+    from wafpass.fixer import restore_backup
+    from wafpass.iac import registry
+
+    path = Path(req.path)
+    if not path.exists():
+        raise HTTPException(status_code=400, detail=f"Path not found: {req.path}")
+
+    plugin = registry.get(req.iac.lower())
+    if plugin is None:
+        raise HTTPException(status_code=422, detail=f"Unknown IaC plugin: {req.iac}")
+
+    ext_set = set(plugin.file_extensions)
+    if path.is_file():
+        files = [path]
+    else:
+        files = sorted({
+            f
+            for ext in plugin.file_extensions
+            for f in path.rglob(f"*{ext}")
+        })
+
+    restored: list[str] = []
+    missing: list[str] = []
+    for source_file in files:
+        if source_file.suffix not in ext_set:
+            continue
+        if restore_backup(source_file):
+            restored.append(str(source_file))
+        else:
+            missing.append(str(source_file))
+
+    return {"restored": restored, "missing": missing}
 
 
 @app.get("/api/results")

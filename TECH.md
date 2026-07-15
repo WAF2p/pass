@@ -258,11 +258,11 @@ Nine assertion operators are declared in control YAMLs but not implemented in `e
 | Plugin | Status | Notes |
 |--------|--------|-------|
 | Terraform | Production | python-hcl2 parser, all scope types supported |
-| CDK | Beta | JSON/TypeScript constructs, may miss complex patterns |
+| CDK | Production | TypeScript source + synthesized CloudFormation JSON |
+| Pulumi | Production | Python source via `ast` |
 | Bicep | Stub | ARM template parsing, limited assertion coverage |
-| Pulumi | Stub | YAML/JSON config, limited assertion coverage |
 
-CDK, Bicep, and Pulumi plugins are functional but have significantly less assertion operator coverage than the Terraform plugin, because the 73 controls were primarily written and tested against Terraform.
+Bicep is functional but has significantly less assertion operator coverage than the Terraform plugin, because the 73 controls were primarily written and tested against Terraform. CDK and Pulumi reuse the same Terraform-style control assertions via canonical resource addressing.
 
 ---
 

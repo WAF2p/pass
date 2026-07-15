@@ -63,9 +63,21 @@ def get_nested(d: dict, path: str) -> tuple[bool, Any]:
     if len(parts) == 1:
         return True, value
 
+    remainder = parts[1]
+
     # Recurse into nested dict
     if isinstance(value, dict):
-        return get_nested(value, parts[1])
+        return get_nested(value, remainder)
+
+    # Terraform blocks such as `environment { variables = { ... } }` are parsed
+    # as lists of dicts. Try to find the next key in each list element.
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                found, nested = get_nested(item, remainder)
+                if found:
+                    return True, nested
+        return False, None
 
     return False, None
 
@@ -298,6 +310,23 @@ def evaluate_assertion(
         except re.error as exc:
             return False, f"Invalid regex pattern '{pattern}': {exc}"
 
+    # ── not_contains_pattern ───────────────────────────────────────────────────
+    if op == "not_contains_pattern":
+        found, val = get_nested(attrs, assertion.attribute)
+        if not found:
+            msg = assertion.message or f"Attribute '{assertion.attribute}' not found."
+            return False, msg
+        pattern = assertion.pattern or str(assertion.expected or "")
+        try:
+            if not re.search(pattern, str(val)):
+                return True, f"'{assertion.attribute}' does not contain pattern '{pattern}'."
+            msg = assertion.message or (
+                f"'{assertion.attribute}' must not contain pattern '{pattern}'."
+            )
+            return False, msg
+        except re.error as exc:
+            return False, f"Invalid regex pattern '{pattern}': {exc}"
+
     # ── key_exists ───────────────────────────────────────────────────────────
     if op == "key_exists":
         found, tag_map = get_nested(attrs, assertion.attribute)
@@ -359,6 +388,10 @@ def _find_matching_blocks(scope: Scope, tf: IaCState) -> list[IaCBlock]:
     if block_type == "provider":
         if scope.provider_name:
             return [b for b in tf.providers if b.type == scope.provider_name]
+        if scope.resource_types:
+            # Controls often list provider names under ``resource_types`` in YAML,
+            # e.g. scope { block_type: provider, resource_types: [google] }.
+            return [b for b in tf.providers if b.type in scope.resource_types]
         return list(tf.providers)
 
     if block_type == "variable":

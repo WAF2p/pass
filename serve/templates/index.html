@@ -428,7 +428,7 @@
         <template x-for="stat in checkStats ? [
           { label:'Checks Run', value: checkStats.total, sub: 'individual automated checks', icon:'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', color:'text-slate-700', ic:'text-slate-400' },
           { label:'Check Pass Rate', value: checkStats.passRate + '%', sub: checkStats.pass + ' of ' + checkStats.total + ' passed', icon:'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', color: checkStats.passRate >= 80 ? 'text-green-600' : checkStats.passRate >= 60 ? 'text-yellow-600' : 'text-red-600', ic: checkStats.passRate >= 80 ? 'text-green-400' : checkStats.passRate >= 60 ? 'text-yellow-400' : 'text-red-400' },
-          { label:'Resources Scanned', value: checkStats.resources, sub: 'unique Terraform resources', icon:'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10', color:'text-[#0094FF]', ic:'text-[#0094FF]' },
+          { label:'Resources Scanned', value: checkStats.resources, sub: 'unique resources', icon:'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10', color:'text-[#0094FF]', ic:'text-[#0094FF]' },
           { label:'Resources Failing', value: checkStats.failResources, sub: 'resources with ≥1 failure', icon:'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', color: checkStats.failResources > 0 ? 'text-red-600' : 'text-green-600', ic: checkStats.failResources > 0 ? 'text-red-400' : 'text-green-400' }
         ] : []" :key="stat.label">
           <div class="card border border-slate-200 flex items-start gap-3">
@@ -1805,7 +1805,7 @@
           <div style="font-size:0.8rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;">Requirements</div>
           <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
             <span class="pill" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">Python 3.10+</span>
-            <span class="pill" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;">Terraform .tf files or CDK project</span>
+            <span class="pill" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;">Terraform .tf, CDK .ts, or Pulumi .py</span>
             <span class="pill" style="background:#faf5ff;color:#7e22ce;border:1px solid #e9d5ff;">WAF++ Controls (YAML)</span>
             <span class="pill" style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa;">No cloud credentials required</span>
           </div>
@@ -2259,7 +2259,7 @@
       <!-- Disclaimer -->
       <div x-show="results" style="background:rgba(234,179,8,0.05);border:1px solid rgba(234,179,8,0.2);border-radius:10px;padding:0.75rem 1rem;display:flex;align-items:flex-start;gap:0.6rem;">
         <svg style="width:14px;height:14px;color:#eab308;flex-shrink:0;margin-top:0.15rem;" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-        <p style="font-size:0.72rem;color:var(--muted);line-height:1.55;margin:0;">Exploit chains are derived from controls that are <strong>actively failing</strong> in your scan. Affected resources shown are the specific Terraform resources that triggered failures. Exploitability depends on your runtime compensating controls and network configuration beyond IaC scope.</p>
+        <p style="font-size:0.72rem;color:var(--muted);line-height:1.55;margin:0;">Exploit chains are derived from controls that are <strong>actively failing</strong> in your scan. Affected resources shown are the specific resources that triggered failures. Exploitability depends on your runtime compensating controls and network configuration beyond IaC scope.</p>
       </div>
 
     </section>
@@ -2635,7 +2635,7 @@
           <div class="space-y-1">
             <p class="text-xs text-slate-400">
               <svg class="w-3.5 h-3.5 inline-block mr-1 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-              Original files will be backed up as <code class="bg-slate-200 px-1 rounded">.tf.bak</code> before changes are written.
+              Original files will be backed up as <code class="bg-slate-200 px-1 rounded">.bak</code> before changes are written.
             </p>
             <p class="text-xs" style="color:#c2410c;">
               <span style="background:rgba(234,88,12,.12);color:#c2410c;font-size:0.6rem;font-weight:800;padding:0.1rem 0.4rem;border-radius:3px;margin-right:0.35rem;">α ALPHA</span>
@@ -3086,7 +3086,7 @@
                   <p style="font-size:0.8rem;color:#94a3b8;line-height:1.7;margin-top:0.6rem;">
                     The difference between here and the previous stage isn't just score — it's culture.
                     Security has moved left. It's not a review at the end of the sprint; it's a constraint at
-                    the beginning. Engineers ask "does this pass the WAF?" before they write the Terraform.
+                    the beginning. Engineers ask "does this pass the WAF?" before they write the IaC.
                   </p>
                   <p style="font-size:0.8rem;color:#94a3b8;line-height:1.7;margin-top:0.6rem;">
                     Sovereignty controls are active. You know exactly where your data lives and why.
@@ -4657,7 +4657,7 @@
         }
         const applied = await resp.json();
         this.autoFix.showModal = false;
-        this.notify('Applied ' + applied.patches_count + ' patch(es) across ' + applied.files_modified.length + ' file(s). Backups created (.tf.bak)');
+        this.notify('Applied ' + applied.patches_count + ' patch(es) across ' + applied.files_modified.length + ' file(s). Backups created (.bak)');
       } catch(e) {
         this.notify(e.message, 'error');
       } finally {

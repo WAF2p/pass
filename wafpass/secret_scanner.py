@@ -54,9 +54,38 @@ _SAFE_VALUE_RE: list[re.Pattern] = [
     re.compile(r"^\*+$"),                     # ****** (masked placeholder)
     re.compile(r"^<[^>]+>$"),                 # <REPLACE_ME>
     re.compile(r"^$"),                        # empty string
-    # Common placeholder / test values (case-insensitive)
-    re.compile(r"(?i)^(replace|your_|placeholder|changeme|todo|dummy|fake|mock|sample|n/?a|not.?set|none|null|undefined|example|test|demo)"),
+    # Common placeholder / test values at the start of the value
+    re.compile(r"(?i)^(replace|your_|my_|insert_|enter_|placeholder|changeme|todo|dummy|fake|mock|sample|n/?a|not.?set|none|null|undefined|example|test|demo)"),
 ]
+
+# Placeholder tokens that can appear anywhere in a value (not just at the start)
+_PLACEHOLDER_TOKENS_RE = re.compile(
+    r"(?i)"
+    r"example|sample|placeholder|dummy|fake|mock|test|todo|changeme|"
+    r"replace.?me|your_.*|my_.*|insert_.*|enter_.*|none|null|undefined|"
+    r"EXAMPLEKEY|EXAMPLESECRET|EXAMPLETOKEN|EXAMPLEPASSWORD"
+)
+
+# Known public example / documentation literals that should never be flagged
+_KNOWN_EXAMPLE_LITERALS: frozenset[str] = frozenset({
+    "AKIAIOSFODNN7EXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+})
+
+# Common fake / weak placeholder passwords (exact match, case-insensitive)
+_COMMON_FAKE_PASSWORDS: frozenset[str] = frozenset({
+    "password", "password123", "passw0rd", "p@ssw0rd",
+    "admin", "admin123", "root", "root123",
+    "123456", "12345678", "1234567890", "qwerty", "letmein",
+    "welcome", "secret", "secret123", "default", "changeme",
+})
+
+# Repetitive / trivially predictable values
+_REPETITIVE_RE = re.compile(r"^(.)\1{3,}$")  # e.g. aaaaaaaa, 11111111
+_SEQUENCE_RE = re.compile(
+    r"^(?:0123456789|1234567890|abcdefghijklmnopqrstuvwxyz|qwerty|asdfgh|zxcvbn)+$",
+    re.IGNORECASE,
+)
 
 # ── Secret patterns ───────────────────────────────────────────────────────────
 # Each entry: (label, severity, regex)
@@ -226,9 +255,22 @@ class SecretFinding:
 
 def _is_safe_value(value: str) -> bool:
     v = value.strip()
+    if not v:
+        return True
     for pat in _SAFE_VALUE_RE:
         if pat.search(v):
             return True
+    # Placeholder / fake / example values that appear in real Terraform code
+    if _PLACEHOLDER_TOKENS_RE.search(v):
+        return True
+    if v in _KNOWN_EXAMPLE_LITERALS:
+        return True
+    if v.lower() in _COMMON_FAKE_PASSWORDS:
+        return True
+    if _REPETITIVE_RE.search(v):
+        return True
+    if _SEQUENCE_RE.search(v):
+        return True
     return False
 
 

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from wafpass.iac.base import IaCState
+    from wafpass.secret_scanner import SecretFinding
 
 
 @dataclass
@@ -120,6 +124,10 @@ class Report:
     # availability_zone may be None for regions that don't use AZs (e.g., GCP multi-regions)
     source_paths: list[str] = field(default_factory=list)
     # Individual paths scanned (mirrors path when single; populated for multi-path runs)
+    state: Optional[IaCState] = None
+    # Parsed IaC state carried for downstream consumers (e.g. blast radius, auto-fix)
+    secret_findings: list[SecretFinding] = field(default_factory=list)
+    # Raw secret-finding objects from the secret scanner
 
     @property
     def total_pass(self) -> int:
