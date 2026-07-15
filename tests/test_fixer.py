@@ -53,14 +53,17 @@ def _terraform_formatter_available() -> bool:
     return shutil.which("terraform") is not None or shutil.which("tofu") is not None
 
 
-def _controls_dir_available() -> bool:
-    """Return True if the default controls directory exists for fixer tests."""
-    return (Path.cwd() / "controls").is_dir() or (Path(__file__).parent.parent / "controls").is_dir()
+def _controls_available() -> bool:
+    """Return True if the default controls directory is populated for fixer tests."""
+    for candidate in (Path.cwd() / "controls", Path(__file__).parent.parent / "controls"):
+        if candidate.is_dir() and any(candidate.glob("*.yml")):
+            return True
+    return False
 
 
 pytestmark_controls = pytest.mark.skipif(
-    not _controls_dir_available(),
-    reason="Default 'controls' directory not found; skip fixer integration tests",
+    not _controls_available(),
+    reason="Default 'controls' directory not populated; skip fixer integration tests",
 )
 pytestmark_formatter = pytest.mark.skipif(
     not _terraform_formatter_available(),
