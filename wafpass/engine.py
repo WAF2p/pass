@@ -407,6 +407,25 @@ def _find_matching_blocks(scope: Scope, tf: IaCState) -> list[IaCBlock]:
     return []
 
 
+def _provider_present(provider: str, tf: IaCState) -> bool:
+    """Return True if a provider block of the given type exists in the state.
+
+    When no provider blocks were parsed (e.g. CDK/Pulumi or Terraform with
+    implicit default providers) this returns True so checks are not silently
+    dropped.  Aliases are ignored; the base provider type is what matters.
+
+    The special provider value ``any`` means the check applies to every
+    provider and is always considered present.
+    """
+    if provider == "any":
+        return True
+    if not tf.providers:
+        # No explicit provider information available — run the check and let
+        # resource-type matching decide the outcome.
+        return True
+    return any(p.type == provider for p in tf.providers)
+
+
 def _run_check(
     check: Check, control: Control, tf: IaCState
 ) -> list[CheckResult]:
@@ -415,19 +434,9 @@ def _run_check(
     matching_blocks = _find_matching_blocks(check.scope, tf)
 
     if not matching_blocks:
-        results.append(
-            CheckResult(
-                check_id=check.id,
-                check_title=check.title,
-                control_id=control.id,
-                severity=check.severity,
-                status="SKIP",
-                resource="(none)",
-                message="No matching resources found in Terraform configuration.",
-                remediation=check.remediation,
-                example=check.example,
-            )
-        )
+        # No matching resources: skip the check without emitting a per-check
+        # finding.  The control-level report still shows SKIP when every check
+        # in the control returns an empty result list.
         return results
 
     for block in matching_blocks:
@@ -513,6 +522,11 @@ def run_controls(
         for check in control.checks:
             if engine_name is not None and check.engine != engine_name:
                 # Skip checks that target a different IaC engine.
+                continue
+            if not _provider_present(check.provider, tf):
+                # The configured IaC does not declare this provider, so the
+                # check is irrelevant for this scan (e.g. Azure checks against
+                # an AWS-only Terraform configuration).
                 continue
             check_results = _run_check(check, control, tf)
             all_check_results.extend(check_results)

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from wafpass.engine import SkipAssertion, evaluate_assertion, get_nested, _find_matching_blocks
+from wafpass.engine import SkipAssertion, evaluate_assertion, get_nested, _find_matching_blocks, _provider_present, _run_check, run_controls
 from wafpass.iac.base import IaCBlock, IaCState
-from wafpass.models import Assertion, Check, Scope
+from wafpass.models import Assertion, Check, Control, Scope
 from wafpass.parser import TerraformBlock, TerraformState
 
 
@@ -442,3 +442,116 @@ def test_find_matching_blocks_provider_scope_prefers_provider_name() -> None:
     scope = Scope(block_type="provider", provider_name="aws", resource_types=["google"])
     blocks = _find_matching_blocks(scope, state)
     assert [b.address for b in blocks] == ["provider.aws"]
+
+
+# ── provider presence filtering ───────────────────────────────────────────────
+
+
+class TestProviderPresent:
+    def test_any_provider_is_always_present(self) -> None:
+        state = IaCState(providers=[])
+        assert _provider_present("any", state) is True
+
+    def test_explicit_provider_present(self) -> None:
+        state = IaCState(providers=[
+            IaCBlock(block_type="provider", type="aws", name="", address="provider.aws", attributes={}, raw={}),
+        ])
+        assert _provider_present("aws", state) is True
+
+    def test_missing_provider_not_present(self) -> None:
+        state = IaCState(providers=[
+            IaCBlock(block_type="provider", type="aws", name="", address="provider.aws", attributes={}, raw={}),
+        ])
+        assert _provider_present("azurerm", state) is False
+
+    def test_no_providers_defaults_to_present(self) -> None:
+        """When a plugin does not populate providers (CDK/Pulumi or implicit Terraform
+        defaults), do not silently drop checks.
+        """
+        state = IaCState(providers=[])
+        assert _provider_present("aws", state) is True
+
+
+def test_run_check_returns_empty_when_no_matching_blocks() -> None:
+    """No matching resources means no per-check finding; control-level SKIP is shown elsewhere."""
+    state = IaCState()
+    check = Check(
+        id="waf-rel-010.tf.aws.cloudwatch-slo-alarm",
+        engine="terraform",
+        provider="aws",
+        automated=True,
+        severity="critical",
+        title="AWS CloudWatch alarm must be configured for SLO availability monitoring",
+        scope=Scope(block_type="resource", resource_types=["aws_cloudwatch_metric_alarm"]),
+        assertions=[Assertion(attribute="alarm_name", op="not_empty")],
+        on_fail="violation",
+        remediation="r",
+    )
+    control = Control(
+        id="WAF-REL-010",
+        title="SLA & SLO Definition Documented",
+        pillar="reliability",
+        severity="critical",
+        category="reliability-governance",
+        description="d",
+        checks=[check],
+    )
+    results = _run_check(check, control, state)
+    assert results == []
+
+
+def test_run_controls_skips_checks_for_absent_providers() -> None:
+    """AWS-only config should not emit Azure/GCP checks."""
+    state = IaCState(
+        providers=[
+            IaCBlock(block_type="provider", type="aws", name="", address="provider.aws", attributes={}, raw={}),
+        ],
+        resources=[
+            IaCBlock(
+                block_type="resource",
+                type="aws_cloudwatch_metric_alarm",
+                name="slo",
+                address="aws_cloudwatch_metric_alarm.slo",
+                attributes={"alarm_name": "slo-errors"},
+                raw={},
+            ),
+        ],
+    )
+    aws_check = Check(
+        id="waf-rel-010.tf.aws.cloudwatch-slo-alarm",
+        engine="terraform",
+        provider="aws",
+        automated=True,
+        severity="critical",
+        title="AWS CloudWatch alarm",
+        scope=Scope(block_type="resource", resource_types=["aws_cloudwatch_metric_alarm"]),
+        assertions=[Assertion(attribute="alarm_name", op="not_empty")],
+        on_fail="violation",
+        remediation="r",
+    )
+    azure_check = Check(
+        id="waf-rel-010.tf.azurerm.monitor-metric-alert-slo",
+        engine="terraform",
+        provider="azurerm",
+        automated=True,
+        severity="critical",
+        title="Azure Monitor metric alert",
+        scope=Scope(block_type="resource", resource_types=["azurerm_monitor_metric_alert"]),
+        assertions=[Assertion(attribute="name", op="not_empty")],
+        on_fail="violation",
+        remediation="r",
+    )
+    control = Control(
+        id="WAF-REL-010",
+        title="SLA & SLO Definition Documented",
+        pillar="reliability",
+        severity="critical",
+        category="reliability-governance",
+        description="d",
+        checks=[aws_check, azure_check],
+    )
+    results = run_controls([control], state, engine_name="terraform")
+    assert len(results) == 1
+    check_ids = {r.check_id for r in results[0].results}
+    assert aws_check.id in check_ids
+    assert azure_check.id not in check_ids
