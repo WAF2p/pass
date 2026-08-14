@@ -168,7 +168,7 @@ def check(
         None,
         "--push",
         help=(
-            "POST the result to this URL (e.g. http://localhost:8000/runs). "
+            "POST the result to this URL (e.g. http://localhost:8000/api/v1/runs). "
             "Pass [bold]@[/bold] to push to the server from 'wafpass login' using your stored token. "
             "Requires --output json."
         ),
@@ -1560,7 +1560,7 @@ def cmd_login(
 
     \b
         wafpass check ./infra --output json --push @
-        wafpass check ./infra --output json --push http://my-server:8000/runs
+        wafpass check ./infra --output json --push http://my-server:8000/api/v1/runs
     """
     from rich.console import Console
     from rich.prompt import Prompt
@@ -1807,7 +1807,7 @@ def evidence_lock(
     if _frameworks:
         payload["frameworks"] = _frameworks
 
-    url = f"{creds.server_url}/evidence"
+    url = f"{creds.server_url}/api/v1/evidence"
     headers = {"Content-Type": "application/json", "Authorization": creds.bearer()}
 
     rc.print(f"  Locking run [cyan]{run_id}[/cyan] as evidence…")
@@ -1832,7 +1832,7 @@ def evidence_lock(
         raise typer.Exit(code=1)
 
     ev = resp.json()
-    public_url = f"{creds.server_url}/evidence/p/{ev['public_token']}"
+    public_url = f"{creds.server_url}/api/v1/evidence/p/{ev['public_token']}"
 
     rc.print(f"[green]✓  Evidence locked[/green]")
     rc.print(f"   ID           : [bold]{ev['id']}[/bold]")
@@ -1871,7 +1871,7 @@ def evidence_list(
     if project:
         params["project"] = project
 
-    url = f"{creds.server_url}/evidence"
+    url = f"{creds.server_url}/api/v1/evidence"
     headers = {"Authorization": creds.bearer()}
 
     try:
@@ -1947,7 +1947,7 @@ def evidence_show(
     rc = Console()
     creds = _require_creds()
 
-    url = f"{creds.server_url}/evidence/{evidence_id}"
+    url = f"{creds.server_url}/api/v1/evidence/{evidence_id}"
     headers = {"Authorization": creds.bearer()}
 
     try:
@@ -1973,7 +1973,7 @@ def evidence_show(
         rc.print(ev.get("hash_digest", ""))
         return
 
-    public_url = f"{creds.server_url}/evidence/p/{ev['public_token']}"
+    public_url = f"{creds.server_url}/api/v1/evidence/p/{ev['public_token']}"
 
     tbl = Table.grid(padding=(0, 2))
     tbl.add_column(style="dim", justify="right")
@@ -2002,6 +2002,6 @@ def evidence_show(
     ))
     rc.print()
     rc.print("  [dim]Download report:[/dim]  "
-             f"[dim]{creds.server_url}/evidence/{evidence_id}/report.html[/dim]")
+             f"[dim]{creds.server_url}/api/v1/evidence/{evidence_id}/report.html[/dim]")
     rc.print("  [dim]Share with auditor:[/dim]  "
              f"[cyan]{public_url}[/cyan]")

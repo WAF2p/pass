@@ -4,7 +4,7 @@ This module defines the canonical JSON shape of a wafpass-result.json file.
 It is the single source of truth used by:
 
   * ``wafpass check --output json``  (produces the payload)
-  * ``wafpass-server POST /runs``     (validates the payload on ingest)
+  * ``wafpass-server POST /api/v1/runs``     (validates the payload on ingest)
   * Dashboard / CI consumers         (parse the payload)
 
 Consumers should import from here rather than duplicating these types.
@@ -117,7 +117,7 @@ class WafpassResultSchema(BaseModel):
     """Top-level wafpass-result.json payload.
 
     Produced by ``wafpass check --output json`` and consumed by
-    ``wafpass-server POST /runs``.
+    ``wafpass-server POST /api/v1/runs``.
     """
 
     schema_version: str = Field(default="1.0", description="Schema version for forward-compatibility checks.")
