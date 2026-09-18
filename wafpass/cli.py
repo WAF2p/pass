@@ -79,6 +79,18 @@ control_app = typer.Typer(
 )
 app.add_typer(control_app, name="control")
 
+# ── wafpass validate / verify ─────────────────────────────────────────────────
+
+from wafpass.validation_cli import (  # noqa: E402
+    validate_app,
+    verify_command,
+)
+
+# validate_app already registers generate-key / official / offline / upgrade / show
+# inside wafpass.validation_cli, so we only need to mount it on the top-level CLI.
+app.add_typer(validate_app, name="validate")
+app.command("verify")(verify_command)
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -182,6 +194,24 @@ def check(
             "Not needed after 'wafpass login' — Bearer token is used automatically. "
             "Can also be set via the WAFPASS_API_KEY environment variable."
         ),
+    ),
+    validation_url: str | None = typer.Option(
+        None,
+        "--validation-url",
+        envvar="WAFPASS_VALIDATION_URL",
+        help="Validation gateway URL for --validate official (default: env WAFPASS_VALIDATION_URL).",
+    ),
+    validation_api_key: str | None = typer.Option(
+        None,
+        "--validation-api-key",
+        envvar="WAFPASS_VALIDATION_API_KEY",
+        help="API key for the validation gateway when using --validate official.",
+    ),
+    server_certificate: Path | None = typer.Option(
+        None,
+        "--server-certificate",
+        envvar="WAFPASS_SERVER_CERTIFICATE",
+        help="Path to the wafpass-server sub-CA certificate for --validate official.",
     ),
     project: str = typer.Option(
         "",
@@ -313,6 +343,27 @@ def check(
             "Requires --output json and --push."
         ),
     ),
+    validate: str | None = typer.Option(
+        None,
+        "--validate",
+        help="Request validation: 'official' (server countersigned) or 'offline' (self-signed). Requires --output json.",
+    ),
+    validation_key: Path = typer.Option(
+        Path.home() / ".wafpass" / "validation.key",
+        "--validation-key",
+        help="Path to the organization Ed25519 signing key (auto-generated if missing).",
+    ),
+    validation_output: Path = typer.Option(
+        Path.cwd(),
+        "--validation-output",
+        help="Directory for validation envelope, badge, and certificate files.",
+    ),
+    skip_validation_on_offline: bool = typer.Option(
+        False,
+        "--skip-validation-on-offline",
+        flag_value=True,
+        help="If official validation fails because the server is unreachable, fall back to offline mode instead of erroring.",
+    ),
 ) -> None:
     """Check IaC files against WAF++ YAML controls."""
 
@@ -321,6 +372,20 @@ def check(
         typer.echo(
             "ERROR: --upload-source requires --output json and --push. "
             "Re-run with --output json --push <url|@> --upload-source.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    # ── Validate --validate prerequisites ───────────────────────────────────────
+    if validate and output != "json":
+        typer.echo(
+            "ERROR: --validate requires --output json so the run result can be signed.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if validate and validate not in ("official", "offline"):
+        typer.echo(
+            "ERROR: --validate must be 'official' or 'offline'.",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -626,6 +691,69 @@ def check(
             f"Re-run with --output json --push {_push_hint}.",
             err=True,
         )
+
+    # ── Validation (official / offline) ────────────────────────────────────────
+    if validate and output == "json":
+        from wafpass.validation_cli import (
+            _request_official_validation,
+            _write_validation_artifacts,
+            _print_validation_summary,
+            create_offline_envelope,
+            generate_signing_key,
+        )
+        from rich.console import Console as _RichConsole
+
+        _rc = _RichConsole()
+
+        if not validation_key.exists():
+            generate_signing_key(validation_key)
+
+        if validate == "offline":
+            _envelope = create_offline_envelope(schema, validation_key)
+        else:  # official
+            cert_pem = ""
+            if server_certificate:
+                cert_pem = server_certificate.read_text(encoding="utf-8").strip()
+            elif os.environ.get("WAFPASS_SERVER_CERTIFICATE"):
+                cert_pem = Path(os.environ["WAFPASS_SERVER_CERTIFICATE"]).read_text(encoding="utf-8").strip()
+            if not cert_pem:
+                _rc.print(
+                    "[red]--validate official requires a server certificate.[/red]\n"
+                    "Provide --server-certificate or set WAFPASS_SERVER_CERTIFICATE."
+                )
+                raise typer.Exit(code=1)
+
+            _envelope = _request_official_validation(
+                result=schema,
+                key_path=validation_key,
+                output_dir=validation_output,
+                api_key=validation_api_key,
+                server_url=validation_url,
+                server_certificate=cert_pem,
+                rc=_rc,
+                fallback_on_offline=skip_validation_on_offline,
+            )
+            if _envelope is None:
+                raise typer.Exit(code=1)
+
+        # Embed the attestation back into the JSON result that is printed.
+        schema.attestation = _envelope.local_attestation
+
+        # Make the run_id available inside the envelope result for local locking.
+        if _state_enabled and snapshot is not None:
+            _envelope.result["run_id"] = snapshot["run_id"]
+
+        _write_validation_artifacts(
+            _envelope, validation_output, _rc,
+            state_dir=state_dir if _state_enabled else None,
+        )
+        _print_validation_summary(_envelope, _rc)
+
+        if _envelope.status == "offline":
+            _rc.print(
+                "[yellow]  This is an offline, self-signed validation.[/yellow]\n"
+                "  Run [bold]wafpass validate upgrade --envelope <file>[/bold] once online."
+            )
 
     # ── Export to monitoring systems ───────────────────────────────────────────
     if export and _state_enabled and snapshot is not None:

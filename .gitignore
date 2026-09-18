@@ -81,3 +81,6 @@ controls/*.yaml
 /test.tmp
 /.wafpass-state/
 /.wafpass-server-controls/
+
+# Insomnia workspace exports (user-local API testing config)
+/insomnia/
